@@ -216,8 +216,11 @@ def test_legacy_import_preserves_predictions(kind, tmp_path):
     )
 
 
-@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer", "bdt"])
-def test_full_experiment_artifacts_and_no_test_access(kind, tmp_path):
+@pytest.mark.parametrize(
+    "kind,mixup",
+    [("cnp", False), ("mlp", False), ("transformer", False), ("bdt", False), ("cnp", True)],
+)
+def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
     from core.surrogates.experiment import run_experiment
     from schemas.surrogates import SurrogateRunConfig
 
@@ -241,9 +244,18 @@ def test_full_experiment_artifacts_and_no_test_access(kind, tmp_path):
             labels=batch.labels,
         )
     # No test directory exists: the complete runner must work without it.
+    settings = training(kind)
+    if mixup:
+        settings = NeuralTraining(
+            **{
+                **settings.model_dump(),
+                "sampling": {"strategy": "class_aware_mixup", "mixup": {}},
+                "weighting": {"strategy": "none"},
+            }
+        )
     config = SurrogateRunConfig(
         model=spec(kind),
-        training=training(kind),
+        training=settings,
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
@@ -283,3 +295,86 @@ def test_ap_selection_restores_highest_ap(tmp_path):
     expected = max(row["average_precision"] for row in report.history)
     actual, _ = evaluate_surrogate(model, t)
     assert actual["average_precision"] == expected
+
+
+@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer"])
+@pytest.mark.parametrize("mix_context", [False, True])
+def test_mixup_shared_training_and_checkpoint(kind, mix_context, tmp_path, monkeypatch):
+    from core.mixup import ClassAwareMixupSource
+
+    source = for_scenario("S1", seed=0)
+    batch = source.generate(n_trials=4, n_events=24)
+    batch.labels[:, :12] = 0
+    batch.labels[:, 12:] = 1
+    original = batch.labels.copy()
+    context, target = split_context_target(batch, 4, seed=3)
+    calls, sums, counts = [], [], []
+    original_next = ClassAwareMixupSource.next
+
+    def capture(self, **kwargs):
+        ctx, tgt = original_next(self, **kwargs)
+        calls.append(ctx.n_events)
+        sums.append(float(tgt.labels.sum()))
+        counts.append(tgt.labels.size)
+        if not mix_context:
+            assert np.isin(ctx.labels, [0, 1]).all()
+        return ctx, tgt
+
+    monkeypatch.setattr(ClassAwareMixupSource, "next", capture)
+    settings = NeuralTraining(
+        n_steps=6,
+        eval_every=3,
+        batch_size=2,
+        n_events=12,
+        n_context_min=2,
+        n_context_max=5,
+        sampling={
+            "strategy": "class_aware_mixup",
+            "mixup": {"alpha": 0.2, "mix_context": mix_context},
+        },
+    )
+    model = build_surrogate(spec(kind), source.dim_theta, source.dim_phi)
+    report = model.fit(
+        batch, settings, validation=Episode(context, target), checkpoints=tmp_path / "run"
+    )
+    assert len(set(calls)) > 1
+    assert all(2 <= n <= 5 for n in calls)
+    assert np.isfinite([r["training_loss"] for r in report.history]).all()
+    audit = report.sampling_audit
+    assert audit["label_mass"] == sum(sums)
+    assert audit["events"] == sum(counts)
+    assert audit["mean_target_label"] == sum(sums) / sum(counts)
+    assert audit["soft_label_events"] > 0
+    assert "positives" not in audit
+    np.testing.assert_array_equal(batch.labels, original)
+    restored = load_surrogate(tmp_path / "run/best")
+    assert restored.metadata["sampling_audit"] == audit
+    assert restored.metadata["training"]["sampling"] == settings.sampling.model_dump()
+    np.testing.assert_array_equal(
+        model.predict(target, context=context).logits,
+        restored.predict(target, context=context).logits,
+    )
+
+
+@pytest.mark.parametrize(
+    "sampling,weighting",
+    [
+        ({"strategy": "class_aware_mixup"}, {"strategy": "none"}),
+        ({"strategy": "natural", "mixup": {}}, {"strategy": "none"}),
+        ({"strategy": "class_aware_mixup", "mixup": {"alpha": 0}}, {"strategy": "none"}),
+        (
+            {"strategy": "class_aware_mixup", "mixup": {}, "positive_fraction": 0.05},
+            {"strategy": "none"},
+        ),
+        ({"strategy": "class_aware_mixup", "mixup": {}}, {"strategy": "sampling_correction"}),
+        ({"strategy": "class_aware_mixup", "mixup": {}}, {"strategy": "class_weights"}),
+    ],
+)
+def test_invalid_mixup_combinations(sampling, weighting):
+    with pytest.raises(ValidationError):
+        NeuralTraining(sampling=sampling, weighting=weighting)
+
+
+def test_tree_rejects_mixup():
+    with pytest.raises(ValidationError):
+        TreeTraining(sampling={"strategy": "class_aware_mixup", "mixup": {}})
