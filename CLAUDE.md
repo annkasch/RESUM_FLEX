@@ -357,3 +357,17 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - The shared API supports natural and sampling-corrected positive-quota training.
   Mixup remains in the legacy CNP API. Permutation mixup uses independent
   Beta weights per pair within each voxel, preserving label means in expectation.
+
+## Fresh class-aware source splits (2026-09-29)
+
+- ClassAwareMixupSource now samples voxels uniformly with replacement and makes
+  a fresh label-independent context/target source partition per voxel occurrence
+  per batch. Replaces fixed pools and negative-once-per-epoch scheduling.
+- Both mixture parents stay on their assigned side. Single-class pools emit real
+  events; singleton positives may switch roles across batches. Independent pair
+  weights and matched targets across real/mixed context modes are preserved.
+- Legacy training uses this sampler; shared surrogate API integration is pending.
+
+- Validation: all 21 targeted mixup and training tests passed.
+- User workflow: commit and push verified integrated changes regularly to the
+  fork (origin); exclude experimental notebooks and scripts.

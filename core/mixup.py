@@ -1,4 +1,4 @@
-"""Opt-in, within-voxel mixup of target events; real contexts stay unchanged."""
+"""Within-voxel permutation and class-aware mixup augmentation."""
 
 import numpy as np
 
@@ -36,93 +36,92 @@ def mixup_targets(batch: StandardBatch, *, alpha: float, rng: np.random.Generato
 
 
 class ClassAwareMixupSource:
-    """Fixed disjoint source pools; negatives used once per global epoch.
+    """Fresh, label-independent source split for each voxel in every batch.
 
-    Episodes use a fixed nominal context size. Tail episodes/batches can be
-    smaller. A singleton positive is reserved for targets; positive-free pools
-    emit original negatives. Positive-only voxels cannot use this sampler.
+    Voxels are sampled uniformly with replacement. Their full event sets are
+    randomly partitioned in the nominal context/target proportion on each draw.
+    Each side mixes negative anchors with positive partners from its own pool,
+    using independent Beta weights. Single-class pools emit real events.
+    A singleton positive can therefore change sides between batches.
 
-    With mix_context=False, contexts are uniform samples without replacement
-    from the original disjoint context pool, including its original positives.
-    Target augmentation and episode order match mix_context=True exactly.
-    Contexts can repeat between episodes; the negative-epoch guarantee then
-    describes the scheduling stream and target usage, not actual context usage.
+    Real contexts are uniform draws from the context pool. Positive partners
+    may be reused. Real events and negative anchors use replacement only when
+    needed to fill the requested output size.
+    No once-per-epoch coverage guarantee is made. With equal seeds, switching
+    mix_context leaves target batches and source splits identical.
     """
 
     def __init__(self, batch, *, alpha, seed, batch_size, n_events, n_context, mix_context=True):
         if not np.isfinite(alpha) or alpha <= 0:
-            raise ValueError('Class-aware mixup requires positive finite alpha')
+            raise ValueError("Class-aware mixup requires positive finite alpha")
         if not 0 < n_context < n_events or batch_size < 1:
-            raise ValueError('Invalid mixup episode dimensions')
+            raise ValueError("Invalid mixup episode dimensions")
+        if batch.n_events < 2 or batch.batch_size < 1:
+            raise ValueError("Class-aware mixup requires at least two source events per voxel")
         self.batch, self.alpha = batch, alpha
         self.mix_context = mix_context
         self.context_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
         self.rng = np.random.default_rng(seed)
         self.batch_size = batch_size
         self.nc, self.nt = n_context, n_events - n_context
-        self.pools = []
-        self.epoch = 0
-        self.pending = []
+        self.context_pool_size = min(
+            batch.n_events - 1, max(1, round(batch.n_events * n_context / n_events))
+        )
         self.last_provenance = []
-        for i, labels in enumerate(batch.labels):
-            neg = self.rng.permutation(np.flatnonzero(labels == 0))
-            pos = self.rng.permutation(np.flatnonzero(labels == 1))
-            if len(neg) < 2:
-                raise ValueError(f'Voxel {i}: class-aware pools require at least two negatives')
-            cut = min(len(neg)-1, max(1, round(len(neg)*n_context/n_events)))
-            pc = min(len(pos)-1, max(1, round(len(pos)*n_context/n_events))) if len(pos)>1 else 0
-            self.pools.append(((neg[:cut], pos[:pc]), (neg[cut:], pos[pc:])))
 
-    def _start_epoch(self):
-        from collections import defaultdict
-        buckets = defaultdict(list)
-        for i, pools in enumerate(self.pools):
-            cn, tn = (self.rng.permutation(p[0]) for p in pools)
-            chunks = min(len(cn), len(tn), max(int(np.ceil(len(cn)/self.nc)), int(np.ceil(len(tn)/self.nt))))
-            for c, t in zip(np.array_split(cn, chunks), np.array_split(tn, chunks)):
-                buckets[(len(c), len(t))].append((i, c, t))
-        batches = []
-        for episodes in buckets.values():
-            self.rng.shuffle(episodes)
-            batches.extend(episodes[k:k+self.batch_size] for k in range(0,len(episodes),self.batch_size))
-        self.rng.shuffle(batches)
-        self.pending = batches
-        self.epoch += 1
+    @staticmethod
+    def _draw(rng, pool, size):
+        return rng.choice(pool, size=size, replace=len(pool) < size)
 
     def next(self):
-        if not self.pending:
-            self._start_epoch()
-        episodes = self.pending.pop()
+        trials = self.rng.integers(self.batch.batch_size, size=self.batch_size)
+        pools = []
+        for _ in trials:
+            indices = self.rng.permutation(self.batch.n_events)
+            pools.append((indices[:self.context_pool_size], indices[self.context_pool_size:]))
+
         result = []
         self.last_provenance = []
-        for side in (0,1):
-            labels, features, trials = [], [], []
-            for i, c, t in episodes:
-                negatives = c if side == 0 else t
-                positives = self.pools[i][side][1]
-                partners = self.rng.choice(positives, len(negatives), replace=True) if len(positives) else negatives
-                weight = self.rng.beta(self.alpha,self.alpha,len(negatives)) if len(positives) else np.zeros(len(negatives))
-                y = weight  # paired negative=0 and positive=1; unmixed negatives=0
-                # Retain augmentation RNG draws above so targets and episode order
-                # are identical in paired mixed-context / real-context experiments.
+        for side, size in ((0, self.nc), (1, self.nt)):
+            labels, features = [], []
+            for row, voxel in enumerate(trials):
+                pool = pools[row][side]
+                source_labels = self.batch.labels[voxel]
+                negatives = pool[source_labels[pool] == 0]
+                positives = pool[source_labels[pool] == 1]
+                if len(negatives) and len(positives):
+                    anchors = self._draw(self.rng, negatives, size)
+                    partners = self.rng.choice(positives, size=size, replace=True)
+                    weight = self.rng.beta(self.alpha, self.alpha, size=size)
+                else:
+                    anchors = self._draw(self.rng, pool, size)
+                    partners = anchors.copy()
+                    weight = np.zeros(size)
+                y = (1 - weight) * source_labels[anchors] + weight * source_labels[partners]
+                provenance = dict(
+                    row=row, voxel=int(voxel), side=side, source_pool=pool.copy(),
+                    anchors=anchors.copy(), partners=partners.copy(), weights=weight.copy(),
+                )
+                # Consume identical augmentation draws for both context modes.
                 if side == 0 and not self.mix_context:
-                    pool = np.concatenate(self.pools[i][0])
-                    real_indices = self.context_rng.choice(pool, len(negatives), replace=False)
-                    y = self.batch.labels[i, real_indices]
+                    real_indices = self._draw(self.context_rng, pool, size)
+                    y = source_labels[real_indices]
+                    provenance["real_indices"] = real_indices.copy()
                 labels.append(y)
-                trials.append(i)
                 if self.batch.phi is not None:
                     if side == 0 and not self.mix_context:
-                        features.append(self.batch.phi[i, real_indices])
+                        features.append(self.batch.phi[voxel, real_indices])
                     else:
-                        features.append((1-weight[:,None])*self.batch.phi[i,negatives]+weight[:,None]*self.batch.phi[i,partners])
-                provenance = dict(epoch=self.epoch,voxel=i,side=side,
-                                  negatives=negatives.copy(),partners=partners.copy())
-                if side == 0 and not self.mix_context:
-                    provenance['real_indices'] = real_indices.copy()
+                        features.append(
+                            (1 - weight[:, None]) * self.batch.phi[voxel, anchors]
+                            + weight[:, None] * self.batch.phi[voxel, partners]
+                        )
                 self.last_provenance.append(provenance)
             carrier = StandardBatch if side == 0 and not self.mix_context else SoftTargetBatch
-            result.append(carrier(mode=self.batch.mode,
+            result.append(carrier(
+                mode=self.batch.mode,
                 theta=None if self.batch.theta is None else self.batch.theta[trials],
-                phi=None if self.batch.phi is None else np.stack(features),labels=np.stack(labels)))
+                phi=None if self.batch.phi is None else np.stack(features),
+                labels=np.stack(labels),
+            ))
         return tuple(result)

@@ -132,3 +132,19 @@ All checkpoint loaders are for trusted local files.
 Use the component API or the common runner for training and evaluation. Shared configuration and
 metrics improve reproducibility but do not make context-conditioned CNP and
 context-free models identical comparisons, or eliminate validation-selection bias.
+
+## Legacy class-aware mixup
+
+`core.mixup.ClassAwareMixupSource` samples voxels uniformly with replacement.
+For each voxel occurrence in each batch, it freshly partitions the full source
+set into disjoint context and target pools, independently of labels, in the
+requested context/target proportion. Both parents of a mixture come from the
+same pool. Positive partners can repeat within their pool; weights are independent
+per pair. A pool with only one class returns real events. A lone positive may
+serve either side across batches; it is not permanently reserved for targets.
+
+`mix_context=False` samples real contexts; `True` mixes context too. For equal
+seeds, both modes use identical splits and targets. Real-event and negative-anchor
+sampling uses replacement only if a pool is too small for the requested batch.
+This is batch sampling, without a once-per-epoch negative coverage guarantee.
+The shared surrogate API still does not accept mixup configuration.
