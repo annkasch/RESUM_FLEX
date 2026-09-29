@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from core.mixup import ClassAwareMixupSource
 from core.surrogate_cnp import (
     ConditionalNeuralProcess,
     build_cnp,
@@ -62,8 +63,16 @@ def train_cnp(
     cnp_config: CNPConfig,
     training_config: TrainingConfig,
     progress_callback: Callable[[int, float], None] | None = None,
+    label_callback: Callable[[int, np.ndarray, np.ndarray], None] | None = None,
+    label_every: int = 100,
 ) -> TrainingHistory:
     """Train a CNP from any object implementing :class:`BatchSource`."""
+    if cnp_config.focal_gamma > 0 and cnp_config.objective != "theory-truth":
+        raise ValueError("Focal loss requires the theory-truth binary objective")
+    if training_config.mixup_alpha > 0 and cnp_config.objective != "theory-truth":
+        raise ValueError("Mixup requires theory-truth soft-label cross entropy")
+    if label_callback is not None and label_every < 1:
+        raise ValueError("label_every must be positive")
     rng = np.random.default_rng(training_config.seed)
     torch.manual_seed(training_config.seed)
     optimizer = torch.optim.Adam(cnp.parameters(), lr=training_config.learning_rate)
@@ -79,18 +88,28 @@ def train_cnp(
             f"n_events_per_trial={n_events} must exceed n_context_min."
         )
 
+    mixup_source = None
+    if training_config.mixup_alpha > 0:
+        from data.batch_source import FixedBatchSource
+        if not isinstance(generator, FixedBatchSource):
+            raise ValueError("Class-aware mixup requires a FixedBatchSource")
+        mixup_source = ClassAwareMixupSource(
+            generator.batch, alpha=training_config.mixup_alpha,
+            mix_context=training_config.mixup_context,
+            seed=training_config.seed, batch_size=training_config.batch_size,
+            n_events=n_events, n_context=(n_ctx_min+n_ctx_max)//2)
+
     cnp.train()
     for step in range(training_config.n_steps):
-        # Sample a fresh batch and a random context size for this step.
-        batch = generator.generate(
-            n_trials=training_config.batch_size,
-            n_events=n_events,
-            seed=int(rng.integers(0, 2**31 - 1)),
-        )
-        n_ctx = int(rng.integers(n_ctx_min, n_ctx_max + 1))
-        ctx, tgt = split_context_target(
-            batch, n_context=n_ctx, seed=int(rng.integers(0, 2**31 - 1))
-        )
+        if mixup_source is not None:
+            ctx, tgt = mixup_source.next()
+        else:
+            batch = generator.generate(
+                n_trials=training_config.batch_size, n_events=n_events,
+                seed=int(rng.integers(0, 2**31 - 1)))
+            n_ctx = int(rng.integers(n_ctx_min, n_ctx_max + 1))
+            ctx, tgt = split_context_target(
+                batch, n_context=n_ctx, seed=int(rng.integers(0, 2**31 - 1)))
 
         out = cnp(ctx, tgt)
         x_target = torch.as_tensor(tgt.labels, dtype=torch.float32)
@@ -98,7 +117,19 @@ def train_cnp(
             out,
             x_target,
             objective=cnp_config.objective,
+            focal_gamma=cnp_config.focal_gamma,
         )
+
+        # Paired labels/probabilities from the same pre-update training forward pass.
+        # No extra sampling or evaluation pass: diagnostics do not change training RNG.
+        if label_callback is not None and (
+            step == 0 or (step + 1) % label_every == 0
+            or step + 1 == training_config.n_steps
+        ):
+            with torch.no_grad():
+                probability, _ = resum_binary_moments(out)
+            label_callback(step, np.array(tgt.labels, copy=True),
+                           probability.detach().cpu().numpy().copy())
 
         optimizer.zero_grad()
         loss.backward()

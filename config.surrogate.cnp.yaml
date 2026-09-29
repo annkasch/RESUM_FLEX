@@ -1,0 +1,18 @@
+model:
+  kind: cnp
+training:
+  backend: neural
+  n_steps: 10000
+  eval_every: 250
+  learning_rate: 0.001
+  seed: 0
+  sampling:
+    strategy: positive_quota
+    positive_fraction: 0.05
+  weighting:
+    strategy: sampling_correction
+selection: voxel_rate_mae
+data_directory: outputs/optical_data_lf1500_nonzero
+output_directory: outputs/surrogates/cnp/seed0
+validation_context_events: 64
+validation_seed: 12345

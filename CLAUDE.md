@@ -346,3 +346,14 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - **Never directly continue right after conversation compression**: stop after compression. The user will re-supply the context, docs, and code to read. Do not start blindly.
 - **Always check the detailed code** if you are not sure about something, if you cannot find the answer from the code, then ask me. don't guess, but check and ask.
 - **Always update the design doc (CLAUDE.md for this project)**, with implementation details and mark the completed bullet points. and record the test results when the tests are done. you don't need to wait until a full commit is finished. you can update more frequently once a bullet point is finished.
+
+## Integrated event surrogates
+
+- `core.surrogates` provides interchangeable single-logit CNP, MLP, FT-style
+  transformer, and histogram BDT models; see `docs/surrogates.md`.
+- Use `python -m core.surrogates train config.surrogate.cnp.yaml` or the other
+  model configurations. Shared evaluation, checkpointing, and MFGP integration
+  use the same event/voxel contracts. Optional extras: bdt and optical-data.
+- The shared API supports natural and sampling-corrected positive-quota training.
+  Mixup remains in the legacy CNP API. Permutation mixup uses independent
+  Beta weights per pair within each voxel, preserving label means in expectation.

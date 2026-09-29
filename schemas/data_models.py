@@ -167,7 +167,7 @@ class StandardBatch(BaseModel):
         if self.labels.ndim != 2:
             raise ValueError(f"labels must be [B, N], got shape {self.labels.shape}")
         B, N = self.labels.shape
-        _check_binary(self.labels)
+        self._check_labels()
 
         # Modality / presence cross-check.
         if self.mode is InputMode.FULL:
@@ -209,6 +209,9 @@ class StandardBatch(BaseModel):
 
         self._warn_on_scale_imbalance()
         return self
+
+    def _check_labels(self) -> None:
+        _check_binary(self.labels)
 
     def _warn_on_scale_imbalance(self) -> None:
         """Emit :class:`ScaleImbalanceWarning` when per-feature ranges

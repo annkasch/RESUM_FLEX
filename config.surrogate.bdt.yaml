@@ -1,0 +1,9 @@
+model:
+  kind: bdt
+training:
+  backend: bdt
+selection: voxel_rate_mae
+data_directory: outputs/optical_data_lf1500_nonzero
+output_directory: outputs/surrogates/bdt/seed0
+validation_context_events: 64
+validation_seed: 12345
