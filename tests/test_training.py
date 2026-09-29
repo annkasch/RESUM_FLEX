@@ -96,15 +96,15 @@ def test_progress_callback_invoked() -> None:
     assert seen_steps == list(range(10))
 
 
-@pytest.mark.parametrize("objective", ["theory-truth", "practice-truth"])
-def test_train_cnp_routes_configured_truth_objective(monkeypatch, objective) -> None:
+@pytest.mark.parametrize("objective,gamma", [("theory-truth", 0.), ("theory-truth", 2.), ("practice-truth", 0.)])
+def test_train_cnp_routes_configured_truth_objective(monkeypatch, objective, gamma) -> None:
     import core.training as training_module
 
     seen: list[str] = []
 
-    def recording_loss(out, x_target, *, objective):
+    def recording_loss(out, x_target, *, objective, focal_gamma):
         del x_target
-        seen.append(objective)
+        seen.append((objective, focal_gamma))
         return out.mu_logit.mean()
 
     monkeypatch.setattr(training_module, "cnp_loss", recording_loss)
@@ -114,11 +114,11 @@ def test_train_cnp_routes_configured_truth_objective(monkeypatch, objective) -> 
         cnp,
         gen,
         cnp_config=CNPConfig(
-            n_context_min=8, n_context_max=16, objective=objective
+            n_context_min=8, n_context_max=16, objective=objective, focal_gamma=gamma
         ),
         training_config=_train_cfg(steps=1),
     )
-    assert seen == [objective]
+    assert seen == [(objective, gamma)]
 
 
 # ---------------------------------------------------------------------------

@@ -37,11 +37,11 @@ from core.surrogate_cnp import (
     split_context_target,
 )
 from core.surrogate_mfgp import MultiFidelityGP
+from core.surrogates.base import EventSurrogate
 from core.training import cnp_trial_predictive
 from data.pseudo_generator import PseudoDataGenerator
 from schemas.config import MFGPConfig
 from schemas.data_models import InputMode, StandardBatch
-
 
 # ---------------------------------------------------------------------------
 # Batch-based entry points (canonical user-facing API).
@@ -49,7 +49,7 @@ from schemas.data_models import InputMode, StandardBatch
 
 
 def prepare_mfgp_datasets_from_batches(
-    cnp: ConditionalNeuralProcess,
+    cnp: ConditionalNeuralProcess | EventSurrogate,
     lf_batch: StandardBatch,
     hf_batch: StandardBatch,
     *,
@@ -66,7 +66,9 @@ def prepare_mfgp_datasets_from_batches(
     Parameters
     ----------
     cnp
-        A trained Conditional Neural Process.
+        A trained Conditional Neural Process or interchangeable EventSurrogate.
+        EventSurrogate predictions are deterministic means; n_mc_samples applies
+        only to the historical two-output CNP.
     lf_batch
         Low-fidelity batch — many trials with fewer events per trial.
         Mode must be ``FULL`` or ``DESIGN_ONLY`` (must contain ``θ``).
@@ -106,6 +108,18 @@ def prepare_mfgp_datasets_from_batches(
     over the target events. ``y_raw`` averages the binary ``X`` over
     the same target events so the two metrics aggregate identically.
     """
+    if isinstance(cnp, EventSurrogate):
+        from core.surrogates.pipeline import prepare_surrogate_datasets
+
+        return prepare_surrogate_datasets(
+            cnp,
+            lf_batch,
+            hf_batch,
+            n_lf_context=n_lf_context,
+            n_hf_context=n_hf_context,
+            seed=seed,
+        )
+
     _reject_event_only(lf_batch, "lf_batch")
     _reject_event_only(hf_batch, "hf_batch")
 
@@ -131,7 +145,7 @@ def prepare_mfgp_datasets_from_batches(
 
 def evaluate_mfgp_coverage_from_batch(
     mfgp: MultiFidelityGP,
-    cnp: ConditionalNeuralProcess,
+    cnp: ConditionalNeuralProcess | EventSurrogate,
     holdout_hf_batch: StandardBatch,
     *,
     n_context: int | None = None,
@@ -220,7 +234,9 @@ def fit_mfgp_three_fidelity(
     X_list = [data["X_lf"], data["X_hf"], data["X_hf"]]
     Y_list = [data["Y_lf_cnp"], data["Y_hf_cnp"], data["Y_hf_raw"]]
     return MultiFidelityGP(
-        n_fidelities=3, dim_theta=dim_theta, kernel=selected_kernel,
+        n_fidelities=3,
+        dim_theta=dim_theta,
+        kernel=selected_kernel,
     ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose)
 
 
@@ -230,7 +246,7 @@ def fit_mfgp_three_fidelity(
 
 
 def prepare_mfgp_datasets(
-    cnp: ConditionalNeuralProcess,
+    cnp: ConditionalNeuralProcess | EventSurrogate,
     generator: PseudoDataGenerator,
     *,
     n_lf_trials: int = 100,
@@ -249,18 +265,22 @@ def prepare_mfgp_datasets(
     and call :func:`prepare_mfgp_datasets_from_batches` directly.
     """
     if generator.mode is InputMode.EVENT_ONLY:
-        raise ValueError(
-            "MFGP needs θ as input; generator mode=EVENT_ONLY has no θ."
-        )
+        raise ValueError("MFGP needs θ as input; generator mode=EVENT_ONLY has no θ.")
 
     lf_batch = generator.generate(
-        n_trials=n_lf_trials, n_events=n_lf_events, seed=seed,
+        n_trials=n_lf_trials,
+        n_events=n_lf_events,
+        seed=seed,
     )
     hf_batch = generator.generate(
-        n_trials=n_hf_trials, n_events=n_hf_events, seed=seed + 100,
+        n_trials=n_hf_trials,
+        n_events=n_hf_events,
+        seed=seed + 100,
     )
     return prepare_mfgp_datasets_from_batches(
-        cnp, lf_batch, hf_batch,
+        cnp,
+        lf_batch,
+        hf_batch,
         n_lf_context=n_lf_events // 2,
         n_hf_context=n_hf_events // 2,
         n_mc_samples=n_mc_samples,
@@ -270,7 +290,7 @@ def prepare_mfgp_datasets(
 
 def evaluate_mfgp_coverage(
     mfgp: MultiFidelityGP,
-    cnp: ConditionalNeuralProcess,
+    cnp: ConditionalNeuralProcess | EventSurrogate,
     generator: PseudoDataGenerator,
     *,
     n_test_trials: int = 100,
@@ -283,10 +303,14 @@ def evaluate_mfgp_coverage(
     Generates ``n_test_trials`` fresh held-out trials and delegates.
     """
     test = generator.generate(
-        n_trials=n_test_trials, n_events=n_test_events, seed=seed,
+        n_trials=n_test_trials,
+        n_events=n_test_events,
+        seed=seed,
     )
     return evaluate_mfgp_coverage_from_batch(
-        mfgp, cnp, test,
+        mfgp,
+        cnp,
+        test,
         n_context=n_test_events // 2,
         seed=seed,
     )
@@ -300,6 +324,5 @@ def evaluate_mfgp_coverage(
 def _reject_event_only(batch: StandardBatch, label: str) -> None:
     if batch.mode is InputMode.EVENT_ONLY:
         raise ValueError(
-            f"{label} must contain θ (mode FULL or DESIGN_ONLY); "
-            f"got mode={batch.mode.value}"
+            f"{label} must contain θ (mode FULL or DESIGN_ONLY); got mode={batch.mode.value}"
         )

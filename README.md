@@ -1,3 +1,17 @@
+## Interchangeable models
+
+CNP, MLP, tabular transformer and BDT now share `core.surrogates` for building,
+fitting, prediction, evaluation, checkpointing and MFGP preparation.
+See [the component API and migration guide](docs/surrogates.md).
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  .venv/bin/python -m core.surrogates train config.surrogate.cnp.yaml
+```
+
+Use the corresponding `.mlp.yaml`, `.transformer.yaml` or `.bdt.yaml` config to
+switch models. New runs produce the same artifact format.
+
 # RESUM_FLEX
 
 A modular refactor of **RESuM** (Rare Event Surrogate Model) — a physics-ML

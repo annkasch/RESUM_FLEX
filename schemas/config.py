@@ -14,6 +14,8 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from schemas.optical import OpticalDataConfig
+
 
 class StrictConfigModel(BaseModel):
     """Reject misspelled or retired settings instead of ignoring them."""
@@ -36,6 +38,7 @@ class EncoderConfig(StrictConfigModel):
 
 
 class CNPConfig(StrictConfigModel):
+    focal_gamma: float = Field(ge=0, allow_inf_nan=False, default=0.0)
     n_context_min: int = Field(gt=0)
     n_context_max: int = Field(gt=0)
     objective: Literal["theory-truth", "practice-truth"] = "theory-truth"
@@ -65,6 +68,8 @@ class TrainingConfig(StrictConfigModel):
     stays separate from optimization choices.
     """
 
+    mixup_context: bool = True  # False keeps real contexts with class-aware target mixup.
+    mixup_alpha: float = Field(ge=0, allow_inf_nan=False, default=0.0)
     n_steps: int = Field(gt=0, default=1500)
     learning_rate: float = Field(gt=0.0, default=1.0e-3)
     batch_size: int = Field(gt=0, default=16)
@@ -90,6 +95,7 @@ class ScenarioThresholds(StrictConfigModel):
 
 
 class Config(StrictConfigModel):
+    data: OpticalDataConfig | None = None
     seed: int = 42
     encoder: EncoderConfig
     cnp: CNPConfig

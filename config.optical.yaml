@@ -1,0 +1,85 @@
+# Optical LH5 pipeline: run from the RESUM_FLEX repository root.
+# Prepare data and check integration (does not run full model training):
+# Use data.prepare_optical_data with the data section of this configuration.
+
+seed: 42
+
+encoder:
+  type: mlp
+  latent_dim: 64
+  hidden_dims: [128, 128]
+  dropout: 0.0
+
+cnp:
+  n_context_min: 16
+  n_context_max: 64
+  objective: theory-truth
+
+mfgp:
+  kernel: rbf
+  n_fidelities: 3
+
+ivr:
+  n_mc_samples: 1000
+
+training:
+  mixup_alpha: 0.0  # Positive alpha enables legacy class-aware mixup.
+  n_steps: 1500
+  learning_rate: 1.0e-3
+  batch_size: 16
+  n_events_per_trial: 128  # Sampled per trial; full 500/5,000-event files remain stored.
+  grad_clip: 1.0
+  eval_every: 0  # Disable analytical-truth evaluation for fixed simulation data.
+  eval_batch_size: 32
+  eval_n_events: 256
+  seed: 0
+
+# Required synthetic benchmark settings; not optical-data acceptance thresholds.
+mae_thresholds:
+  s1: 0.05
+  s2: 0.08
+  s3: 0.08
+  s4: 0.12
+  s5: 0.05
+  s6: 0.08
+  s7: 0.05
+  s8: 0.08
+
+# Paths are relative to the process working directory (normally repository root).
+data:
+  source:
+    directory: data/lar_optical_map
+    exclude_files:
+      - lf/run067_x-0.088_y+0.484_z-1.462.stp.lh5
+  output_directory: outputs/optical_data
+  # One theta per voxel/file.
+  theta:
+    coordinates: cartesian  # cartesian: [x,y,z]; cylindrical: see options below.
+    center_source: filename  # filename (rounded nominal) | observed_midrange
+    cylindrical:
+      include_azimuth: true  # false gives theta=[r,z]; true retains angular position.
+      angle_encoding: sin_cos  # sin_cos: [r,sin(angle),cos(angle),z] | radians: [r,angle,z]
+  # One phi per event. Omit both components to use DESIGN_ONLY mode.
+  phi:
+    vertex:
+      representation: offset  # offset (vertex minus center) | absolute | omit
+      coordinates: cartesian  # cartesian | cylindrical
+      # Cylindrical offsets are local radial/tangential/vertical distances.
+      # Absolute cylindrical vertices retain azimuth using angle_encoding above.
+    momentum:
+      representation: components  # components | direction_and_magnitude | omit
+  target:
+    kind: any_channel  # any_channel | single_channel
+    detector_id: null  # For single_channel, supply an observed numeric ID, e.g. 5098.
+  normalization:
+    method: standard  # standard | minmax (training range 0..1) | none
+    fit_on: training  # Shared LF/HF transform; never fit on validation/test.
+  # Matching nominal centers and repeated runs stay together across HF/LF.
+  # Reuse the manifest for representation comparisons; never silently reshuffle.
+  # Dropping azimuth may require a new manifest if equivalent (r,z) inputs cross splits.
+  split:
+    train_fraction: 0.70
+    validation_fraction: 0.15
+    test_fraction: 0.15
+    seed: 42
+    manifest: outputs/optical_data/splits/voxel_split.json

@@ -139,6 +139,13 @@ class CnpOutput:
     log_sigma: torch.Tensor  # [B, N_t]
 
 
+def resum_binary_logits(out: CnpOutput) -> torch.Tensor:
+    """Effective logit whose sigmoid is the existing predictive mean."""
+    bounded_sigma = 0.1 + 0.9 * F.softplus(out.log_sigma)
+    divisor = torch.sqrt(1.0 + 3.0 / (np.pi**2) * bounded_sigma**2)
+    return out.mu_logit / torch.clamp(divisor, min=1e-4)
+
+
 def resum_binary_moments(out: CnpOutput) -> tuple[torch.Tensor, torch.Tensor]:
     """Return the binary predictive mean/scale used by original RESuM.
 
@@ -245,13 +252,16 @@ def cnp_loss(
     *,
     eps: float = 1e-6,
     objective: CnpObjective = "theory-truth",
+    focal_gamma: float = 0.0,
 ) -> torch.Tensor:
     """Dispatch to one of the two documented RESuM truth objectives.
 
     Both objectives are analytic and do not require Monte Carlo sampling.
     """
     if objective == "theory-truth":
-        return theory_truth_loss(out, x_target, eps=eps)
+        from core.binary_losses import binary_focal_loss_with_logits
+        return binary_focal_loss_with_logits(
+            resum_binary_logits(out), x_target, gamma=focal_gamma)
     if objective == "practice-truth":
         return practice_truth_loss(out, x_target)
     raise ValueError(
@@ -276,9 +286,8 @@ def theory_truth_loss(
 
     This is the probability-theory interpretation and the recommended default.
     """
-    mean, _ = resum_binary_moments(out)
-    mean = mean.clamp(eps, 1.0 - eps)
-    return F.binary_cross_entropy(mean, x_target)
+    # eps remains accepted for backwards compatibility; logits need no clamp.
+    return F.binary_cross_entropy_with_logits(resum_binary_logits(out), x_target)
 
 
 def practice_truth_loss(out: CnpOutput, x_target: torch.Tensor) -> torch.Tensor:

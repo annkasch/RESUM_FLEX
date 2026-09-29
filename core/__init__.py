@@ -1,8 +1,9 @@
 from core.networks import MLPEncoder, UniversalEncoder, build_encoder
+from core.scaling import MinMaxScaler
 from core.surrogate_cnp import (
     CnpDecoder,
-    CnpOutput,
     CnpObjective,
+    CnpOutput,
     ConditionalNeuralProcess,
     ContextPointEncoder,
     build_cnp,
@@ -12,7 +13,17 @@ from core.surrogate_cnp import (
     split_context_target,
     theory_truth_loss,
 )
-from core.scaling import MinMaxScaler
+from core.surrogates import (
+    Episode,
+    EventPrediction,
+    EventSurrogate,
+    build_surrogate,
+    evaluate_surrogate,
+    fit_surrogate,
+    load_surrogate,
+    prepare_surrogate_datasets,
+    save_surrogate,
+)
 from core.training import (
     TrainingHistory,
     cnp_trial_predictive,
@@ -77,6 +88,7 @@ def __getattr__(name: str):
     globals()[name] = value
     return value
 
+
 __all__ = [
     "ActiveLearningLoop",
     "ActiveLearningStep",
@@ -118,4 +130,16 @@ __all__ = [
     "split_context_target",
     "theory_truth_loss",
     "train_cnp",
+]
+
+__all__ += [
+    "Episode",
+    "EventPrediction",
+    "EventSurrogate",
+    "build_surrogate",
+    "evaluate_surrogate",
+    "fit_surrogate",
+    "load_surrogate",
+    "prepare_surrogate_datasets",
+    "save_surrogate",
 ]
