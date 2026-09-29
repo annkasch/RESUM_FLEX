@@ -68,14 +68,23 @@ ModelSpec = Annotated[
 ]
 
 
+class MixupConfig(StrictConfigModel):
+    alpha: float = Field(default=0.2, gt=0, allow_inf_nan=False)
+    mix_context: bool = False
+
+
 class SamplingConfig(StrictConfigModel):
-    strategy: Literal["natural", "positive_quota"] = "natural"
+    strategy: Literal["natural", "positive_quota", "class_aware_mixup"] = "natural"
     positive_fraction: float | None = Field(default=None, gt=0, lt=1, allow_inf_nan=False)
+
+    mixup: MixupConfig | None = None
 
     @model_validator(mode="after")
     def quota(self):
         if (self.strategy == "positive_quota") != (self.positive_fraction is not None):
             raise ValueError("positive_fraction is required only for positive_quota sampling")
+        if (self.strategy == "class_aware_mixup") != (self.mixup is not None):
+            raise ValueError("mixup settings are required only for class_aware_mixup sampling")
         return self
 
 
@@ -111,6 +120,8 @@ class NeuralTraining(StrictConfigModel):
     def compatible(self):
         if not self.n_context_min <= self.n_context_max <= self.n_events - 2:
             raise ValueError("Context range must leave at least two target events")
+        if self.sampling.strategy == "class_aware_mixup" and self.weighting.strategy != "none":
+            raise ValueError("class_aware_mixup currently requires weighting=none")
         quota = self.sampling.strategy == "positive_quota"
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:

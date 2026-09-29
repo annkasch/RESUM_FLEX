@@ -371,3 +371,15 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Validation: all 21 targeted mixup and training tests passed.
 - User workflow: commit and push verified integrated changes regularly to the
   fork (origin); exclude experimental notebooks and scripts.
+
+## Shared class-aware mixup integration
+
+
+- NeuralTraining sampling.strategy=class_aware_mixup with nested mixup.alpha
+  and mixup.mix_context connects the fresh-split sampler to all neural models.
+- Context sizes follow the configured random range; real validation is preserved.
+  BDT, positive quotas, and weighting corrections cannot be combined with mixup.
+- Audits report soft-label mass/mean rather than truncated positive counts.
+  Example: config.surrogate.cnp.mixup.yaml.
+- Validation: shared API, mixup, training and target-sampling tests passed;
+  dedicated end-to-end mixup artifact test passed; Ruff checks passed.

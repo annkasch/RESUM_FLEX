@@ -73,16 +73,22 @@ class ClassAwareMixupSource:
     def _draw(rng, pool, size):
         return rng.choice(pool, size=size, replace=len(pool) < size)
 
-    def next(self):
+    def next(self, *, n_context=None):
+        nc = self.nc if n_context is None else n_context
+        n_events = self.nc + self.nt
+        if not 0 < nc < n_events:
+            raise ValueError("Context size must leave target events")
+        nt = n_events - nc
+        pool_size = min(self.batch.n_events - 1, max(1, round(self.batch.n_events * nc / n_events)))
         trials = self.rng.integers(self.batch.batch_size, size=self.batch_size)
         pools = []
         for _ in trials:
             indices = self.rng.permutation(self.batch.n_events)
-            pools.append((indices[:self.context_pool_size], indices[self.context_pool_size:]))
+            pools.append((indices[:pool_size], indices[pool_size:]))
 
         result = []
         self.last_provenance = []
-        for side, size in ((0, self.nc), (1, self.nt)):
+        for side, size in ((0, nc), (1, nt)):
             labels, features = [], []
             for row, voxel in enumerate(trials):
                 pool = pools[row][side]
@@ -99,8 +105,13 @@ class ClassAwareMixupSource:
                     weight = np.zeros(size)
                 y = (1 - weight) * source_labels[anchors] + weight * source_labels[partners]
                 provenance = dict(
-                    row=row, voxel=int(voxel), side=side, source_pool=pool.copy(),
-                    anchors=anchors.copy(), partners=partners.copy(), weights=weight.copy(),
+                    row=row,
+                    voxel=int(voxel),
+                    side=side,
+                    source_pool=pool.copy(),
+                    anchors=anchors.copy(),
+                    partners=partners.copy(),
+                    weights=weight.copy(),
                 )
                 # Consume identical augmentation draws for both context modes.
                 if side == 0 and not self.mix_context:
@@ -118,10 +129,12 @@ class ClassAwareMixupSource:
                         )
                 self.last_provenance.append(provenance)
             carrier = StandardBatch if side == 0 and not self.mix_context else SoftTargetBatch
-            result.append(carrier(
-                mode=self.batch.mode,
-                theta=None if self.batch.theta is None else self.batch.theta[trials],
-                phi=None if self.batch.phi is None else np.stack(features),
-                labels=np.stack(labels),
-            ))
+            result.append(
+                carrier(
+                    mode=self.batch.mode,
+                    theta=None if self.batch.theta is None else self.batch.theta[trials],
+                    phi=None if self.batch.phi is None else np.stack(features),
+                    labels=np.stack(labels),
+                )
+            )
         return tuple(result)

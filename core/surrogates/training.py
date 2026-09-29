@@ -112,19 +112,43 @@ def fit_surrogate(
         torch.manual_seed(training.seed)
         model.module.to(training.device).train()
         optimizer = torch.optim.Adam(model.module.parameters(), lr=training.learning_rate)
-        sampler = RealTargetSampler(
-            train,
+        mixup = training.sampling.strategy == "class_aware_mixup"
+        sampler_args = dict(
             seed=training.seed,
             batch_size=training.batch_size,
             n_events=training.n_events,
-            n_context_min=training.n_context_min,
-            n_context_max=training.n_context_max,
-            positive_fraction=training.sampling.positive_fraction,
         )
+        if mixup:
+            from core.mixup import ClassAwareMixupSource
+
+            sampler = ClassAwareMixupSource(
+                train,
+                **sampler_args,
+                n_context=training.n_context_min,
+                alpha=training.sampling.mixup.alpha,
+                mix_context=training.sampling.mixup.mix_context,
+            )
+            size_rng = np.random.default_rng(np.random.SeedSequence([training.seed, 2]))
+        else:
+            sampler = RealTargetSampler(
+                train,
+                **sampler_args,
+                n_context_min=training.n_context_min,
+                n_context_max=training.n_context_max,
+                positive_fraction=training.sampling.positive_fraction,
+            )
         positives, events, losses = 0, 0, []
+        label_mass, soft_events = 0.0, 0
         for step in range(1, training.n_steps + 1):
-            context, target, weights = sampler.next()
-            positives += int(target.labels.sum())
+            if mixup:
+                nc = int(size_rng.integers(training.n_context_min, training.n_context_max + 1))
+                context, target = sampler.next(n_context=nc)
+                weights = None
+                label_mass += float(target.labels.sum())
+                soft_events += int(((target.labels > 0) & (target.labels < 1)).sum())
+            else:
+                context, target, weights = sampler.next()
+                positives += int(target.labels.sum())
             events += int(target.labels.size)
             w = training.weighting
             if w.strategy == "class_weights":
@@ -152,6 +176,18 @@ def fit_surrogate(
             positive_fraction=positives / events,
             requested_positive_fraction=training.sampling.positive_fraction,
         )
+        if mixup:
+            audit = dict(
+                strategy=training.sampling.strategy,
+                events=events,
+                label_mass=label_mass,
+                mean_target_label=label_mass / events,
+                soft_label_events=soft_events,
+                alpha=training.sampling.mixup.alpha,
+                mix_context=training.sampling.mixup.mix_context,
+                source_split="fresh_per_batch",
+                weighting="none",
+            )
     model.metadata["sampling_audit"] = audit
     if destination:
         model.save(destination / "final", metadata={"step": last_step})

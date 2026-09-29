@@ -91,8 +91,8 @@ These settings are deliberately separate:
 - BDT fits all original events, optionally with explicit class weights. It rejects
   neural losses, oversampling settings and sampling correction.
 
-The new API rejects unknown keys, including mixup and Gaussian-loss settings.
-Those historical experiments remain available through their existing APIs.
+The API rejects unknown keys, including legacy top-level mixup_alpha and
+Gaussian-loss settings. Class-aware mixup uses the nested sampling config below.
 There is no silent fallback from one loss or sampler to another. Class weights
 and focal losses can change probability calibration; the saved config records
 these choices. AP is explicitly undefined (`None`, with empty PR arrays) for
@@ -133,7 +133,7 @@ Use the component API or the common runner for training and evaluation. Shared c
 metrics improve reproducibility but do not make context-conditioned CNP and
 context-free models identical comparisons, or eliminate validation-selection bias.
 
-## Legacy class-aware mixup
+## Class-aware mixup
 
 `core.mixup.ClassAwareMixupSource` samples voxels uniformly with replacement.
 For each voxel occurrence in each batch, it freshly partitions the full source
@@ -147,4 +147,30 @@ serve either side across batches; it is not permanently reserved for targets.
 seeds, both modes use identical splits and targets. Real-event and negative-anchor
 sampling uses replacement only if a pool is too small for the requested batch.
 This is batch sampling, without a once-per-epoch negative coverage guarantee.
-The shared surrogate API still does not accept mixup configuration.
+CNP, MLP, and transformer training support this sampler through the shared API:
+
+```yaml
+training:
+  backend: neural
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: false
+  weighting:
+    strategy: none
+```
+
+Run `python -m core.surrogates train config.surrogate.cnp.mixup.yaml`.
+Change the model kind for MLP or transformer. Only CNP uses context observations;
+other neural models use the same mixed targets. Context size is randomly chosen
+within `n_context_min` / `n_context_max` each batch. Mixup defaults to real context.
+Stable BCE (`focal_gamma: 0`) accepts soft target labels. BDT does not support
+this sampler. Sampling correction and class weights are rejected with mixup;
+no probability-bias correction is implied. Positive quotas cannot be combined
+with it. Permutation mixup remains a standalone utility.
+
+Validation and reported train/validation metrics use real binary events. The
+sampling audit records soft-label mass, mean target label, and soft-label event
+count instead of treating soft labels as positive-event counts. Resolved mixup
+settings are saved in checkpoints and experiment metadata.
