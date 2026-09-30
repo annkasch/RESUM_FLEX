@@ -32,6 +32,10 @@ class CNPModel(StrictConfigModel):
         return self
 
 
+class LegacyCNPModel(CNPModel):
+    kind: Literal["legacy_cnp"] = "legacy_cnp"
+
+
 class MLPArchitecture(StrictConfigModel):
     hidden_dims: list[Annotated[int, Field(gt=0)]] = Field(
         default_factory=lambda: [128, 128], min_length=1
@@ -64,7 +68,7 @@ class BDTModel(StrictConfigModel):
 
 
 ModelSpec = Annotated[
-    CNPModel | MLPModel | TransformerModel | BDTModel, Field(discriminator="kind")
+    CNPModel | LegacyCNPModel | MLPModel | TransformerModel | BDTModel, Field(discriminator="kind")
 ]
 
 
@@ -125,6 +129,7 @@ class NeuralTraining(StrictConfigModel):
     seed: int = 0
     device: Literal["cpu", "cuda"] = "cpu"
     grad_clip: float | None = Field(default=1.0, gt=0, allow_inf_nan=False)
+    loss: Literal["bernoulli", "theory-truth", "practice-truth"] = "bernoulli"
     focal_gamma: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     objective: ObjectiveSpec = Field(default_factory=SingleObjective)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
@@ -140,7 +145,11 @@ class NeuralTraining(StrictConfigModel):
             if self.sampling.strategy != "class_aware_mixup":
                 raise ValueError("real_plus_mixup requires class_aware_mixup sampling")
             if self.focal_gamma != 0 or self.weighting.strategy != "none":
-                raise ValueError("real_plus_mixup requires stable BCE without extra weights")
+                raise ValueError("real_plus_mixup requires an unfocused loss without extra weights")
+        if self.loss != "bernoulli" and (
+            self.focal_gamma != 0 or self.weighting.strategy != "none"
+        ):
+            raise ValueError("Legacy losses require focal_gamma=0 and weighting=none")
         quota = self.sampling.strategy == "positive_quota"
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:
@@ -172,6 +181,13 @@ class SurrogateConfig(StrictConfigModel):
     def backend_matches(self):
         if (self.model.kind == "bdt") != (self.training.backend == "bdt"):
             raise ValueError("BDT requires backend=bdt; neural models require backend=neural")
+        if self.training.backend == "neural":
+            legacy = self.model.kind == "legacy_cnp"
+            if legacy != (self.training.loss in ("theory-truth", "practice-truth")):
+                raise ValueError(
+                    "legacy_cnp requires an explicit theory-truth or practice-truth loss; "
+                    "single-logit models require bernoulli"
+                )
         return self
 
 

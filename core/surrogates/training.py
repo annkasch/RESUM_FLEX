@@ -39,6 +39,7 @@ def fit_surrogate(
         selection=selection,
         uses_context=model.uses_context,
         uncertainty=False,
+        prediction_scale="legacy_proxy" if model.config.kind == "legacy_cnp" else None,
     )
 
     def snapshot():
@@ -107,6 +108,18 @@ def fit_surrogate(
         from core.binary_losses import binary_focal_loss_with_logits
         from core.target_sampling import RealTargetSampler
 
+        def event_loss(output, labels, weights=None):
+            if model.config.kind == "legacy_cnp":
+                from core.surrogate_cnp import cnp_loss
+
+                labels = torch.as_tensor(
+                    labels, dtype=output.mu_logit.dtype, device=output.mu_logit.device
+                )
+                return cnp_loss(output, labels, objective=training.loss)
+            return binary_focal_loss_with_logits(
+                output, labels, gamma=training.focal_gamma, weights=weights
+            )
+
         if training.n_events > train.n_events:
             raise ValueError("n_events exceeds available training events per voxel")
         if training.device == "cuda" and not torch.cuda.is_available():
@@ -166,13 +179,11 @@ def fit_surrogate(
             if w.strategy == "class_weights":
                 weights = np.where(target.labels == 1, w.positive, w.negative)
             logits = model.module(context, target)
-            loss = binary_focal_loss_with_logits(
-                logits, target.labels, gamma=training.focal_gamma, weights=weights
-            )
+            loss = event_loss(logits, target.labels, weights)
             if combined:
                 mixup_loss = loss
                 real_logits = model.module(context, real_target)
-                real_loss = binary_focal_loss_with_logits(real_logits, real_target.labels, gamma=0)
+                real_loss = event_loss(real_logits, real_target.labels)
                 loss = real_loss + training.objective.mixup_loss_weight * mixup_loss
                 real_losses.append(float(real_loss.detach()))
                 mixup_losses.append(float(mixup_loss.detach()))
@@ -187,10 +198,11 @@ def fit_surrogate(
             if step % training.eval_every == 0 or step == training.n_steps:
                 components = None
                 if combined:
-                    components = dict(
-                        training_real_bce=float(np.mean(real_losses)),
-                        training_mixup_bce=float(np.mean(mixup_losses)),
-                    )
+                    suffix = "nll" if training.loss == "practice-truth" else "bce"
+                    components = {
+                        f"training_real_{suffix}": float(np.mean(real_losses)),
+                        f"training_mixup_{suffix}": float(np.mean(mixup_losses)),
+                    }
                     real_losses.clear()
                     mixup_losses.clear()
                 observe(step, float(np.mean(losses)), components)

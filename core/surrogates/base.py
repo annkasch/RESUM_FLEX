@@ -15,12 +15,18 @@ class EventPrediction:
     """Raw logits [voxel,event]; no inferred Gaussian/epistemic uncertainty."""
 
     logits: np.ndarray
+    legacy_scale: np.ndarray | None = None
 
     def __post_init__(self):
         value = np.asarray(self.logits, dtype=float)
         if value.ndim != 2 or not value.size or not np.isfinite(value).all():
             raise ValueError("Expected finite nonempty [voxel,event] logits")
         object.__setattr__(self, "logits", value)
+        if self.legacy_scale is not None:
+            scale = np.asarray(self.legacy_scale, dtype=float)
+            if scale.shape != value.shape or not np.isfinite(scale).all() or np.any(scale <= 0):
+                raise ValueError("Expected positive finite legacy scale matching logits")
+            object.__setattr__(self, "legacy_scale", scale)
 
     @property
     def probabilities(self):

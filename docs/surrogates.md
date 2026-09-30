@@ -223,3 +223,44 @@ binary events. This is an experimental augmentation objective, not an unbiased
 probability correction or an established performance improvement.
 
 Example: `python -m core.surrogates train config.surrogate.cnp.real_plus_mixup.yaml`.
+
+## Legacy two-output CNP
+
+`model.kind: legacy_cnp` wraps the existing `build_cnp` architecture without
+changing its decoder or likelihood definitions. Set `training.loss` explicitly:
+
+- `theory-truth`: Bernoulli NLL on the effective logit computed from both outputs.
+- `practice-truth`: the original Gaussian NLL on the transformed mean and scale.
+
+Single-logit models keep `training.loss: bernoulli` (the default). Mismatched
+model/loss settings fail validation. Legacy losses currently require no extra
+weights and `focal_gamma: 0`. Natural sampling, class-aware mixup alone, and
+`objective.strategy: real_plus_mixup` are supported. For the combined objective,
+**both** branches use the selected legacy loss and one optimizer update:
+`mean(real legacy loss) + mixup_loss_weight * mean(mixed legacy loss)`.
+
+The `practice-truth` combined history uses `training_real_nll` and
+`training_mixup_nll`; `theory-truth` retains the BCE component names. These replace
+the BCE-only restriction described above specifically for the legacy adapter.
+Both output channels receive gradients. The Beta mixing parameter and relative
+loss weight remain separate settings.
+
+Shared predictions use `resum_binary_logits` (whose sigmoid is the transformed
+mean), not the historical `predict_beta` helper's sigmoid of the raw mean logit.
+The transformed scale is preserved as `EventPrediction.legacy_scale` and in
+saved evaluation arrays under `legacy_scale`. It is the original scale proxy,
+not a calibrated uncertainty estimate or an MFGP noise variance. Shared metrics,
+PR curves, mean plots and MFGP preparation use the effective probabilities.
+Validation labels stay real and binary even with the Gaussian training loss.
+The common `bernoulli_log_loss` metric remains Bernoulli log loss for comparison;
+it is not the Gaussian training objective.
+
+Example configurations (both use the combined real/mixed objective):
+
+- `config.surrogate.legacy_cnp.theory-truth.yaml`
+- `config.surrogate.legacy_cnp.practice-truth.yaml`
+
+Run either with `python -m core.surrogates train CONFIG.yaml`. New checkpoints
+roundtrip both output channels through the standard loader. Importing historical
+two-output checkpoint files still uses `core.training.load_checkpoint`; the
+single-logit legacy importer does not silently convert those files.

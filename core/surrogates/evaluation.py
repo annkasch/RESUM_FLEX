@@ -56,4 +56,6 @@ def evaluate_surrogate(model, target, *, context=None):
         recall=curve["recall"],
         logit_threshold=curve["logit_threshold"],
     )
+    if prediction.legacy_scale is not None:
+        arrays["legacy_scale"] = prediction.legacy_scale
     return metrics, arrays

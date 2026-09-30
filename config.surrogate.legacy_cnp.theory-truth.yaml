@@ -1,0 +1,25 @@
+model:
+  kind: legacy_cnp
+training:
+  backend: neural
+  loss: theory-truth
+  n_steps: 10000
+  eval_every: 250
+  learning_rate: 0.001
+  seed: 0
+  objective:
+    strategy: real_plus_mixup
+    mixup_loss_weight: 0.001
+    real_target_ratio: 1.0
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: false
+  weighting:
+    strategy: none
+selection: voxel_rate_mae
+data_directory: outputs/optical_data_lf1500_nonzero
+output_directory: outputs/surrogates/legacy_cnp_theory-truth/seed0
+validation_context_events: 64
+validation_seed: 12345
