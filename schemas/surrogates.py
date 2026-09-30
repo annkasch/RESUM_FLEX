@@ -191,7 +191,15 @@ class SurrogateConfig(StrictConfigModel):
         return self
 
 
+class MFGPStageConfig(StrictConfigModel):
+    kernel: Literal["rbf", "matern52"] = "rbf"
+    n_restarts: int = Field(default=5, gt=0)
+    seed: int = 0
+    n_context: int = Field(default=64, gt=0)
+
+
 class SurrogateRunConfig(SurrogateConfig):
+    mfgp: MFGPStageConfig | None = None
     data_directory: Path
     output_directory: Path
     validation_context_events: int = Field(default=64, gt=0)

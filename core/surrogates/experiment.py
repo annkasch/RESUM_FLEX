@@ -94,4 +94,8 @@ def run_experiment(config: SurrogateRunConfig):
     from viz.surrogate import plot_surrogate_run
 
     plot_surrogate_run(output)
+    if config.mfgp is not None:
+        from core.surrogates.mfgp_stage import run_mfgp_stage
+
+        run_mfgp_stage(config, load_surrogate(output / "checkpoints/best"))
     return output
