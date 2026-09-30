@@ -1,7 +1,8 @@
 """Correlated posterior-draw marginalization of a three-coordinate GP.
 
-Follows RESOLVE's draw -> spatial average -> posterior quantiles recipe, using
-joint latent GP draws and midpoint volume weights. No observation noise is added.
+Supports RESOLVE-style uncertainty in spatial averages and predictive fractions
+for individual voxels. Both use joint latent GP draws and midpoint volume weights.
+Predictive fractions add binomial counting noise, never GP likelihood noise.
 """
 
 import hashlib
@@ -57,6 +58,22 @@ def average_grid(values, mask, keep):
     return result
 
 
+def sample_locations(values, mask, keep, rng):
+    """One uniformly chosen valid location per retained bin and posterior draw."""
+    shape = tuple(mask.shape[i] for i in keep)
+    result = np.full((len(values), *shape), np.nan)
+    for index in np.ndindex(shape):
+        selector = [slice(None)] * 3
+        for axis, coordinate in zip(keep, index, strict=True):
+            selector[axis] = coordinate
+        valid = mask[tuple(selector)].ravel()
+        if valid.any():
+            candidates = values[(slice(None), *selector)].reshape(len(values), -1)[:, valid]
+            selected = rng.integers(candidates.shape[1], size=len(values))
+            result[(slice(None), *index)] = candidates[np.arange(len(values)), selected]
+    return result
+
+
 def marginalize_posterior(gp, training_theta, offset, scale, settings):
     """Return original-unit mean/quantiles of conditional uniform-volume averages."""
     axes, edges, points, mask, bounds = projection_grid(training_theta, settings)
@@ -80,7 +97,11 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
     full_mean = np.zeros(len(points))
     full_mean[chosen] = point_mean
     full_mean = full_mean.reshape((1, *mask.shape))
+    predictive = settings.quantity == "observed_fraction"
+    if predictive and settings.target_events is None:
+        raise ValueError("Observed-fraction projections require target_events")
     draws_by_projection = {keep: [] for keep in PROJECTIONS}
+    observation_rng = np.random.default_rng(np.random.SeedSequence([settings.seed, 1]))
     rng = np.random.default_rng(settings.seed)
     for start in range(0, settings.n_draws, 256):
         size = min(256, settings.n_draws - start)
@@ -88,11 +109,22 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
         if log_mode:
             with np.errstate(over="raise", invalid="raise"):
                 draws = np.exp(draws)
+        if predictive:
+            if np.any((draws < 0) | (draws > 1)):
+                raise ValueError(
+                    "GP latent draws fall outside [0,1]; cannot use as binomial probabilities. "
+                    "Use a probability-bounded model; predictions are not silently clipped."
+                )
+            draws = observation_rng.binomial(settings.target_events, draws) / settings.target_events
         full = np.zeros((size, len(points)))
         full[:, chosen] = draws
         full = full.reshape((size, *mask.shape))
         for keep in PROJECTIONS:
-            draws_by_projection[keep].append(average_grid(full, mask, keep))
+            draws_by_projection[keep].append(
+                sample_locations(full, mask, keep, observation_rng)
+                if predictive
+                else average_grid(full, mask, keep)
+            )
     arrays = {f"axis_{i}": axis for i, axis in enumerate(axes)}
     arrays.update({f"edges_{i}": edge for i, edge in enumerate(edges)})
     arrays.update(domain_mask=mask, bounds=bounds)
@@ -104,7 +136,12 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
         for k in (1, 2, 3):
             tail = (1 - erf(k / sqrt(2))) / 2
             low, high = np.full(valid.shape, np.nan), np.full(valid.shape, np.nan)
-            low[valid], high[valid] = np.quantile(samples[:, valid], [tail, 1 - tail], axis=0)
+            low[valid], high[valid] = np.quantile(
+                samples[:, valid],
+                [tail, 1 - tail],
+                axis=0,
+                method="inverted_cdf" if predictive else "linear",
+            )
             arrays[f"lower_{k}_{key}"] = low
             arrays[f"upper_{k}_{key}"] = high
     return arrays, dict(
@@ -113,11 +150,24 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
         total_grid_points=len(points),
         cholesky_jitter=jitter,
         interval_probabilities=[erf(k / sqrt(2)) for k in (1, 2, 3)],
-        uncertainty="Latent function posterior, conditional on fitted GP hyperparameters",
+        quantity=settings.quantity,
+        target_events=settings.target_events if predictive else None,
+        uncertainty=(
+            "Spatial variation + latent posterior uncertainty + binomial counting noise; "
+            "unconditional on nonzero-hit selection"
+        )
+        if predictive
+        else "Latent function posterior, conditional on fitted GP hyperparameters",
         weighting=(
             "Uniform physical-volume midpoint cells within domain; normalized per projection bin"
         ),
-        transform="Exponentiate each joint draw before averaging" if log_mode else "Identity",
+        transform=(
+            "Exponentiate latent draws, sample locations and binomial counts"
+            if predictive and log_mode
+            else "Exponentiate each joint draw before averaging"
+            if log_mode
+            else "Identity"
+        ),
         domain_note="Training convex hull is an empirical support region, not a tank geometry model"
         if settings.domain == "training_convex_hull"
         else "User-specified physical box",
@@ -136,15 +186,43 @@ def ensure_mfgp_projections(directory, settings):
     sources = [
         directory / name for name in ("model.pkl", "training_arrays.npz", "hf_validation.npz")
     ]
+    if settings.quantity == "observed_fraction" and settings.target_events is None:
+        with np.load(directory / "hf_validation.npz") as validation:
+            n_target = int(validation["target_events"]) if "target_events" in validation else None
+        if n_target is None:
+            # Older runs: recover N only from the exact prepared batch used in that run.
+            model_meta = json.loads((directory / "model.json").read_text())
+            experiment = json.loads((directory.parent / "experiment.json").read_text())
+            record = model_meta["data"]["validation/hf"]
+            batch_path = Path(record["path"])
+            if (
+                not batch_path.exists()
+                or hashlib.sha256(batch_path.read_bytes()).hexdigest() != record["sha256"]
+            ):
+                raise ValueError(
+                    "Cannot recover saved target N; set projections.target_events explicitly"
+                )
+            with np.load(batch_path) as batch:
+                n_target = (
+                    batch["labels"].shape[1]
+                    - experiment["resolved_config"]["validation_context_events"]
+                )
+        if n_target <= 0:
+            raise ValueError("Saved target-event count must be positive")
+        settings = settings.model_copy(update={"target_events": n_target})
     norm_path = directory / "normalization.json"
     if norm_path.exists():
         sources.append(norm_path)
     signature = dict(
-        version=1,
+        version=3,
         config=settings.model_dump(mode="json"),
         sources={p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources},
     )
-    output = directory / "projections"
+    output = directory / (
+        "projections_observed_fraction"
+        if settings.quantity == "observed_fraction"
+        else "projections"
+    )
     metadata_path = output / "metadata.json"
     data_path = output / "projections.npz"
     valid = False

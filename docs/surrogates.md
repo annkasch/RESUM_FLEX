@@ -547,3 +547,37 @@ Overlaid observations are individual voxel measurements at different omitted
 coordinates, not volume-marginalized measurements. Their scatter includes spatial
 variation and counting noise. Their inclusion in the marginal bands is **not** a
 coverage test. Three-sigma tail quantiles are Monte Carlo estimates, not exact.
+
+### Predictive projections for observed voxel fractions (projection 3)
+
+The optical config now selects `mfgp.projections.quantity: observed_fraction`.
+`latent_mean` remains available for uncertainty in spatial averages. Predictive
+projections retain variation between locations: for each posterior draw and each
+retained coordinate bin, uniformly select a valid grid location in the omitted
+coordinates, then use a binomial count with its latent probability. The resulting
+`m/N` samples determine discrete equal-tail 68.27/95.45/99.73% quantiles. No
+spatial averaging occurs before these quantiles. The central curve remains the
+population mean. Both 1D and plane projections support this mode.
+
+`target_events: null` (default) recovers N from the saved HF validation artifact.
+New runs store it explicitly. For older runs, recovery uses the fingerprint-checked
+prepared validation batch and saved context count, or requires an explicit
+`target_events` override if those inputs are unavailable. Current optical settings
+use 5000 - 64 = 4936, not 5000. A different N describes a different simulation
+budget and should not be interpreted as matched to the overlaid measurements.
+
+Only latent GP uncertainty is sampled; fitted Gaussian observation noise is not
+added alongside binomial noise. Treating the latent log-GP as a probability model
+is approximate because fitting used smoothed rates. Any sampled probabilities
+outside [0,1] cause an error rather than clipping. The log-GP does not enforce
+probability support; substantial excursions need a bounded model.
+
+These are **unconditional** predictions, allowing zero counts, over a uniform
+spatial population in the configured domain. Current nonzero-selected HF files
+and their spatial sampling do not represent that population exactly. Overlays
+remain descriptive, not evidence of nominal predictive coverage. No rejection
+sampling or conditioning on positive counts is silently applied.
+
+Artifacts are written under `mfgp/projections_observed_fraction/`, keeping the
+latent-mean artifacts separate. Grid/draw resolution and tail Monte Carlo error
+remain relevant; discrete intervals may contain more than nominal probability.
