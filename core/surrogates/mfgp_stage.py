@@ -77,6 +77,10 @@ def run_mfgp_stage(config, surrogate, *, output_directory=None):
         variance="GP observation-predictive variance including fitted per-level Gaussian noise",
         noise="Learned per-fidelity constant noise; CNP scale is not used as GP noise",
         log_likelihood=float(gp.model.log_likelihood()),
+        optimization_runs=[dict(status=str(r.status),
+                                function_evaluations=int(r.funct_eval),
+                                objective=float(r.f_opt))
+                           for r in gp.model.optimization_runs],
         parameter_names=gp.model.parameter_names(),
         parameters=gp.model.param_array.tolist(),
     )

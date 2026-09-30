@@ -406,6 +406,8 @@ parameters; event counts are not prescribed as known noise variances.
 Highest-fidelity predictions, maps and coverage always use the final level,
 which is level 5 here. Saved model metadata lists level names and row counts;
 training arrays include each level's exact X/Y values and LF source event counts.
+Model metadata also records optimizer status for every restart; reaching an
+evaluation limit should not be interpreted as convergence.
 LF validation, if enabled, is evaluated at each group's corresponding level.
 
 To refit just the GP using a completed run's CNP, load its saved configuration
