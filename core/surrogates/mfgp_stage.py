@@ -18,12 +18,15 @@ def run_mfgp_stage(config, surrogate):
     directory = config.output_directory / "mfgp"
     directory.mkdir(exist_ok=False)
     batches, provenance = {}, {}
-    for split, fid in [
+    partitions = [
         ("train", "lf"),
         ("train", "hf"),
         ("validation", "lf"),
         ("validation", "hf"),
-    ]:
+    ]
+    for split, fid in partitions:
+        if (split, fid) == ("validation", "lf") and not config.lf_validation:
+            continue
         path = config.data_directory / "batches" / split / f"{fid}.npz"
         batches[split, fid] = load_prepared_batch(path)
         provenance[f"{split}/{fid}"] = dict(
@@ -64,6 +67,8 @@ def run_mfgp_stage(config, surrogate):
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
     metrics = []
     for fid in ("lf", "hf"):
+        if ("validation", fid) not in batches:
+            continue
         batch = batches["validation", fid]
         context, target = split_context_target(
             batch, config.validation_context_events, seed=config.validation_seed

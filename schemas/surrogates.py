@@ -199,6 +199,7 @@ class MFGPStageConfig(StrictConfigModel):
 
 
 class SurrogateRunConfig(SurrogateConfig):
+    lf_validation: bool = True
     mfgp: MFGPStageConfig | None = None
     data_directory: Path
     output_directory: Path

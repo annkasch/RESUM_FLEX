@@ -10,12 +10,15 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-def test_full_pipeline_and_mfgp_roundtrip(tmp_path):
+@pytest.mark.parametrize("lf_validation", [True, False])
+def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
     pytest.importorskip("GPy")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
     for split in ("train", "validation"):
         for fid in ("lf", "hf"):
+            if split == "validation" and fid == "lf" and not lf_validation:
+                continue
             batch = source.generate(n_trials=4, n_events=24)
             folder = root / "batches" / split
             folder.mkdir(parents=True, exist_ok=True)
@@ -43,10 +46,25 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path):
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
+        lf_validation=lf_validation,
     )
     out = run_experiment(config)
     meta = json.loads((out / "mfgp/model.json").read_text())
-    assert set(meta["data"]) == {"train/lf", "train/hf", "validation/lf", "validation/hf"}
+    expected = {"train/lf", "train/hf", "validation/hf"}
+    if lf_validation:
+        expected.add("validation/lf")
+    assert set(meta["data"]) == expected
+    if not lf_validation:
+        assert not (out / "mfgp/lf_validation.npz").exists()
+        assert not (out / "lf_means.png").exists()
+        assert (out / "training_history.png").exists()
+        assert (out / "lf_precision_recall.png").exists()
+        manifest = json.loads((out / "experiment.json").read_text())
+        assert manifest["selection_split"] is None
+        best = json.loads((out / "checkpoints/best/model.json").read_text())
+        assert best["metadata"]["step"] == 2
+        with np.load(out / "hf_validation_best.npz") as best_arrays, np.load(out / "hf_validation_final.npz") as final_arrays:
+            np.testing.assert_array_equal(best_arrays["predicted"], final_arrays["predicted"])
     assert meta["test_data"] == "Not loaded"
     assert (out / "mfgp/hf_coverage.png").exists()
     assert (out / "mfgp/model.pkl").exists()

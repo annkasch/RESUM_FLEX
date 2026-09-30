@@ -429,3 +429,21 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   normalization fit-file membership verified. Two-step CNP / one-restart GP smoke
   run passed, producing 10 HF GP training rows and 46 HF validation predictions
   with coverage plots. Full training has not been rerun for this split.
+
+## All-LF training experiment
+
+- User requested all LF voxels for training, skipping LF validation. Interpret as
+  all 159 retained non-zero-hit LF voxels (including former LF test); zero-hit
+  filtering remains in force. HF assignments stay exactly 10 training / 46 validation.
+- New prepared dataset outputs/optical_data_alllf_hf10_nonzero, saved manifest and
+  policy; normalization refitted on training only. Previous dataset retained.
+- Added lf_validation run flag (default true); optical config sets false. Shared
+  workflow skips LF validation input/evaluation/GP diagnostics and uses final CNP
+  checkpoint via existing no-validation trainer behavior. HF is never used for
+  CNP checkpoint selection. Training history and LF training PR remain visible.
+- Updated notebook and regression test to cover absent LF validation data.
+- Validation: 121 surrogate/legacy/MFGP regression cases passed, including both
+  LF-validation modes. All notebook code cells passed a two-step CNP / one-restart
+  GP smoke run; HF predictions were finite and coverage plots generated. GPy
+  emitted numerical warnings during smoke optimization but completed. Full
+  10,000-step training has not been rerun for this test configuration.
