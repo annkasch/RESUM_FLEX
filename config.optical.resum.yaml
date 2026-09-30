@@ -1,4 +1,4 @@
-# Full offline RESuM optical map; prepared LF voxels have non-zero hits.
+# Full offline RESuM optical map; non-zero-hit LF/HF; 10 HF training, 46 HF validation.
 model:
   kind: legacy_cnp
   encoder:
@@ -29,8 +29,8 @@ training:
   weighting:
     strategy: none
 selection: voxel_rate_mae
-data_directory: outputs/optical_data_lf1500_nonzero
-output_directory: outputs/optical_resum/legacy_mixup_context/seed0
+data_directory: outputs/optical_data_lf1500_hf10_nonzero
+output_directory: outputs/optical_resum/hf10_nonzero/seed0
 validation_context_events: 64
 validation_seed: 12345
 mfgp:

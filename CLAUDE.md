@@ -411,3 +411,21 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Reframed the notebook around population-level LAr optical-map emulation and
   renamed it lar_optical_map.ipynb. Removed legacy wording from notebook prose;
   verified every executable cell is unchanged and notebook format validates.
+
+## Non-zero-hit HF split with ten modeling voxels
+
+- User requested excluding zero-hit HF, then 10 HF modeling voxels and all other
+  retained HF voxels for validation. Prepared a new dataset at
+  outputs/optical_data_lf1500_hf10_nonzero using existing prepare_optical_data.
+- Excluded 9 of 65 HF files. Selected 10 of 56 non-zero-hit HF files uniformly
+  without replacement from sorted filenames with numpy default_rng(42); remaining
+  46 are validation, including former HF test files. No HF test partition remains.
+- LF assignments remain 111/24/24. Refit normalization using precisely 111 LF +
+  10 HF training files. Saved config, split manifest, exclusions and selection
+  provenance with the new dataset; old data and results retained.
+- Updated optical config and notebook checks/descriptions. Cleared stale notebook
+  execution outputs after changing datasets; preserved unrelated local prose.
+- Validation: notebook data cells passed; saved LF assignments unchanged and
+  normalization fit-file membership verified. Two-step CNP / one-restart GP smoke
+  run passed, producing 10 HF GP training rows and 46 HF validation predictions
+  with coverage plots. Full training has not been rerun for this split.
