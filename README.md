@@ -728,3 +728,31 @@ pytest tests/test_mfgp_recovery.py -v   # MFGP coverage gate, ~2 min
   visualization plan, and live progress checklist.
 * The reference paper for the RED problem formulation, CNP loss derivation,
   and MFGP / IVR details: [openreview lqTILjL6lP](https://openreview.net/pdf?id=lqTILjL6lP).
+
+## Optical map directly from simulation counts
+
+Run `notebooks/lar_optical_map_binomial_gp.ipynb` with
+`config.optical.binomial.yaml` to fit a shared spatial probability function to
+simulations with identical physics and different primary counts. This separate
+workflow requires the `gp` and `optical-data` extras. It does not use a CNP.
+
+The input is the voxel center `(x, y, z)`; observations are integer hit-producing
+primary counts `m` and total primary counts `N`. The backend uses
+`m ~ Binomial(N, sigmoid(f(x)))`, a Matérn-5/2 (or RBF) GP plus a constant kernel,
+and Laplace inference. Kernel hyperparameters are optimized; their uncertainty
+is not integrated. Coordinate scaling uses training data only. LF/HF tags control
+splits and reporting, not separate latent functions.
+
+The default uses the current nonzero-only N1500/N5000 folders, all LF voxels and
+10 HF voxels for training, and the remaining HF voxels for validation. The full
+primary budget enters the likelihood; no context events are removed. Nonzero-only
+selection can bias population inference: this is an ordinary binomial likelihood,
+not a likelihood conditioned on selecting nonzero files. The loader also supports
+zero-hit files if their folders are explicitly added later.
+
+The notebook prepares counts automatically, shows a data-count table, fits the GP,
+and saves a checkpoint, configuration, counts, metrics, mean/residual plots and
+exact-coordinate predictive coverage under `outputs/optical_binomial/<run>/`.
+Predictive intervals use latent logistic-GP draws followed by binomial counts with
+each validation voxel's own N. Set `RUN_TRAINING=False` to view saved results.
+The existing CNP/MFGP notebook remains a separate workflow.
