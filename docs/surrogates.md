@@ -269,9 +269,17 @@ single-logit legacy importer does not silently convert those files.
 non-zero-hit voxels using standard class-aware mixup (`mix_context: true`),
 `theory-truth` Bernoulli NLL and the single-branch objective. It then fits the
 existing three-level MFGP on training data only: LF CNP means, HF CNP means,
-and HF raw target fractions. Zero-hit HF voxels are retained. Filtering LF
-voxels by observed hits means this run represents that selected dataset;
-validation is not an assessment of all zero-hit LF regions.
+and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
+56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
+assigned to validation, including former HF test voxels. There is no separate
+HF test set; LF splits remain 111/24/24. Validation represents the non-zero-hit
+subset, not the full spatial population.
+
+The prepared dataset is `outputs/optical_data_lf1500_hf10_nonzero`. Its
+`split_policy.json` records the selection and excluded files; `config.json`
+and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
+with the saved assignments. Normalization is refitted using training files only.
+The previous prepared dataset and model outputs are retained.
 
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
@@ -343,7 +351,7 @@ is a two-output CNP, theory-truth, standard class-aware mixup, mixed context,
 and the three-fidelity MFGP. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
 NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
 
-The notebook checks prepared non-zero-hit LF batches, retains zero-hit HF voxels,
+The notebook checks prepared non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
 map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
