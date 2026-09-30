@@ -192,7 +192,6 @@ class SurrogateConfig(StrictConfigModel):
 
 
 class MFGPStageConfig(StrictConfigModel):
-    lf_levels: Literal["pooled", "by_event_count"] = "pooled"
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0

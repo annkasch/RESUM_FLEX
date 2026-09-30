@@ -1,4 +1,4 @@
-# Full offline RESuM optical map; pooled LF500/750/1000/1500; 10 HF training, 46 HF validation.
+# Full offline RESuM optical map; non-zero-hit LF/HF; 10 HF training, 46 HF validation.
 model:
   kind: legacy_cnp
   encoder:
@@ -30,12 +30,11 @@ training:
     strategy: none
 selection: voxel_rate_mae
 lf_validation: false
-data_directory: outputs/optical_data_pooledlf_hf10_nonzero
-output_directory: outputs/optical_resum/pooledlf_hf10_nonzero/seed0
+data_directory: outputs/optical_data_alllf_hf10_nonzero
+output_directory: outputs/optical_resum/alllf_hf10_nonzero/seed0
 validation_context_events: 64
 validation_seed: 12345
 mfgp:
-  lf_levels: by_event_count
   kernel: rbf
   n_restarts: 5
   n_context: 64

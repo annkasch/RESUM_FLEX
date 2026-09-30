@@ -19,8 +19,7 @@ def run_experiment(config: SurrogateRunConfig):
     Prepared batches are already normalized. Test files are never opened.
     Output must be empty, preventing accidental overwriting of prior runs.
     """
-    from data.optical_pipeline import load_prepared_partition, prepared_partition_paths
-    from data.grouped_batches import batch_groups
+    from data.optical_pipeline import load_prepared_batch
 
     config = SurrogateRunConfig.model_validate(config)
     root, output = config.data_directory, config.output_directory
@@ -31,21 +30,22 @@ def run_experiment(config: SurrogateRunConfig):
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
     for split, fidelity in partitions:
-        batches[split, fidelity] = load_prepared_partition(root, split, fidelity)
-        paths = prepared_partition_paths(root, split, fidelity)
-        records = [dict(path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
-                   for path in paths]
-        provenance[f"{split}/{fidelity}"] = records[0] if len(records) == 1 else records
-    episodes = {}
-    for key, batch in batches.items():
-        parts = [split_context_target(b, config.validation_context_events, seed=config.validation_seed)
-                 for b in batch_groups(batch)]
-        episodes[key] = Episode(*parts[0]) if len(parts) == 1 else Episode(
-            [p[0] for p in parts], [p[1] for p in parts])
+        path = root / f"batches/{split}/{fidelity}.npz"
+        batches[split, fidelity] = load_prepared_batch(path)
+        provenance[f"{split}/{fidelity}"] = dict(
+            path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+    episodes = {
+        key: Episode(
+            *split_context_target(
+                batch, config.validation_context_events, seed=config.validation_seed
+            )
+        )
+        for key, batch in batches.items()
+    }
     train = batches["train", "lf"]
-    first = batch_groups(train)[0]
-    dt = None if first.theta is None else first.theta.shape[-1]
-    dp = None if first.phi is None else first.phi.shape[-1]
+    dt = None if train.theta is None else train.theta.shape[-1]
+    dp = None if train.phi is None else train.phi.shape[-1]
     seed = (
         config.training.seed
         if config.training.backend == "neural"

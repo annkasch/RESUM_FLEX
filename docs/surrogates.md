@@ -268,15 +268,15 @@ single-logit legacy importer does not silently convert those files.
 `config.optical.resum.yaml` trains the legacy two-output CNP on prepared LF
 non-zero-hit voxels using standard class-aware mixup (`mix_context: true`),
 `theory-truth` Bernoulli NLL and the single-branch objective. It then fits the
-configured MFGP on training data only: LF CNP means (pooled or separated by event count), HF CNP means,
+existing three-level MFGP on training data only: LF CNP means, HF CNP means,
 and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
 56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
 assigned to validation, including former HF test voxels. There is no separate
-HF test set. The current pooled-LF test uses all 500 retained LF voxels for training
+HF test set. The current all-LF test uses all 159 retained LF voxels for training
 and skips LF validation/test. Validation represents the non-zero-hit
 subset, not the full spatial population.
 
-The prepared dataset is `outputs/optical_data_pooledlf_hf10_nonzero`. Its
+The prepared dataset is `outputs/optical_data_alllf_hf10_nonzero`. Its
 `split_policy.json` records the selection and excluded files; `config.json`
 and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
 with the saved assignments. Normalization is refitted using training files only.
@@ -300,7 +300,7 @@ Alongside the CNP artifacts, `mfgp/` contains:
 
 - `model.pkl`, loadable with `core.surrogate_mfgp.load_mfgp`.
 - `model.json`: fitted parameters, input hashes, configuration, and conventions.
-- `training_arrays.npz`: exact GP training inputs and outputs, including per-level arrays.
+- `training_arrays.npz`: exact three-level GP training inputs and outputs.
 - `metrics.json` and `{lf,hf}_validation.npz`: predictions on real target fractions.
 - `{lf,hf}_means.{png,pdf}` and `{lf,hf}_coverage.{png,pdf}`.
 - `development_map.npz`: highest-fidelity predictions at available development
@@ -352,67 +352,10 @@ Use the repository Python environment as the kernel. Run All trains from scratch
 by default, with a timestamped output directory. `RUN_TRAINING = False` loads
 `EXISTING_RUN` instead and displays that run's saved configuration. The default
 is a two-output CNP, theory-truth, standard class-aware mixup, mixed context,
-and the configured MFGP levels. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
+and the three-fidelity MFGP. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
 NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
 
 The notebook checks prepared non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
 map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
-
-
-### Pooling LF datasets with different event counts
-
-The optical notebook pools the non-zero-hit files from LF500 (38 voxels), LF750
-(157), LF1000 (146), and LF1500 (159). All 500 LF voxels train the CNP. The GP can pool their means or separate
-them by event count. HF remains 10 training / 46 validation files with the
-same assignments; LF validation is disabled and the final CNP checkpoint is used.
-
-Preparation writes separate `lf_500.npz`, `lf_750.npz`, `lf_1000.npz`, and
-`lf_1500.npz` storage groups under `batches/train/`, with common normalization
-fitted only on the 500 LF + 10 HF training files. `load_prepared_partition`
-returns a batch or list of batches. Existing homogeneous datasets retain their
-original format. No events are padded, duplicated or truncated during preparation.
-
-The shared trainer samples each voxel with equal probability: storage groups
-are selected proportional to their voxel counts, then a voxel is selected
-uniformly within its group. Existing context/target and mixup samplers operate
-on that voxel's full source events. Minibatches have fixed output sizes.
-No event-count feature or dataset weights are introduced into CNP training.
-
-At prediction time each storage group uses all its target events, after removing
-64 context events per voxel. Thus the LF target denominators are 436, 686, 936,
-and 1436 respectively. GP inputs concatenate the per-voxel means, not individual
-events. Grouped diagnostic arrays flatten real target events and save
-`voxel_event_counts`; voxel metrics weight voxels equally, while PR/event-loss
-metrics pool real events. These diagnostics never resample events.
-
-The preparation audit found 500 unique filename centers and no exact shared
-position/momentum event records across the four LF datasets. This does not prove
-statistical independence of the source simulations. Filtering non-zero-hit files
-remains intentional and no correction for its selection bias is applied.
-
-
-### Separate GP levels by LF event count
-
-`mfgp.lf_levels` accepts `pooled` (API default) or `by_event_count` (current optical
-notebook configuration). The latter orders LF levels by increasing source event
-count, then appends HF CNP means and HF raw fractions. For the prepared optical
-data this gives six levels with 38, 157, 146, 159, 10, and 10 observations.
-CNP training, mean denominators, and the 10/46 HF split are unchanged.
-The GP learns separate kernels, recursive scaling factors and observation-noise
-parameters; event counts are not prescribed as known noise variances.
-
-Highest-fidelity predictions, maps and coverage always use the final level,
-which is level 5 here. Saved model metadata lists level names and row counts;
-training arrays include each level's exact X/Y values and LF source event counts.
-Model metadata also records optimizer status for every restart; reaching an
-evaluation limit should not be interpreted as convergence.
-LF validation, if enabled, is evaluated at each group's corresponding level.
-
-To refit just the GP using a completed run's CNP, load its saved configuration
-and checkpoint and call `run_mfgp_stage(config, surrogate,
-output_directory=run_directory / "mfgp_by_event_count")` after setting
-`config.mfgp.lf_levels = "by_event_count"`. Keep `config.output_directory` at the
-original run directory so checkpoint provenance is correct. This preserves
-original results and avoids changing the CNP between comparisons.
