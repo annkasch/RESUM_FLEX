@@ -52,12 +52,11 @@ each BDT fit resets the estimator. This is not optimizer-state resume support.
 
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  .venv/bin/python -m core.surrogates train config.surrogate.cnp.yaml
+  .venv/bin/python -m core.surrogates train config.optical.resum.yaml
 ```
 
-Four example configs are provided: `config.surrogate.{cnp,mlp,transformer,bdt}.yaml`.
-The neural examples retain stable BCE and corrected 5% positive sampling; the
-BDT fits all natural events. Change `selection` to `average_precision` to select
+Only `config.optical.resum.yaml` is retained as a run configuration. Change its
+model and training settings using the API options below; BDT fits natural events. Change `selection` to `average_precision` to select
 for event discrimination, or `bernoulli_log_loss` for event BCE. The default is
 `voxel_rate_mae`. Change `output_directory` for every new run: existing nonempty
 runs are never overwritten. Data/output paths resolve relative to the YAML file.
@@ -161,7 +160,7 @@ training:
     strategy: none
 ```
 
-Run `python -m core.surrogates train config.surrogate.cnp.mixup.yaml`.
+Run `python -m core.surrogates train config.optical.resum.yaml`.
 Change the model kind for MLP or transformer. Only CNP uses context observations;
 other neural models use the same mixed targets. Context size is randomly chosen
 within `n_context_min` / `n_context_max` each batch. Mixup defaults to real context.
@@ -222,7 +221,8 @@ real positive counts and total target predictions. Validation still uses real
 binary events. This is an experimental augmentation objective, not an unbiased
 probability correction or an established performance improvement.
 
-Example: `python -m core.surrogates train config.surrogate.cnp.real_plus_mixup.yaml`.
+To try this objective, edit `training.objective` in `config.optical.resum.yaml`
+using the settings above before running it.
 
 ## Legacy two-output CNP
 
@@ -255,12 +255,10 @@ Validation labels stay real and binary even with the Gaussian training loss.
 The common `bernoulli_log_loss` metric remains Bernoulli log loss for comparison;
 it is not the Gaussian training objective.
 
-Example configurations (both use the combined real/mixed objective):
+The retained `config.optical.resum.yaml` uses the legacy model with standard
+mixup. Select the combined objective explicitly using the settings above.
 
-- `config.surrogate.legacy_cnp.theory-truth.yaml`
-- `config.surrogate.legacy_cnp.practice-truth.yaml`
-
-Run either with `python -m core.surrogates train CONFIG.yaml`. New checkpoints
+Run it with `python -m core.surrogates train config.optical.resum.yaml`. New checkpoints
 roundtrip both output channels through the standard loader. Importing historical
 two-output checkpoint files still uses `core.training.load_checkpoint`; the
 single-logit legacy importer does not silently convert those files.
@@ -308,3 +306,26 @@ simulation-launch loop, and the development-coordinate map is not a dense grid.
 For physical Cartesian queries, normalize with the saved theta offset and scale
 before calling `gp.predict(theta_normalized, fidelity=2)`. Predictions remain in
 detection-fraction units. Keep normalization alongside the GP checkpoint.
+
+## Data preparation and repository layout
+
+The current workflow uses library components and the shared CLI. The temporary
+BDT/MLP/transformer/mixup experiment scripts and notebooks have been removed.
+Saved outputs remain available locally. Original synthetic examples under
+`scripts/phase*` and the original repository notebooks remain unchanged.
+
+Prepare optical data using the integrated library, after installing the
+`optical-data` extra and setting the source directory in `config.optical.yaml`:
+
+```python
+from schemas.config import load_config
+from data import prepare_optical_data
+
+config = load_config("config.optical.yaml")
+prepared = prepare_optical_data(config.data)
+```
+
+This reads original LH5 files and saves normalized batches and split metadata;
+it does not run model training. To use an existing prepared dataset, point a
+`config.surrogate.*.yaml` file or `config.optical.resum.yaml` at its directory.
+Choose a new output directory for each training run.

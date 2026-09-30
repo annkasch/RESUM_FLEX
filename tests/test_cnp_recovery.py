@@ -4,7 +4,7 @@ This is the end-to-end test that closes Phase 3. For each of S1..S8 we
 build a CNP, train it on synthetic batches drawn from the
 :class:`PseudoDataGenerator`, then evaluate the predicted ``β`` against
 the analytical ``p`` on a fresh held-out batch. The per-scenario MAE
-threshold lives in ``config.yaml`` (``mae_thresholds.s{1..8}``).
+threshold lives in the legacy test fixture (``mae_thresholds.s{1..8}``).
 
 These runs are non-trivial — 0.9–3.2 s per scenario, ~16 s total — but
 short enough to live in the regular pytest run.
@@ -38,9 +38,7 @@ _BUDGET = {
 
 
 def _enc_cfg() -> EncoderConfig:
-    return EncoderConfig(
-        type="mlp", latent_dim=32, hidden_dims=[64, 64], dropout=0.0
-    )
+    return EncoderConfig(type="mlp", latent_dim=32, hidden_dims=[64, 64], dropout=0.0)
 
 
 def _cnp_cfg() -> CNPConfig:
@@ -62,22 +60,24 @@ def _train_cfg(n_steps: int) -> TrainingConfig:
 
 
 @pytest.mark.parametrize("name", ALL_SCENARIOS)
-def test_cnp_mae_under_threshold(name: str) -> None:
+def test_cnp_mae_under_threshold(name: str, legacy_config_path) -> None:
     torch.manual_seed(0)
     np.random.seed(0)
 
-    threshold = getattr(load_config("config.yaml").mae_thresholds, name.lower())
+    threshold = getattr(load_config(legacy_config_path).mae_thresholds, name.lower())
     gen = for_scenario(name, seed=0)
 
     cnp = build_cnp(_enc_cfg(), gen.dim_theta, gen.dim_phi)
     train_cnp(
-        cnp, gen,
+        cnp,
+        gen,
         cnp_config=_cnp_cfg(),
         training_config=_train_cfg(_BUDGET[name]),
     )
 
     mae = evaluate_mae(
-        cnp, gen,
+        cnp,
+        gen,
         batch_size=64,
         n_events=256,
         n_context=128,

@@ -251,9 +251,8 @@ def test_design_only_and_unequal_event_counts(tmp_path):
         prepare_optical_data(c, update_manifest=True)
 
 
-def test_configs_and_integer_targets(tmp_path):
-    assert load_config("config.yaml").data is None
-    assert load_config("config.optical.yaml").training.eval_every == 0
+def test_configs_and_integer_targets(tmp_path, legacy_config_path):
+    assert load_config(legacy_config_path).data is None
     assert integer_targets(85, (0.7, 0.15, 0.15)).tolist() == [59, 13, 13]
     assert integer_targets(22, (0.7, 0.15, 0.15)).tolist() == [16, 3, 3]
     with pytest.raises(ValueError, match="detector_id"):

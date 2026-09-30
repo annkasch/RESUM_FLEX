@@ -1,6 +1,6 @@
 """Static configuration schema for RESUM_FLEX.
 
-Loads ``config.yaml`` into a typed pydantic tree so hyperparameters,
+Loads a legacy YAML configuration into a typed pydantic tree so hyperparameters,
 kernel choices, and per-scenario MAE thresholds are validated up-front
 rather than raising deep inside training. Each subsection corresponds to
 one phase of the pipeline.
