@@ -6,7 +6,9 @@ data:
       - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/nonzero
       hf:
       - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N5000/nonzero
-    exclude_files: []
+    # Incomplete simulation: only one primary; exclude from training and validation.
+    exclude_files:
+    - lf/run067_x-0.088_y+0.484_z-1.462.stp.lh5
   output_directory: outputs/optical_binomial_data
   theta:
     coordinates: cartesian
