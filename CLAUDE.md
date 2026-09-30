@@ -385,9 +385,9 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Validation: 64 schema, optical-data, and transformer tests passed; retained
   config validates as legacy_cnp, theory-truth, mixed context, full MFGP stage.
 
-## Maintained legacy optical notebook
+## Maintained LAr optical-map notebook
 
-- User explicitly requested one notebook: notebooks/optical_map_legacy.ipynb.
+- User explicitly requested one notebook: notebooks/lar_optical_map.ipynb.
   Uses shared run_experiment, config.optical.resum.yaml and standard plot outputs.
 - Run All trains by default into a new timestamped folder. Existing-results mode
   reports saved settings; loss override supports both legacy objectives.
@@ -407,3 +407,7 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   both default and Gaussian loss. Executed all revised cells in training and
   saved-run modes against existing smoke artifacts, stubbing the unchanged
   run_experiment call; no new full training was needed.
+
+- Reframed the notebook around population-level LAr optical-map emulation and
+  renamed it lar_optical_map.ipynb. Removed legacy wording from notebook prose;
+  verified every executable cell is unchanged and notebook format validates.
