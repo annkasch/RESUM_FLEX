@@ -448,60 +448,17 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   emitted numerical warnings during smoke optimization but completed. Full
   10,000-step training has not been rerun for this test configuration.
 
-## Pooled LF event counts (user will run full training)
 
-- User requested equal treatment of LF500/750/1000/1500, with per-voxel mean
-  denominators and unchanged HF split. Prepared outputs/optical_data_pooledlf_hf10_nonzero:
-  38/157/146/159 non-zero-hit LF voxels, 500 total; HF remains 10 train / 46 validation.
-- All 500 LF filename centers are distinct; no exact six-component position/momentum
-  records duplicated across LF datasets. No LF/HF centers within 5 mm. HF assignment
-  identity verified. Common normalization uses exactly 500 LF + 10 HF training files.
-- Optical preparation now stores unequal event counts in separate dense NPZ groups,
-  with recursive source discovery for named dataset subfolders. Shared partition
-  loader supports old dense files and grouped files. All original events are retained.
-- Shared neural sampler draws groups proportional to voxel counts, then uniform
-  voxels; existing context/target and class-aware mixup logic operates per source
-  group. Training audits record group draw counts. Added grouped BatchSource adapter.
-- Evaluation preserves per-voxel means and concatenates real events for PR; grouped
-  saved arrays include voxel_event_counts. GP concatenates LF means into one level,
-  using actual target denominators 436/686/936/1436 for the configured 64 contexts.
-- Notebook/config point to prepared pooled data; preflight table displays six rows.
-  Full optical training intentionally not launched. User's separate notebook copy
-  and unrelated local prose are preserved and excluded from the commit.
-- Verification: 140 optical/surrogate/legacy/MFGP regression cases passed, plus
-  three dedicated grouped-sampling/mean tests. Rechecked 21 optical/grouped cases
-  after final loader adjustments. Synthetic end-to-end GP test covers grouped
-  inputs, actual event denominators, final checkpoint and coverage output.
-  Actual notebook setup/data cells and real-data sampler preflight passed; no
-  optical training run was launched.
+## Retired combined-LF approaches
 
-## Separate LF event-count GP levels
-
-- User requested testing separate GP fidelities for LF statistics. Added
-  mfgp.lf_levels = pooled (API default) or by_event_count (current optical config).
-- Event-count mode sorts LF source counts ascending, then appends HF CNP and
-  HF raw fractions. Current six-level row counts: 38,157,146,159,10,10. CNP and
-  per-voxel mean definitions are unchanged. Prediction/map use the highest level
-  dynamically; optional LF validation maps each event-count group correctly.
-- Shared stage accepts an alternate output_directory for GP-only comparisons.
-  Saved metadata records all levels, row counts and original CNP provenance;
-  training NPZ includes exact per-level arrays and LF source event counts.
-- Comparison uses the user's completed pooled run
-  outputs/optical_resum/notebook/20260930T045013_790495Z and writes mfgp_by_event_count
-  alongside its original mfgp. Verified source hashes and exact equality of all
-  training CNP mean arrays before fitting. No CNP retraining or HF reselection.
-- Eight focused tests passed, covering level ordering, observation preservation,
-  pooled and separated GP workflows, highest-level validation/map predictions
-  and checkpoint reload. Notebook code/format and updated config validated.
-
-- Full GP-only comparison completed in 778 seconds, five restarts, same 46 HF
-  validation coordinates/observations/CNP predictions verified exactly. Six-level
-  MAE .00119085 vs pooled .00122738; RMSE .00176767 vs .00180182; Pearson .63933
-  vs .62350. Predicted mean .00216666 vs observed .00310937 (underprediction remains).
-  Coverage 52.2/71.7/91.3% vs pooled 43.5/71.7/93.5% for 1/2/3 sigma.
-- All five six-level optimizations hit 1001 function evaluations (limit) rather
-  than convergence; all pooled restarts converged. Treat improvement as preliminary.
-  Added optimizer status/evaluation count/objective to future saved model metadata;
-  actual comparison diagnostics saved in lf_fidelity_optimizer_report.json.
-  Comparison metrics in lf_fidelity_comparison.json; existing coverage plot reused
-  at mfgp_by_event_count/hf_coverage.png and visually checked.
+- User requested LF1500 only. Removed grouped LF training/preparation support,
+  separate LF event-count GP levels, their tests, and both combined-LF notebook
+  copies. Restored the shared modules and config to the verified LF1500 workflow.
+- Retained all 159 non-zero-hit LF1500 voxels for training, no LF validation,
+  10 HF modeling / 46 HF validation, mixed-context two-output CNP, and three GP
+  levels. Original simulation files and historical result artifacts are untouched.
+- Main notebook preserves local prose changes, requires 1500-event LF input,
+  clears stale outputs and selects saved runs only from the configured LF dataset.
+- Validation: optical/surrogate/legacy/MFGP regression suite passed; main notebook
+  setup/data checks and all display-only cells passed against the saved LF1500
+  run. Repository search found no active pooled/event-count LF workflow references.

@@ -23,21 +23,12 @@ def fit_surrogate(
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
     # Training batches must be real, normalized inputs with binary labels.
-    from data.grouped_batches import batch_groups, GroupedEpisodeSampler
-
-    groups = batch_groups(train)
-    if len(groups) == 1:
-        train = groups[0]
-    for batch in groups:
-        model.validate(batch, batch if model.uses_context else None)
-        if not np.isin(batch.labels, [0, 1]).all():
-            raise ValueError("Training requires real binary labels")
+    model.validate(train, train if model.uses_context else None)
+    if not np.isin(train.labels, [0, 1]).all():
+        raise ValueError("Training requires real binary labels")
     if validation is not None:
-        targets = batch_groups(validation.target)
-        contexts = [None] * len(targets) if validation.context is None else batch_groups(validation.context)
-        for t, c in zip(targets, contexts, strict=True):
-            model.validate(t, c)
-        if selection == "average_precision" and not any(np.any(t.labels) for t in targets):
+        model.validate(validation.target, validation.context)
+        if selection == "average_precision" and not np.any(validation.target.labels):
             raise ValueError("Cannot select by AP when validation contains no positives")
     history, best_state = [], None
     best_score = -np.inf if selection == "average_precision" else np.inf
@@ -80,13 +71,12 @@ def fit_surrogate(
                 model.save(destination / "best", metadata={"step": step})
 
     if training.backend == "bdt":
-        if len(np.unique(np.concatenate([b.labels.ravel() for b in groups]))) != 2:
+        if len(np.unique(train.labels)) != 2:
             raise ValueError("BDT training requires both binary classes")
         from core.surrogate_bdt import event_features
 
         cfg = model.config.architecture
-        x = np.concatenate([event_features(b) for b in groups])
-        y = np.concatenate([b.labels.ravel() for b in groups])
+        x, y = event_features(train), train.labels.ravel()
         w = training.weighting
         weights = (
             np.where(y == 1, w.positive, w.negative) if w.strategy == "class_weights" else None
@@ -130,7 +120,7 @@ def fit_surrogate(
                 output, labels, gamma=training.focal_gamma, weights=weights
             )
 
-        if training.n_events > min(b.n_events for b in groups):
+        if training.n_events > train.n_events:
             raise ValueError("n_events exceeds available training events per voxel")
         if training.device == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA requested but unavailable")
@@ -143,10 +133,7 @@ def fit_surrogate(
             batch_size=training.batch_size,
             n_events=training.n_events,
         )
-        if len(groups) > 1:
-            sampler = GroupedEpisodeSampler(groups, training)
-            size_rng = np.random.default_rng(np.random.SeedSequence([training.seed, 2]))
-        elif mixup:
+        if mixup:
             from core.mixup import ClassAwareMixupSource
 
             sampler = ClassAwareMixupSource(
@@ -251,11 +238,6 @@ def fit_surrogate(
                 mixup_loss_weight=training.objective.mixup_loss_weight,
                 real_target_ratio=training.objective.real_target_ratio,
             )
-    if len(groups) > 1 and training.backend == "neural":
-        audit["group_sampling"] = "uniform voxels across groups"
-        audit["groups"] = [dict(voxels=b.batch_size, events_per_voxel=b.n_events,
-                               voxel_draws=int(count))
-                           for b, count in zip(groups, sampler.voxel_draws, strict=True)]
     model.metadata["sampling_audit"] = audit
     if destination:
         model.save(destination / "final", metadata={"step": last_step})
