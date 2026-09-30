@@ -39,8 +39,8 @@ class EventPrediction:
 
 @dataclass(frozen=True)
 class Episode:
-    context: StandardBatch | None
-    target: StandardBatch
+    context: StandardBatch | list[StandardBatch] | None
+    target: StandardBatch | list[StandardBatch]
 
 
 class EventSurrogate(ABC):

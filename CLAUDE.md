@@ -447,3 +447,30 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   GP smoke run; HF predictions were finite and coverage plots generated. GPy
   emitted numerical warnings during smoke optimization but completed. Full
   10,000-step training has not been rerun for this test configuration.
+
+## Pooled LF event counts (user will run full training)
+
+- User requested equal treatment of LF500/750/1000/1500, with per-voxel mean
+  denominators and unchanged HF split. Prepared outputs/optical_data_pooledlf_hf10_nonzero:
+  38/157/146/159 non-zero-hit LF voxels, 500 total; HF remains 10 train / 46 validation.
+- All 500 LF filename centers are distinct; no exact six-component position/momentum
+  records duplicated across LF datasets. No LF/HF centers within 5 mm. HF assignment
+  identity verified. Common normalization uses exactly 500 LF + 10 HF training files.
+- Optical preparation now stores unequal event counts in separate dense NPZ groups,
+  with recursive source discovery for named dataset subfolders. Shared partition
+  loader supports old dense files and grouped files. All original events are retained.
+- Shared neural sampler draws groups proportional to voxel counts, then uniform
+  voxels; existing context/target and class-aware mixup logic operates per source
+  group. Training audits record group draw counts. Added grouped BatchSource adapter.
+- Evaluation preserves per-voxel means and concatenates real events for PR; grouped
+  saved arrays include voxel_event_counts. GP concatenates LF means into one level,
+  using actual target denominators 436/686/936/1436 for the configured 64 contexts.
+- Notebook/config point to prepared pooled data; preflight table displays six rows.
+  Full optical training intentionally not launched. User's separate notebook copy
+  and unrelated local prose are preserved and excluded from the commit.
+- Verification: 140 optical/surrogate/legacy/MFGP regression cases passed, plus
+  three dedicated grouped-sampling/mean tests. Rechecked 21 optical/grouped cases
+  after final loader adjustments. Synthetic end-to-end GP test covers grouped
+  inputs, actual event denominators, final checkpoint and coverage output.
+  Actual notebook setup/data cells and real-data sampler preflight passed; no
+  optical training run was launched.

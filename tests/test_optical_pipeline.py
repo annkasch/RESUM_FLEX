@@ -247,8 +247,22 @@ def test_design_only_and_unequal_event_counts(tmp_path):
     assert result.batches["train"]["lf"].mode.value == "design_only"
     # A repeated run must share the voxel split, exposing ragged input.
     fixture_file(c.source.directory, "lf", 98, (0.0, 0.0, 0.2), n=9)
-    with pytest.raises(ValueError, match="unequal event counts"):
-        prepare_optical_data(c, update_manifest=True)
+    result = prepare_optical_data(c, update_manifest=True)
+    from data.grouped_batches import batch_groups
+    from data.optical_pipeline import load_prepared_partition
+
+    found = False
+    for split, levels in result.batches.items():
+        if "lf" not in levels:
+            continue
+        groups = batch_groups(levels["lf"])
+        loaded = batch_groups(load_prepared_partition(c.output_directory, split, "lf"))
+        assert sorted(b.n_events for b in groups) == sorted(b.n_events for b in loaded)
+        if len(groups) > 1:
+            found = True
+            assert {b.n_events for b in groups} == {8, 9}
+            assert not (c.output_directory / "batches" / split / "lf.npz").exists()
+    assert found
 
 
 def test_configs_and_integer_targets(tmp_path, legacy_config_path):

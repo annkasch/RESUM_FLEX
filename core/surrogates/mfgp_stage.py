@@ -12,7 +12,8 @@ def run_mfgp_stage(config, surrogate):
     from core.surrogate_cnp import split_context_target
     from core.surrogate_mfgp import load_mfgp, save_mfgp
     from core.surrogates.pipeline import prepare_surrogate_datasets
-    from data.optical_pipeline import load_prepared_batch
+    from data.optical_pipeline import load_prepared_partition, prepared_partition_paths
+    from data.grouped_batches import batch_groups
 
     cfg = config.mfgp
     directory = config.output_directory / "mfgp"
@@ -27,11 +28,11 @@ def run_mfgp_stage(config, surrogate):
     for split, fid in partitions:
         if (split, fid) == ("validation", "lf") and not config.lf_validation:
             continue
-        path = config.data_directory / "batches" / split / f"{fid}.npz"
-        batches[split, fid] = load_prepared_batch(path)
-        provenance[f"{split}/{fid}"] = dict(
-            path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
-        )
+        batches[split, fid] = load_prepared_partition(config.data_directory, split, fid)
+        paths = prepared_partition_paths(config.data_directory, split, fid)
+        records = [dict(path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest())
+                   for path in paths]
+        provenance[f"{split}/{fid}"] = records[0] if len(records) == 1 else records
     data = prepare_surrogate_datasets(
         surrogate,
         batches["train", "lf"],
@@ -70,14 +71,18 @@ def run_mfgp_stage(config, surrogate):
         if ("validation", fid) not in batches:
             continue
         batch = batches["validation", fid]
-        context, target = split_context_target(
-            batch, config.validation_context_events, seed=config.validation_seed
-        )
-        observed = target.labels.mean(1)
-        predicted = surrogate.predict(target, context=context).mean
+        positions, observed_parts, predicted_parts = [], [], []
+        for group in batch_groups(batch):
+            context, target = split_context_target(
+                group, config.validation_context_events, seed=config.validation_seed)
+            positions.append(group.theta)
+            observed_parts.append(target.labels.mean(1))
+            predicted_parts.append(surrogate.predict(target, context=context).mean)
+        coordinates = np.concatenate(positions)
+        observed, predicted = np.concatenate(observed_parts), np.concatenate(predicted_parts)
         level = 0 if fid == "lf" else 2
-        mean, variance = gp.predict(batch.theta, fidelity=level)
-        loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level)
+        mean, variance = gp.predict(coordinates, fidelity=level)
+        loaded_mean, loaded_var = restored.predict(coordinates, fidelity=level)
         np.testing.assert_array_equal(mean, loaded_mean)
         np.testing.assert_array_equal(variance, loaded_var)
         sigma = np.sqrt(variance)
@@ -101,7 +106,7 @@ def run_mfgp_stage(config, surrogate):
         )
         np.savez_compressed(
             directory / f"{fid}_validation.npz",
-            theta=batch.theta,
+            theta=coordinates,
             observed=observed,
             cnp_mean=predicted,
             mean=mean,
@@ -109,7 +114,7 @@ def run_mfgp_stage(config, surrogate):
             residual=residual,
         )
     # Highest-fidelity map at all available development coordinates, excluding test files.
-    theta = np.unique(np.concatenate([b.theta for b in batches.values()]), axis=0)
+    theta = np.unique(np.concatenate([g.theta for b in batches.values() for g in batch_groups(b)]), axis=0)
     mean, variance = gp.predict(theta, fidelity=2)
     physical = theta
     normalization = config.data_directory / "normalization.json"

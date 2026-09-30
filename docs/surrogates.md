@@ -272,11 +272,11 @@ existing three-level MFGP on training data only: LF CNP means, HF CNP means,
 and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
 56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
 assigned to validation, including former HF test voxels. There is no separate
-HF test set. The current all-LF test uses all 159 retained LF voxels for training
+HF test set. The current pooled-LF test uses all 500 retained LF voxels for training
 and skips LF validation/test. Validation represents the non-zero-hit
 subset, not the full spatial population.
 
-The prepared dataset is `outputs/optical_data_alllf_hf10_nonzero`. Its
+The prepared dataset is `outputs/optical_data_pooledlf_hf10_nonzero`. Its
 `split_policy.json` records the selection and excluded files; `config.json`
 and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
 with the saved assignments. Normalization is refitted using training files only.
@@ -359,3 +359,35 @@ The notebook checks prepared non-zero-hit LF/HF batches, uses 10 HF modeling vox
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
 map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
+
+
+### Pooling LF datasets with different event counts
+
+The optical notebook pools the non-zero-hit files from LF500 (38 voxels), LF750
+(157), LF1000 (146), and LF1500 (159). All 500 LF voxels train the CNP and supply
+one combined LF GP level. HF remains 10 training / 46 validation files with the
+same assignments; LF validation is disabled and the final CNP checkpoint is used.
+
+Preparation writes separate `lf_500.npz`, `lf_750.npz`, `lf_1000.npz`, and
+`lf_1500.npz` storage groups under `batches/train/`, with common normalization
+fitted only on the 500 LF + 10 HF training files. `load_prepared_partition`
+returns a batch or list of batches. Existing homogeneous datasets retain their
+original format. No events are padded, duplicated or truncated during preparation.
+
+The shared trainer samples each voxel with equal probability: storage groups
+are selected proportional to their voxel counts, then a voxel is selected
+uniformly within its group. Existing context/target and mixup samplers operate
+on that voxel's full source events. Minibatches have fixed output sizes.
+No event-count feature, dataset weights or extra GP levels are introduced.
+
+At prediction time each storage group uses all its target events, after removing
+64 context events per voxel. Thus the LF target denominators are 436, 686, 936,
+and 1436 respectively. GP inputs concatenate the per-voxel means, not individual
+events. Grouped diagnostic arrays flatten real target events and save
+`voxel_event_counts`; voxel metrics weight voxels equally, while PR/event-loss
+metrics pool real events. These diagnostics never resample events.
+
+The preparation audit found 500 unique filename centers and no exact shared
+position/momentum event records across the four LF datasets. This does not prove
+statistical independence of the source simulations. Filtering non-zero-hit files
+remains intentional and no correction for its selection bias is applied.
