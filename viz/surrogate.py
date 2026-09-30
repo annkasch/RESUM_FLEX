@@ -98,10 +98,17 @@ def plot_mfgp_training_inputs(directory):
                ylabel="Detection fraction")
         ax.grid(alpha=0.2)
     axes[1].scatter(np.arange(len(raw)), raw, marker="x", color="black",
-                    label="Raw target fraction → GP level 2")
+                    label="Raw HF target fraction")
     for ax in axes:
         ax.legend(fontsize=9)
-    fig.suptitle("CNP predictions supplied to the MFGP")
+    if (directory / "transform.json").exists():
+        transform = json.loads((directory / "transform.json").read_text())
+        if transform["output_transform"] == "log":
+            with np.load(directory / "fit_arrays.npz") as adjusted:
+                axes[1].scatter(np.arange(len(raw)), adjusted["Y_hf_raw"].ravel(),
+                                marker="+", label="Smoothed HF target before log")
+            axes[1].legend(fontsize=9)
+    fig.suptitle("CNP predictions supplied to the MFGP (original units)")
     for suffix in ("png", "pdf"):
         fig.savefig(directory / f"training_inputs.{suffix}", dpi=150)
     plt.close(fig)
@@ -118,9 +125,14 @@ def plot_mfgp_run(directory):
         with np.load(directory / f"{fid}_validation.npz") as a:
             obs, mean, sigma = a["observed"], a["mean"], a["sigma"]
             cnp = a["cnp_mean"]
+            intervals = {k: (a[f"lower_{k}"], a[f"upper_{k}"]) if f"lower_{k}" in a
+                         else (mean - k * sigma, mean + k * sigma) for k in (1, 2, 3)}
+            is_log = "output_transform" in a and str(a["output_transform"]) == "log"
+        band_label = "95.45% lognormal interval" if is_log else "MFGP ±2σ (observation)"
         x = np.arange(len(obs))
         fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True, layout="constrained")
-        axes[0].errorbar(x, mean, yerr=2 * sigma, fmt="o", label="MFGP ±2σ (observation)")
+        axes[0].fill_between(x, *intervals[2], alpha=0.2, label=band_label)
+        axes[0].plot(x, mean, "o", label="MFGP mean")
         axes[0].plot(x, cnp, "x", label="CNP mean")
         axes[0].plot(x, obs, "k.", label="Observed target fraction")
         axes[0].set(title=f"{fid.upper()} held-out voxels", ylabel="Detection fraction")
@@ -133,7 +145,8 @@ def plot_mfgp_run(directory):
         plt.close(fig)
         # Keep a GP-only view readable when the CNP has a large mean offset.
         gp_fig, gp_ax = plt.subplots(figsize=(10, 4), layout="constrained")
-        gp_ax.errorbar(x, mean, yerr=2 * sigma, fmt="o", label="MFGP ±2σ (observation)")
+        gp_ax.fill_between(x, *intervals[2], alpha=0.2, label=band_label)
+        gp_ax.plot(x, mean, "o", label="MFGP mean")
         gp_ax.plot(x, obs, "k.-", label="Observed target fraction")
         gp_ax.set(
             xlabel="Validation voxel index",
@@ -146,8 +159,8 @@ def plot_mfgp_run(directory):
         plt.close(gp_fig)
         from viz.dispatch import plot_coverage_test
 
-        low = min(float(obs.min()), float((mean - 3 * sigma).min()))
-        high = max(float(obs.max()), float((mean + 3 * sigma).max()))
+        low = min(float(obs.min()), float(intervals[3][0].min()))
+        high = max(float(obs.max()), float(intervals[3][1].max()))
         padding = max((high - low) * 0.05, 1e-6)
         for suffix in ("png", "pdf"):
             plot_coverage_test(
@@ -159,7 +172,9 @@ def plot_mfgp_run(directory):
                 xlabel="Validation voxel index",
                 predicted_label="MFGP mean",
                 raw_label="Observed target fraction",
-                ylim=(low - padding, high + padding),
+                ylim=(max(0, low - padding) if is_log else low - padding, high + padding),
+                intervals=intervals,
+                interval_label="σ in log space" if is_log else "σ",
             )
     with np.load(directory / "development_map.npz") as a:
         theta, mean = a["theta_physical"], a["mean"]

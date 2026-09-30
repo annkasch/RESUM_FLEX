@@ -41,10 +41,37 @@ def run_mfgp_stage(config, surrogate):
         seed=cfg.seed,
     )
     np.savez_compressed(directory / "training_arrays.npz", **data)
+    fit_data = dict(data)
+    transform_details = {"output_transform": cfg.output_transform}
+    if cfg.output_transform == "log":
+        n_target = batches["train", "hf"].n_events - cfg.n_context
+        a = cfg.raw_pseudocount
+        fit_data["Y_hf_raw"] = (data["Y_hf_raw"] * n_target + a) / (n_target + 2 * a)
+        for key in ("Y_lf_cnp", "Y_hf_cnp"):
+            if not np.isfinite(data[key]).all() or np.any(data[key] < 0):
+                raise ValueError("Log-space MFGP requires nonnegative finite CNP means")
+            fit_data[key] = np.maximum(data[key], cfg.cnp_log_floor)
+        transform_details.update(
+            raw_smoothing="(m + a) / (N + 2a), applied only to HF training counts",
+            raw_pseudocount=a, hf_target_events=n_target,
+            cnp_log_floor=cfg.cnp_log_floor,
+            floored_cnp_rows={key: int((data[key] < cfg.cnp_log_floor).sum())
+                              for key in ("Y_lf_cnp", "Y_hf_cnp")},
+            coverage_note=("Raw-fraction interval inclusion; positive lognormal intervals "
+                           "cannot cover zero counts. Not binomial count coverage."),
+        )
+    # Persist original-scale adjusted targets and exact transformed GP targets.
+    np.savez_compressed(directory / "fit_arrays.npz", **fit_data)
+    np.savez_compressed(directory / "transformed_training_arrays.npz", **{
+        key: np.log(value) if cfg.output_transform == "log" and key.startswith("Y_") else value
+        for key, value in fit_data.items()
+    })
+    (directory / "transform.json").write_text(json.dumps(transform_details, indent=2))
     state = np.random.get_state()
     try:
         np.random.seed(cfg.seed)
-        gp = fit_mfgp_three_fidelity(data, kernel=cfg.kernel, n_restarts=cfg.n_restarts)
+        gp = fit_mfgp_three_fidelity(fit_data, kernel=cfg.kernel, n_restarts=cfg.n_restarts,
+                                     output_transform=cfg.output_transform)
     finally:
         np.random.set_state(state)
     save_mfgp(directory / "model.pkl", gp)
@@ -58,7 +85,8 @@ def run_mfgp_stage(config, surrogate):
         evaluation_split="validation",
         test_data="Not loaded",
         coordinates="Prepared theta; use saved normalization for physical queries",
-        variance="GP observation-predictive variance including fitted per-level Gaussian noise",
+        output_transform=cfg.output_transform,
+        variance="Original-scale predictive variance; log mode uses lognormal moments",
         noise="Learned per-fidelity constant noise; CNP scale is not used as GP noise",
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names(),
@@ -80,6 +108,8 @@ def run_mfgp_stage(config, surrogate):
         loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level)
         np.testing.assert_array_equal(mean, loaded_mean)
         np.testing.assert_array_equal(variance, loaded_var)
+        intervals = {k: gp.predict_interval(batch.theta, fidelity=level, n_sigma=k)
+                     for k in (1, 2, 3)}
         sigma = np.sqrt(variance)
         residual = mean - observed
         if not np.isfinite(mean).all() or not np.isfinite(sigma).all():
@@ -96,7 +126,9 @@ def run_mfgp_stage(config, surrogate):
                 pearson_r=float(np.corrcoef(mean, observed)[0, 1])
                 if mean.std() and observed.std()
                 else None,
-                coverage={str(k): float((np.abs(residual) <= k * sigma).mean()) for k in (1, 2, 3)},
+                coverage={str(k): float(((observed >= intervals[k][0]) &
+                                        (observed <= intervals[k][1])).mean())
+                          for k in (1, 2, 3)},
             )
         )
         np.savez_compressed(
@@ -107,6 +139,9 @@ def run_mfgp_stage(config, surrogate):
             mean=mean,
             sigma=sigma,
             residual=residual,
+            output_transform=np.array(cfg.output_transform),
+            **{f"{bound}_{k}": intervals[k][i]
+               for k in (1, 2, 3) for i, bound in enumerate(("lower", "upper"))},
         )
     # Highest-fidelity map at all available development coordinates, excluding test files.
     theta = np.unique(np.concatenate([b.theta for b in batches.values()]), axis=0)

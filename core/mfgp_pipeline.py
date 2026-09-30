@@ -201,15 +201,16 @@ def evaluate_mfgp_coverage_from_batch(
 
     mu, var = mfgp.predict(holdout_hf_batch.theta, fidelity=mfgp.n_fidelities - 1)
     sigma = np.sqrt(var)
-    abs_diff = np.abs(y_obs - mu)
+    intervals = {k: mfgp.predict_interval(holdout_hf_batch.theta, n_sigma=k)
+                 for k in (1, 2, 3)}
     return {
         "theta": holdout_hf_batch.theta,
         "y_obs": y_obs,
         "mu": mu,
         "sigma": sigma,
-        "1sigma": float((abs_diff <= 1.0 * sigma).mean()),
-        "2sigma": float((abs_diff <= 2.0 * sigma).mean()),
-        "3sigma": float((abs_diff <= 3.0 * sigma).mean()),
+        "1sigma": float(((y_obs >= intervals[1][0]) & (y_obs <= intervals[1][1])).mean()),
+        "2sigma": float(((y_obs >= intervals[2][0]) & (y_obs <= intervals[2][1])).mean()),
+        "3sigma": float(((y_obs >= intervals[3][0]) & (y_obs <= intervals[3][1])).mean()),
     }
 
 
@@ -220,8 +221,12 @@ def fit_mfgp_three_fidelity(
     kernel: str | None = None,
     n_restarts: int = 5,
     verbose: bool = False,
+    output_transform: str = "identity",
 ) -> MultiFidelityGP:
     """Fit a 3-fidelity MFGP on ``(LF β̄, HF β̄, HF y_raw)``.
+
+    Log mode requires strictly positive targets, already smoothed by the caller
+    where appropriate; this low-level function never invents event counts.
 
     Takes the dict produced by
     :func:`prepare_mfgp_datasets_from_batches` (or the synthetic-data
@@ -237,6 +242,7 @@ def fit_mfgp_three_fidelity(
         n_fidelities=3,
         dim_theta=dim_theta,
         kernel=selected_kernel,
+        output_transform=output_transform,
     ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose)
 
 

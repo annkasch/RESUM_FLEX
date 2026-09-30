@@ -51,6 +51,7 @@ class MultiFidelityGP:
         *,
         kernel: str = "rbf",
         ard: bool = True,
+        output_transform: str = "identity",
     ) -> None:
         if n_fidelities < 2:
             raise ValueError(f"n_fidelities must be ≥ 2, got {n_fidelities}")
@@ -60,6 +61,9 @@ class MultiFidelityGP:
             )
         if dim_theta <= 0:
             raise ValueError(f"dim_theta must be positive, got {dim_theta}")
+        if output_transform not in ("identity", "log"):
+            raise ValueError("output_transform must be identity or log")
+        self.output_transform = output_transform
         self.n_fidelities = n_fidelities
         self.dim_theta = dim_theta
         self.kernel_name = kernel
@@ -110,6 +114,10 @@ class MultiFidelityGP:
                     f"Y_list[{i}].shape={Y.shape}; expected ({X.shape[0]}, 1)"
                 )
 
+        if getattr(self, "output_transform", "identity") == "log":
+            if any(not np.isfinite(y).all() or np.any(y <= 0) for y in Y_list):
+                raise ValueError("Log-space GP requires finite, strictly positive training targets")
+            Y_list = [np.log(y) for y in Y_list]
         X_train, Y_train = convert_xy_lists_to_arrays(X_list, Y_list)
         model = GPyLinearMultiFidelityModel(
             X_train, Y_train, self._build_kernel(), n_fidelities=self.n_fidelities,
@@ -120,10 +128,10 @@ class MultiFidelityGP:
 
     # ---- prediction --------------------------------------------------------
 
-    def predict(
+    def predict_transformed(
         self, X_new: np.ndarray, fidelity: int | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Posterior mean and variance at fidelity ``f`` (default: highest).
+        """Gaussian moments in fitted units (log units in log mode).
 
         Returns 1-D arrays of length ``n``. Variance is the GP's posterior
         variance at the fidelity level — non-negative by construction.
@@ -141,6 +149,32 @@ class MultiFidelityGP:
             X_aug, Y_metadata={"output_index": fid_col.astype(int)},
         )
         return mean.flatten(), np.clip(var.flatten(), 0.0, None)
+
+    def predict(self, X_new, fidelity=None):
+        """Mean and variance in original units, including observation noise.
+
+        Log mode returns lognormal moments, not exponentiated Gaussian means.
+        Old checkpoints without output_transform retain identity behavior.
+        """
+        mean, variance = self.predict_transformed(X_new, fidelity)
+        if getattr(self, "output_transform", "identity") == "log":
+            with np.errstate(over="raise", invalid="raise"):
+                original_mean = np.exp(mean + variance / 2)
+                original_variance = np.expm1(variance) * np.exp(2 * mean + variance)
+            return original_mean, original_variance
+        return mean, variance
+
+    def predict_interval(self, X_new, fidelity=None, *, n_sigma=1):
+        """Equal-tail interval with Gaussian ±n_sigma probability mass."""
+        if not np.isfinite(n_sigma) or n_sigma <= 0:
+            raise ValueError("n_sigma must be finite and positive")
+        mean, variance = self.predict_transformed(X_new, fidelity)
+        width = n_sigma * np.sqrt(variance)
+        lower, upper = mean - width, mean + width
+        if getattr(self, "output_transform", "identity") == "log":
+            with np.errstate(over="raise", invalid="raise"):
+                lower, upper = np.exp(lower), np.exp(upper)
+        return lower, upper
 
     def predict_as_model_prediction(
         self, X_new: np.ndarray, fidelity: int | None = None,

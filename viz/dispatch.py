@@ -287,6 +287,8 @@ def plot_coverage_test(
     predicted_label: str = "y_predicted",
     raw_label: str = "y_raw = m/N",
     ylim: tuple[float, float] | None = None,
+    intervals: dict[int, tuple[np.ndarray, np.ndarray]] | None = None,
+    interval_label: str = "σ",
 ) -> dict[str, float]:
     """Figure-5-style coverage diagnostic with a calibration sub-panel.
 
@@ -302,6 +304,8 @@ def plot_coverage_test(
       predictor has paired bars of equal height; under-tight bands sit
       below target, over-wide ones sit above.
 
+    ``intervals`` supplies explicit equal-tail bounds (e.g. back-transformed log
+    intervals); coverage uses these bounds rather than mean ± standard deviation.
     ``ylim`` optionally overrides the default probability-scale display limits.
     Returns the measured coverage dict.
     """
@@ -317,12 +321,18 @@ def plot_coverage_test(
     if np.any(sigma_predicted < 0):
         raise ValueError("sigma_predicted must be non-negative")
 
-    abs_diff = np.abs(y_raw - y_predicted)
-    coverage = {
-        "1sigma": float((abs_diff <= 1.0 * sigma_predicted).mean()),
-        "2sigma": float((abs_diff <= 2.0 * sigma_predicted).mean()),
-        "3sigma": float((abs_diff <= 3.0 * sigma_predicted).mean()),
-    }
+    if intervals is None:
+        intervals = {k: (y_predicted - k * sigma_predicted,
+                         y_predicted + k * sigma_predicted) for k in (1, 2, 3)}
+    for k in (1, 2, 3):
+        lower, upper = intervals[k]
+        if lower.shape != y_raw.shape or upper.shape != y_raw.shape:
+            raise ValueError("Interval bounds must match observation shape")
+        if not np.isfinite(lower).all() or not np.isfinite(upper).all() or np.any(lower > upper):
+            raise ValueError("Interval bounds must be finite and ordered")
+    coverage = {f"{k}sigma": float(((y_raw >= intervals[k][0]) &
+                                     (y_raw <= intervals[k][1])).mean())
+                for k in (1, 2, 3)}
     target = {"1sigma": 0.6827, "2sigma": 0.9545, "3sigma": 0.9973}
 
     x = np.arange(len(y_predicted))
@@ -334,29 +344,29 @@ def plot_coverage_test(
 
     # ---- Left: time series ----
     ax_ts.fill_between(
-        x, y_predicted - 3 * sigma_predicted, y_predicted + 3 * sigma_predicted,
+        x, intervals[3][0], intervals[3][1],
         color="#d62728", alpha=0.18,
-        label=f"±3σ ({coverage['3sigma'] * 100:.0f}%)",
+        label=f"±3{interval_label} ({coverage['3sigma'] * 100:.0f}%)",
     )
     ax_ts.fill_between(
-        x, y_predicted - 2 * sigma_predicted, y_predicted + 2 * sigma_predicted,
+        x, intervals[2][0], intervals[2][1],
         color="#ffd700", alpha=0.40,
-        label=f"±2σ ({coverage['2sigma'] * 100:.0f}%)",
+        label=f"±2{interval_label} ({coverage['2sigma'] * 100:.0f}%)",
     )
     ax_ts.fill_between(
-        x, y_predicted - 1 * sigma_predicted, y_predicted + 1 * sigma_predicted,
+        x, intervals[1][0], intervals[1][1],
         color="#2ca02c", alpha=0.50,
-        label=f"±1σ ({coverage['1sigma'] * 100:.0f}%)",
+        label=f"±1{interval_label} ({coverage['1sigma'] * 100:.0f}%)",
     )
     ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
     ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
     ax_ts.set_xlabel(xlabel)
     ax_ts.set_ylabel("y")
-    lo = min(-0.02, float((y_predicted - 3 * sigma_predicted).min()) - 0.02)
+    lo = min(-0.02, float(intervals[3][0].min()) - 0.02)
     hi = max(
         1.02,
         float(y_raw.max()) + 0.05,
-        float((y_predicted + 3 * sigma_predicted).max()) + 0.02,
+        float(intervals[3][1].max()) + 0.02,
     )
     ax_ts.set_ylim(*(ylim if ylim is not None else (lo, hi)))
     ax_ts.legend(loc="best", fontsize=9)

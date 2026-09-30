@@ -192,6 +192,9 @@ class SurrogateConfig(StrictConfigModel):
 
 
 class MFGPStageConfig(StrictConfigModel):
+    output_transform: Literal["identity", "log"] = "identity"
+    raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
+    cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0

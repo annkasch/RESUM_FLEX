@@ -525,3 +525,19 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   with HF raw target fractions on the same axes. Indices preserve training rows.
 - Pipeline saves training_inputs.png/pdf; notebook can regenerate them for saved
   runs without training. Verified both existing runs and notebook cell syntax.
+
+
+## Log-space optical MFGP
+
+- Added optional log output transform to the GP; optical config enables it.
+  Identity remains API default and old checkpoints retain original semantics.
+- Raw HF training fractions use (m+0.5)/(N+1) with actual target N; CNP means
+  use an audited numerical floor. Original, adjusted and logged arrays are saved.
+- Predictions return original-scale lognormal moments. Canonical coverage plots
+  accept explicit asymmetric bounds; raw validation fractions remain unchanged.
+  Zero-count inclusion is not binomial coverage. Notebook documents the distinction.
+- Active-learning Gaussian acquisition/refitting rejects log mode explicitly.
+- Validation: targeted GP/pipeline/plot tests passed; actual saved 224-LF/10-HF
+  arrays passed a one-restart log fit, finite/positive prediction checks and
+  checkpoint roundtrip. GPy emitted optimizer exploration warnings. No CNP
+  retraining or replacement of saved experiment results.
