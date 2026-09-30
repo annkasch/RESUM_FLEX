@@ -251,8 +251,9 @@ def ensure_mfgp_projections(directory, settings):
         np.savez_compressed(data_path, **arrays)
         metadata_path.write_text(json.dumps(dict(signature=signature, **metadata), indent=2))
     names = ("curves", "curves_observed", "planes", "planes_observed")
-    missing_counts = (
-        settings.quantity == "observed_fraction" and not (output / "coverage_counts.json").exists()
+    missing_counts = settings.quantity == "observed_fraction" and (
+        not (output / "coverage_counts.json").exists()
+        or json.loads((output / "coverage_counts.json").read_text()).get("plot_version") != 2
     )
     if (
         not valid

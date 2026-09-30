@@ -583,11 +583,17 @@ latent-mean artifacts separate. Grid/draw resolution and tail Monte Carlo error
 remain relevant; discrete intervals may contain more than nominal probability.
 
 Predictive observed-overlay figures include per-projection validation counters
-for all three bands, alongside their nominal probabilities. Counts use the saved
-retained-coordinate grid cell (last edge inclusive) and inclusive interval bounds.
-Predictive curves are drawn stepwise to match this lookup exactly. Points outside
+for all three bands, alongside their nominal probabilities. Counts use interpolated displayed bounds for curves and the saved grid cell
+for planes (last edge inclusive), with inclusive interval bounds. Points outside
 projected edges, in undefined cells, or with nonfinite values are excluded and
 reported; denominators count only evaluable validation points, never training
 points. `coverage_counts.json` stores the counts for all six projections. These
 are descriptive interval-inclusion rates, not proof of population calibration
 for the spatially/nonzero-selected HF validation sample. No extrapolation is used.
+
+The 1D predictive displays now connect grid-center estimates linearly; the first
+and last values extend only to their own cell edges. Validation counters use
+exactly those interpolated bounds, with no extrapolation beyond the projection
+range. Plane counters retain grid-cell lookup. Observations use circle markers.
+Points outside training-derived projection bounds remain visible but are excluded
+from inclusion denominators. Rendering does not change the sampled predictions.

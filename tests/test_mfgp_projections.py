@@ -235,3 +235,18 @@ def test_projection_validation_counters_use_bins_and_report_exclusions():
     # An empty projected sample is explicitly undefined, not 0% coverage.
     a["observed_validation_theta"][:] = 9
     assert projection_counts(a, (0,))["evaluated"] == 0
+
+
+def test_curve_counter_matches_interpolated_band():
+    from viz.mfgp_projections import projection_counts
+
+    a = dict(
+        edges_0=np.array([0.0, 1.0, 2.0]),
+        observed_validation_theta=np.array([[0.75, 0.0, 0.0]]),
+        observed_validation=np.array([0.23]),
+    )
+    for k in (1, 2, 3):
+        a[f"lower_{k}_0"] = np.zeros(2)
+        a[f"upper_{k}_0"] = np.array([0.2, 0.4])
+    # At .75 the interpolated upper bound is .25, not the first cell's .2.
+    assert projection_counts(a, (0,))["bands"]["1"]["inside"] == 1
