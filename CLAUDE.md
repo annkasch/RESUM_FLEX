@@ -432,3 +432,11 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   LF level0 retains CNP bias and has zero coverage against raw LF fractions.
 - Outputs: outputs/optical_resum/legacy_mixup_context/seed0. Additional GP-only
   mean plots avoid obscuring the GP comparison with the CNP mean offset.
+
+## MFGP sigma-band plots
+
+- Added voxel-wise ±1/2/3sigma observation bands and coverage bars in
+  {lf,hf}_coverage_bands.png/pdf, using saved GP predictions without refitting.
+  Run IDs are read from experiment metadata. Rendered and visually inspected HF.
+- Optical run timings from artifacts: final CNP checkpoint195.6s after run
+  manifest; MFGP metrics243.4s. GP uses111+45+45=201training observations.
