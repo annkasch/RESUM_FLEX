@@ -17,8 +17,8 @@ with the same command. See [data preparation and training](docs/surrogates.md).
 Experimental BDT/MLP/transformer notebooks and standalone runners have been
 removed; use this shared entry point for model comparisons.
 
-For one maintained notebook covering the full legacy optical workflow, open
-[notebooks/optical_map_legacy.ipynb](notebooks/optical_map_legacy.ipynb).
+For one maintained notebook covering the full LAr optical-map workflow, open
+[notebooks/lar_optical_map.ipynb](notebooks/lar_optical_map.ipynb).
 Run All trains a fresh CNP and MFGP; set `RUN_TRAINING = False` to inspect a saved run.
 
 # RESUM_FLEX

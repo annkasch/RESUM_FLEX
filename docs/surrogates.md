@@ -332,14 +332,14 @@ Choose a new output directory for each training run.
 
 ## Full optical notebook
 
-`notebooks/optical_map_legacy.ipynb` is the single maintained optical workflow
+`notebooks/lar_optical_map.ipynb` is the single maintained optical workflow
 notebook. It calls the shared `run_experiment` API using
 `config.optical.resum.yaml`, without duplicating model or training code.
 
 Use the repository Python environment as the kernel. Run All trains from scratch
 by default, with a timestamped output directory. `RUN_TRAINING = False` loads
 `EXISTING_RUN` instead and displays that run's saved configuration. The default
-is legacy two-output CNP, theory-truth, standard class-aware mixup, mixed context,
+is a two-output CNP, theory-truth, standard class-aware mixup, mixed context,
 and the three-fidelity MFGP. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
 NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
 
