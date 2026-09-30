@@ -286,6 +286,7 @@ def plot_coverage_test(
     xlabel: str = "Trial index",
     predicted_label: str = "y_predicted",
     raw_label: str = "y_raw = m/N",
+    ylim: tuple[float, float] | None = None,
 ) -> dict[str, float]:
     """Figure-5-style coverage diagnostic with a calibration sub-panel.
 
@@ -301,6 +302,7 @@ def plot_coverage_test(
       predictor has paired bars of equal height; under-tight bands sit
       below target, over-wide ones sit above.
 
+    ``ylim`` optionally overrides the default probability-scale display limits.
     Returns the measured coverage dict.
     """
     out_path = Path(out_path)
@@ -356,7 +358,7 @@ def plot_coverage_test(
         float(y_raw.max()) + 0.05,
         float((y_predicted + 3 * sigma_predicted).max()) + 0.02,
     )
-    ax_ts.set_ylim(lo, hi)
+    ax_ts.set_ylim(*(ylim if ylim is not None else (lo, hi)))
     ax_ts.legend(loc="best", fontsize=9)
     ax_ts.grid(alpha=0.3)
 
