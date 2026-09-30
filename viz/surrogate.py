@@ -122,6 +122,69 @@ def plot_mfgp_run(directory):
         for suffix in ("png", "pdf"):
             fig.savefig(directory / f"{fid}_coverage.{suffix}", dpi=150)
         plt.close(fig)
+        band_fig, (band_ax, coverage_ax) = plt.subplots(
+            1,
+            2,
+            figsize=(14, 5),
+            gridspec_kw={"width_ratios": [3, 1]},
+            layout="constrained",
+        )
+        for k, color, width in ((3, "#efaaaa", 14), (2, "#f1cf68", 10), (1, "#69b49f", 6)):
+            band_ax.vlines(
+                x,
+                mean - k * sigma,
+                mean + k * sigma,
+                color=color,
+                linewidth=width,
+                alpha=0.8,
+                label=f"±{k}σ",
+            )
+        band_ax.plot(x, mean, "_", color="#183b50", markersize=12, label="MFGP mean")
+        band_ax.plot(x, obs, "ko", markersize=4, label="Observed target fraction")
+        labels = [str(i) for i in x]
+        manifest = directory.parent / "experiment.json"
+        if manifest.exists():
+            files = (
+                json.loads(manifest.read_text())
+                .get("metadata.json", {})
+                .get("validation", {})
+                .get(fid, {})
+                .get("files", [])
+            )
+            if len(files) == len(x):
+                labels = [Path(f).name.split("_")[0] for f in files]
+        band_ax.set(
+            xticks=x,
+            xticklabels=labels,
+            xlabel="Validation voxel",
+            ylabel="Detection fraction",
+            title=f"{fid.upper()} MFGP — observation bands",
+        )
+        band_ax.tick_params(axis="x", rotation=60)
+        band_ax.legend(fontsize=8)
+        positions = np.arange(3)
+        coverage_ax.bar(
+            positions - 0.18,
+            [0.6827, 0.9545, 0.9973],
+            width=0.36,
+            color="#bac6ce",
+            label="Gaussian reference",
+        )
+        coverage_ax.bar(positions + 0.18, measured, width=0.36, color="#087f8c", label="Measured")
+        for j, fraction in enumerate(measured):
+            coverage_ax.text(
+                j + 0.18, fraction + 0.025, f"{round(fraction * len(obs))}/{len(obs)}", ha="center"
+            )
+        coverage_ax.set(
+            xticks=positions,
+            xticklabels=["1σ", "2σ", "3σ"],
+            ylim=(0, 1.2),
+            ylabel="Fraction of validation voxels",
+        )
+        coverage_ax.legend(fontsize=8)
+        for suffix in ("png", "pdf"):
+            band_fig.savefig(directory / f"{fid}_coverage_bands.{suffix}", dpi=150)
+        plt.close(band_fig)
     with np.load(directory / "development_map.npz") as a:
         theta, mean = a["theta_physical"], a["mean"]
     if theta.shape[1] == 3:
