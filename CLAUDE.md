@@ -412,3 +412,23 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   The legacy scale is not claimed to be calibrated uncertainty.
 - Validation: 144 legacy/shared API/sampler/training tests passed, plus both
   full-runner loss variants; Ruff and both example configurations passed.
+
+## Full optical CNP -> MFGP run
+
+- Optional SurrogateRunConfig.mfgp invokes core.surrogates.mfgp_stage after
+  CNP selection. Fits existing three-fidelity GP on LF/HF training only; no test
+  data read. Saves exact arrays, source hashes, model, normalization and metrics.
+- config.optical.resum.yaml: non-zero-hit LF prepared data, legacy CNP,
+  theory-truth, standard class-aware mixup with mixed context, single objective.
+  10k updates; RBF MFGP with five restarts. HF zero-hit voxels retained.
+- GP means/coverage and development-coordinate map plots emitted by viz.surrogate.
+  Observation variance includes GP noise; no CNP-scale substitution or clipping.
+- Validation: 79 integrated/shared API tests passed; full optical run completed.
+  CNP best step9000: LFmean .0383296 vs .00324977 (r .3810), HFmean .0368694
+  vs .00206645 (r .83874). Highest-level GP HFmean .00214950, MAE .000757885,
+  r .893889, observation coverage 8/10 at1sigma and10/10 at2sigma/3sigma.
+- GP reload predictions match exactly. Development-coordinate map has190points;
+  two HF validation predictions are slightly negative (unconstrained Gaussian GP).
+  LF level0 retains CNP bias and has zero coverage against raw LF fractions.
+- Outputs: outputs/optical_resum/legacy_mixup_context/seed0. Additional GP-only
+  mean plots avoid obscuring the GP comparison with the CNP mean offset.

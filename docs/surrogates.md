@@ -264,3 +264,47 @@ Run either with `python -m core.surrogates train CONFIG.yaml`. New checkpoints
 roundtrip both output channels through the standard loader. Importing historical
 two-output checkpoint files still uses `core.training.load_checkpoint`; the
 single-logit legacy importer does not silently convert those files.
+
+## Full optical RESuM pipeline
+
+`config.optical.resum.yaml` trains the legacy two-output CNP on prepared LF
+non-zero-hit voxels using standard class-aware mixup (`mix_context: true`),
+`theory-truth` Bernoulli NLL and the single-branch objective. It then fits the
+existing three-level MFGP on training data only: LF CNP means, HF CNP means,
+and HF raw target fractions. Zero-hit HF voxels are retained. Filtering LF
+voxels by observed hits means this run represents that selected dataset;
+validation is not an assessment of all zero-hit LF regions.
+
+```bash
+OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+  python -m core.surrogates train config.optical.resum.yaml
+```
+
+The optional `mfgp` run-config section enables this second stage. It requires the
+GP dependencies. `kernel`, `n_restarts`, `seed`, and `n_context` are explicit.
+Omitting the section preserves neural-only runs. The CNP is selected by LF
+validation MAE; MFGP hyperparameters are fitted on training arrays only.
+HF validation is used for reporting; no test files are loaded.
+
+Alongside the CNP artifacts, `mfgp/` contains:
+
+- `model.pkl`, loadable with `core.surrogate_mfgp.load_mfgp`.
+- `model.json`: fitted parameters, input hashes, configuration, and conventions.
+- `training_arrays.npz`: exact three-level GP training inputs and outputs.
+- `metrics.json` and `{lf,hf}_validation.npz`: predictions on real target fractions.
+- `{lf,hf}_means.{png,pdf}` and `{lf,hf}_coverage.{png,pdf}`.
+- `development_map.npz`: highest-fidelity predictions at available development
+  coordinates, with normalized and physical coordinates; a spatial plot when 3D.
+- `normalization.json`: original preprocessing needed for new spatial queries.
+
+The existing GP learns constant Gaussian observation noise separately per level.
+Reported variance includes that observation noise; CNP scales are not used as
+GP noise. LF coverage compares level 0 predictions to LF raw fractions as a
+diagnostic even though level 0 was fitted to denoised CNP means. HF coverage
+compares the highest level to raw HF validation fractions. Gaussian predictions
+are saved without clipping to [0,1]. This is an offline pipeline, not an active
+simulation-launch loop, and the development-coordinate map is not a dense grid.
+
+For physical Cartesian queries, normalize with the saved theta offset and scale
+before calling `gp.predict(theta_normalized, fidelity=2)`. Predictions remain in
+detection-fraction units. Keep normalization alongside the GP checkpoint.

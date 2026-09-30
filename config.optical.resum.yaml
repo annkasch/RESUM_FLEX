@@ -1,0 +1,40 @@
+# Full offline RESuM optical map; prepared LF voxels have non-zero hits.
+model:
+  kind: legacy_cnp
+  encoder:
+    type: mlp
+    latent_dim: 64
+    hidden_dims: [128, 128]
+    dropout: 0.0
+training:
+  backend: neural
+  loss: theory-truth
+  n_steps: 10000
+  eval_every: 250
+  learning_rate: 0.001
+  batch_size: 16
+  n_events: 128
+  n_context_min: 16
+  n_context_max: 64
+  seed: 0
+  device: cpu
+  focal_gamma: 0
+  objective:
+    strategy: single
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: true
+  weighting:
+    strategy: none
+selection: voxel_rate_mae
+data_directory: outputs/optical_data_lf1500_nonzero
+output_directory: outputs/optical_resum/legacy_mixup_context/seed0
+validation_context_events: 64
+validation_seed: 12345
+mfgp:
+  kernel: rbf
+  n_restarts: 5
+  n_context: 64
+  seed: 0
