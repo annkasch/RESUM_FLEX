@@ -440,3 +440,12 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   Run IDs are read from experiment metadata. Rendered and visually inspected HF.
 - Optical run timings from artifacts: final CNP checkpoint195.6s after run
   manifest; MFGP metrics243.4s. GP uses111+45+45=201training observations.
+
+## Reuse existing coverage plotting
+
+- Removed duplicate MFGP coverage/band rendering from viz.surrogate. It now
+  calls existing viz.dispatch.plot_coverage_test for LF/HF PNG and PDF plots.
+- Added optional ylim to the existing function so rare-event values remain
+  readable; default behavior is unchanged. Regenerated coverage artifacts and
+  removed obsolete *_coverage_bands files. No model or predictions changed.
+- Rendering and visual inspection passed; changed wrapper passes Ruff.
