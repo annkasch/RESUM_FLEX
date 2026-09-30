@@ -541,3 +541,13 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   arrays passed a one-restart log fit, finite/positive prediction checks and
   checkpoint roundtrip. GPy emitted optimizer exploration warnings. No CNP
   retraining or replacement of saved experiment results.
+
+
+## Automatic source-change rebuilds
+
+- At user request, ensure_prepared_optical_data now updates the manifest and
+  rebuilds arrays/normalization on source or configuration mismatches. Compatible
+  assignments survive; explicit split policies take precedence. Direct preparation
+  retains its explicit update flag and invalid-data validation remains active.
+- Regression covers source removal/addition, changed raw contents, split policy
+  changes, normalization membership and unchanged-cache reuse.

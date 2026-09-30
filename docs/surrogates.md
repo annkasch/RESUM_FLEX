@@ -398,8 +398,8 @@ Both contain `lf/` and `hf/` symlink folders and a `manifest.json`. Seven failed
 HF simulations with only one primary event are excluded and listed in each
 manifest. Original files are preserved. The supplied preparation config now uses the count-based folders described
 below and reuses the existing LF1500/HF10 split manifest.
-Changing the source file set requires a new manifest or an explicit manifest
-update through `prepare_optical_data`, as before.
+The notebook automatically updates its manifest when configured sources change.
+Direct `prepare_optical_data` calls retain the explicit `update_manifest` option.
 
 `config.optical.resum.yaml` remains the training configuration: its
 `data_directory` points to one prepared dataset, not a list of raw folders.
@@ -412,9 +412,10 @@ Before showing data counts, the notebook loads `config.optical.data.yaml` and
 calls `ensure_prepared_optical_data`. Its output directory must equal the
 training config's `data_directory`. The helper checks raw-file fingerprints,
 configuration, manifest, and required artifacts; missing or outdated prepared
-arrays are rebuilt. Unchanged valid inputs are reused. Changes in source
-membership or split assignments still require a new manifest or explicit update,
-to avoid silently changing an established experiment.
+arrays and normalization are rebuilt. Unchanged valid inputs are reused. Changes
+in source membership, file contents, or configuration automatically update the
+manifest. Compatible existing assignments are retained; explicit split policies
+take precedence. Invalid inputs and conflicting voxel groups still raise errors.
 
 The optical config explicitly sets all LF files to training and selects 10 HF
 files from sorted filenames without replacement using seed 42. Other HF files
@@ -452,8 +453,8 @@ eight failed one-primary simulations. Original source folders are preserved.
 Folders have no inherent LF/HF role: `source.directories` assigns that role when
 preparing a dataset. The default selects `N1500/nonzero` for LF and
 `N5000/nonzero` for HF, preserving the current data and split. To include zeros,
-list the matching `zero` folder too and choose a new manifest/dataset or explicitly
-update the existing split. The notebook reports zero counts without rejecting
+list the matching `zero` folder too; notebook preparation automatically updates
+the prepared dataset and split manifest. The notebook reports zero counts without rejecting
 those voxels, and does not hard-code an LF event count. Preparation still requires
 consistent event counts within each fidelity; this layout does not reintroduce
 training pooled across different LF primary counts.

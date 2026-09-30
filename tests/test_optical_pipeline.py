@@ -371,3 +371,42 @@ def test_automatic_preparation_recovers_batches_and_keeps_split(tmp_path):
     c.split.manifest.unlink()
     ensure_prepared_optical_data(c)
     assert json.loads(c.split.manifest.read_text()) == manifest
+
+
+def test_automatic_preparation_updates_changed_sources_and_policy(tmp_path):
+    from data.optical_pipeline import ensure_prepared_optical_data
+
+    c = config(tmp_path)
+    lf = [fixture_file(c.source.directory, "lf", i, center=(float(i), 0., 0.))
+          for i in range(4)]
+    for i in range(5):
+        fixture_file(c.source.directory, "hf", i, center=(float(i), 1., 0.))
+    c.split.lf_train_only = True
+    c.split.hf_train_count = 2
+    out = ensure_prepared_optical_data(c)
+    old = json.loads(c.split.manifest.read_text())
+    old_hf = {r["file"]: r["split"] for r in old["files"] if r["fidelity"] == "hf"}
+    lf[-1].unlink()
+    ensure_prepared_optical_data(c)
+    new = json.loads(c.split.manifest.read_text())
+    assert len(new["files"]) == len(old["files"]) - 1
+    assert {r["file"]: r["split"] for r in new["files"] if r["fidelity"] == "hf"} == old_hf
+    assert load_prepared_batch(out / "batches/train/lf.npz").batch_size == 3
+    assert len(json.loads((out / "normalization.json").read_text())["fit_files"]) == 5
+    # Changed file contents also trigger rebuilding, not just changed membership.
+    with h5py.File(lf[0], "r+") as h:
+        h["stp/optical/evtid"][:] = [2, 2, 2]
+    ensure_prepared_optical_data(c)
+    assert load_prepared_batch(out / "batches/train/lf.npz").labels.sum() == 5
+    fixture_file(c.source.directory, "lf", 9, center=(9., 0., 0.))
+    c.split.hf_train_count = 3
+    ensure_prepared_optical_data(c)
+    assert load_prepared_batch(out / "batches/train/lf.npz").batch_size == 4
+    assert load_prepared_batch(out / "batches/train/hf.npz").batch_size == 3
+    assert load_prepared_batch(out / "batches/validation/hf.npz").batch_size == 2
+    manifest = json.loads(c.split.manifest.read_text())
+    assert json.loads((out / "manifest_snapshot.json").read_text()) == manifest
+    path = out / "batches/train/lf.npz"
+    before = path.stat().st_mtime_ns
+    ensure_prepared_optical_data(c)
+    assert path.stat().st_mtime_ns == before
