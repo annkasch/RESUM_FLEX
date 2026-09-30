@@ -150,6 +150,26 @@ class MultiFidelityGP:
         )
         return mean.flatten(), np.clip(var.flatten(), 0.0, None)
 
+    def predict_joint_transformed(self, X_new, fidelity=None):
+        """Joint latent Gaussian posterior in fitted units, without observation noise.
+
+        Off-diagonal covariances are essential when averaging correlated spatial
+        predictions. In log mode callers exponentiate draws before averaging.
+        """
+        X_new = np.asarray(X_new, dtype=float)
+        if X_new.ndim != 2 or X_new.shape[1] != self.dim_theta:
+            raise ValueError(f"Expected query shape (n, {self.dim_theta})")
+        if not np.isfinite(X_new).all():
+            raise ValueError("Query coordinates must be finite")
+        f = self._resolve_fidelity(fidelity)
+        fid = np.full((len(X_new), 1), f, dtype=float)
+        mean, covariance = self.model.predict(
+            np.column_stack((X_new, fid)), full_cov=True, include_likelihood=False,
+            Y_metadata={"output_index": fid.astype(int)},
+        )
+        covariance = np.asarray(covariance).reshape(len(X_new), len(X_new))
+        return mean.ravel(), (covariance + covariance.T) / 2
+
     def predict(self, X_new, fidelity=None):
         """Mean and variance in original units, including observation noise.
 

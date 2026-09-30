@@ -551,3 +551,22 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   retains its explicit update flag and invalid-data validation remains active.
 - Regression covers source removal/addition, changed raw contents, split policy
   changes, normalization membership and unchanged-cache reuse.
+
+## Posterior spatial marginalizations
+
+- Added integrated 1D coordinate and 2D plane projections using correlated latent
+  GP draws, exponentiation before averaging in log mode, and physical-volume
+  midpoint weights. RESOLVE's draw-wise averaging is the methodological basis;
+  corrected percentile probabilities and use an actual mean rather than median.
+- Optical config enables 12 cells/axis, 8192 seeded draws, uniform averaging in
+  the training-center convex hull. Domain is explicitly empirical support, not
+  tank geometry; explicit physical box bounds are also supported.
+- Added mean/three-band curves, mean/three-width plane maps, and both observed
+  overlays. Individual raw HF training/validation targets are distinguished and
+  are not presented as marginalized measurements or a coverage test.
+- Saved model/input hashes and projection settings control cache reuse. The
+  maintained notebook can generate these from saved runs without retraining.
+- Verified analytic linear averages, perfectly correlated lognormal uncertainty,
+  domain masking, covariance without observation noise, reproducibility/cache,
+  and notebook display cell against the latest saved log-space run. Generated
+  all four PNG/PDF diagnostics there; no training or GP refitting performed.
