@@ -199,6 +199,8 @@ class IvrAcquisition:
     _mc_points: np.ndarray = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        if getattr(self.mfgp, "output_transform", "identity") != "identity":
+            raise ValueError("Active learning currently requires an identity-space MFGP")
         if self.bounds.dim != self.mfgp.dim_theta:
             raise ValueError(
                 f"bounds.dim={self.bounds.dim} != mfgp.dim_theta={self.mfgp.dim_theta}"
@@ -316,6 +318,8 @@ class ExpectedImprovementAcquisition:
     feasibility_fn: Callable[[np.ndarray], np.ndarray] | None = None
 
     def __post_init__(self) -> None:
+        if getattr(self.mfgp, "output_transform", "identity") != "identity":
+            raise ValueError("Active learning currently requires an identity-space MFGP")
         if self.bounds.dim != self.mfgp.dim_theta:
             raise ValueError(
                 f"bounds.dim={self.bounds.dim} != mfgp.dim_theta={self.mfgp.dim_theta}"
@@ -573,6 +577,8 @@ class ActiveLearningLoop:
     _step: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
+        if getattr(self.mfgp, "output_transform", "identity") != "identity":
+            raise ValueError("Active learning currently requires an identity-space MFGP")
         if self.bounds.dim != self.mfgp.dim_theta:
             raise ValueError(
                 f"bounds.dim={self.bounds.dim} != mfgp.dim_theta={self.mfgp.dim_theta}"

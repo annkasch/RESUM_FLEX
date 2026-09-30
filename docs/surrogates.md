@@ -457,3 +457,29 @@ update the existing split. The notebook reports zero counts without rejecting
 those voxels, and does not hard-code an LF event count. Preparation still requires
 consistent event counts within each fidelity; this layout does not reintroduce
 training pooled across different LF primary counts.
+
+### Log-space MFGP
+
+`mfgp.output_transform: log` fits all three GP levels to natural logarithms;
+`identity` remains the shared API default and reproduces linear-space behavior.
+The optical configuration enables `log`. No CNP retraining behavior changes.
+HF training fractions use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and the actual
+HF target-event count (excluding context). This Beta(1/2,1/2) posterior-mean
+smoothing applies to all HF raw training fractions, including zeros. CNP means
+are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
+
+`training_arrays.npz` preserves original values; `fit_arrays.npz` records the
+adjusted original-scale targets, `transformed_training_arrays.npz` records
+exact logged targets, and `transform.json` records smoothing and floor counts.
+`MultiFidelityGP.predict` returns original-scale lognormal mean and variance;
+`predict_transformed` returns Gaussian log-space moments. `predict_interval`
+returns asymmetric equal-tail bounds. Save/load preserves these semantics;
+older checkpoints default to identity mode.
+
+Validation errors use unchanged raw fractions. Coverage plots use transformed
+interval bounds, not mean ± original-scale standard deviation. Positive bounds
+cannot cover a zero observed fraction: this diagnostic is not a binomial
+posterior-predictive count interval. Lognormal predictions can exceed one.
+Observation noise is learned in log space and is not CNP uncertainty.
+Active-learning acquisition/refitting currently requires identity mode; the
+offline optical-map training and prediction workflow supports both transforms.

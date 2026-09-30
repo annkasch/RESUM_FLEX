@@ -10,8 +10,9 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
+@pytest.mark.parametrize("transform", ["identity", "log"])
 @pytest.mark.parametrize("lf_validation", [True, False])
-def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
+def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     pytest.importorskip("GPy")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
@@ -20,6 +21,8 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
             if split == "validation" and fid == "lf" and not lf_validation:
                 continue
             batch = source.generate(n_trials=4, n_events=24)
+            if transform == "log" and split == "train" and fid == "hf":
+                batch.labels[0] = 0  # Exercise zero-count smoothing end to end.
             folder = root / "batches" / split
             folder.mkdir(parents=True, exist_ok=True)
             np.savez(
@@ -42,7 +45,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
             "n_context_max": 4,
             "sampling": {"strategy": "class_aware_mixup", "mixup": {"mix_context": True}},
         },
-        mfgp={"n_restarts": 1, "n_context": 4},
+        mfgp={"n_restarts": 1, "n_context": 4, "output_transform": transform},
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
@@ -73,3 +76,13 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
         assert (data["sigma"] >= 0).all()
     with np.load(out / "mfgp/training_arrays.npz") as data:
         assert data["X_hf"].shape[0] == 4
+
+    if transform == "log":
+        with (np.load(out / "mfgp/training_arrays.npz") as raw,
+              np.load(out / "mfgp/fit_arrays.npz") as fit):
+            assert raw["Y_hf_raw"][0, 0] == 0
+            assert fit["Y_hf_raw"][0, 0] > 0
+            np.testing.assert_allclose(fit["Y_hf_raw"], (raw["Y_hf_raw"] * 20 + 0.5) / 21)
+        with np.load(out / "mfgp/hf_validation.npz") as arrays:
+            assert (arrays["lower_3"] > 0).all()
+            assert (arrays["upper_3"] >= arrays["lower_3"]).all()
