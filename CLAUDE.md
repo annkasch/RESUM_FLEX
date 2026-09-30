@@ -493,3 +493,15 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Eight focused tests passed, covering level ordering, observation preservation,
   pooled and separated GP workflows, highest-level validation/map predictions
   and checkpoint reload. Notebook code/format and updated config validated.
+
+- Full GP-only comparison completed in 778 seconds, five restarts, same 46 HF
+  validation coordinates/observations/CNP predictions verified exactly. Six-level
+  MAE .00119085 vs pooled .00122738; RMSE .00176767 vs .00180182; Pearson .63933
+  vs .62350. Predicted mean .00216666 vs observed .00310937 (underprediction remains).
+  Coverage 52.2/71.7/91.3% vs pooled 43.5/71.7/93.5% for 1/2/3 sigma.
+- All five six-level optimizations hit 1001 function evaluations (limit) rather
+  than convergence; all pooled restarts converged. Treat improvement as preliminary.
+  Added optimizer status/evaluation count/objective to future saved model metadata;
+  actual comparison diagnostics saved in lf_fidelity_optimizer_report.json.
+  Comparison metrics in lf_fidelity_comparison.json; existing coverage plot reused
+  at mfgp_by_event_count/hf_coverage.png and visually checked.
