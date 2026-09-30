@@ -1,0 +1,34 @@
+# Raw simulation inputs; folder lists contain .stp.lh5 files directly.
+# Existing manifest preserves all LF1500 training and the HF 10/46 split.
+source:
+  directories:
+    lf:
+    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/lf1500_hf_nonzero/lf
+    hf:
+    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/lf1500_hf_nonzero/hf
+  exclude_files: []
+output_directory: outputs/optical_data_alllf_hf10_nonzero
+theta:
+  coordinates: cartesian
+  center_source: filename
+  cylindrical:
+    include_azimuth: true
+    angle_encoding: sin_cos
+phi:
+  vertex:
+    representation: offset
+    coordinates: cartesian
+  momentum:
+    representation: components
+target:
+  kind: any_channel
+  detector_id: null
+split:
+  train_fraction: 0.7
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  seed: 42
+  manifest: outputs/optical_data_alllf_hf10_nonzero/splits/voxel_split.json
+normalization:
+  method: standard
+  fit_on: training

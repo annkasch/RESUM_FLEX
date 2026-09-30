@@ -13,8 +13,18 @@ class StrictModel(BaseModel):
 
 
 class SourceConfig(StrictModel):
-    directory: Path
+    directory: Path | None = None
+    directories: dict[Literal["lf", "hf"], list[Path]] = Field(default_factory=dict)
     exclude_files: list[str] = Field(default_factory=lambda: [ANOMALOUS_FILE])
+
+
+    @model_validator(mode="after")
+    def check_sources(self):
+        if (self.directory is not None) == bool(self.directories):
+            raise ValueError("Provide either directory or per-fidelity directories")
+        if any(not paths for paths in self.directories.values()):
+            raise ValueError("Each configured fidelity needs at least one folder")
+        return self
 
 
 class CylindricalConfig(StrictModel):
@@ -84,3 +94,25 @@ class OpticalDataConfig(StrictModel):
     target: TargetConfig = Field(default_factory=TargetConfig)
     split: SplitConfig = Field(default_factory=SplitConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
+
+
+def load_optical_config(path: str | Path) -> OpticalDataConfig:
+    """Load preparation settings with paths relative to the configuration file."""
+    import yaml
+
+    path = Path(path).resolve()
+    config = OpticalDataConfig.model_validate(yaml.safe_load(path.read_text()))
+
+    def resolve(value):
+        value = value.expanduser()
+        return value.resolve() if value.is_absolute() else (path.parent / value).resolve()
+
+    if config.source.directory is not None:
+        config.source.directory = resolve(config.source.directory)
+    config.source.directories = {
+        fidelity: [resolve(folder) for folder in folders]
+        for fidelity, folders in config.source.directories.items()
+    }
+    config.output_directory = resolve(config.output_directory)
+    config.split.manifest = resolve(config.split.manifest)
+    return config

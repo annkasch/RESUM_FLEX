@@ -36,14 +36,14 @@ class OpticalRun:
         return len(self.event_ids)
 
 
-def read_run(path: Path, root: Path) -> OpticalRun:
+def read_run(path: Path, root: Path, *, fidelity: str | None = None) -> OpticalRun:
     try:
         import h5py
     except ImportError as exc:
         raise ImportError("Install resum-flex[optical-data] to read LH5 files") from exc
     try:
-        relative = path.relative_to(root).as_posix()
-        fidelity = path.relative_to(root).parts[0]
+        relative = path.relative_to(root).as_posix() if fidelity is None else f"{fidelity}/{path.name}"
+        fidelity = path.relative_to(root).parts[0] if fidelity is None else fidelity
         if fidelity not in ("hf", "lf"):
             raise ValueError("file must be inside hf/ or lf/")
         match = NAME.fullmatch(path.name)
@@ -112,14 +112,37 @@ def read_run(path: Path, root: Path) -> OpticalRun:
 
 
 def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
-    root = config.directory.resolve()
-    paths = sorted(root.glob("hf/*.stp.lh5")) + sorted(root.glob("lf/*.stp.lh5"))
-    if not paths:
-        raise ValueError(f"No simulation files found in {root}")
+    inputs = []
+    if config.directory is not None:
+        root = config.directory.resolve()
+        for fidelity in ("hf", "lf"):
+            inputs.extend((p, root, None) for p in sorted((root / fidelity).glob("*.stp.lh5")))
+    else:
+        for fidelity, folders in sorted(config.directories.items()):
+            for folder in folders:
+                folder = folder.expanduser().resolve()
+                if not folder.is_dir():
+                    raise FileNotFoundError(f"Optical input folder does not exist: {folder}")
+                paths = sorted(folder.glob("*.stp.lh5"))
+                if not paths:
+                    raise ValueError(f"No simulation files found in {folder}")
+                inputs.extend((p, folder, fidelity) for p in paths)
+    if not inputs:
+        raise ValueError("No simulation files found in configured folders")
     exclusions = set(config.exclude_files) | {ANOMALOUS_FILE}
     runs, excluded = [], []
-    for path in paths:
-        name = path.relative_to(root).as_posix()
+    seen_paths, seen_names = {}, {}
+    for path, root, explicit_fidelity in inputs:
+        name = path.relative_to(root).as_posix() if explicit_fidelity is None else f"{explicit_fidelity}/{path.name}"
+        fidelity = name.split("/", 1)[0]
+        resolved = path.resolve()
+        if resolved in seen_paths:
+            if seen_paths[resolved] != fidelity:
+                raise ValueError(f"Same source file assigned to LF and HF: {path}")
+            continue
+        if name in seen_names:
+            raise ValueError(f"Ambiguous simulation filename {name} in multiple folders")
+        seen_paths[resolved], seen_names[name] = fidelity, resolved
         if name in exclusions:
             excluded.append(
                 {
@@ -128,7 +151,7 @@ def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict
                 }
             )
         else:
-            runs.append(read_run(path, root))
+            runs.append(read_run(path, root, fidelity=explicit_fidelity))
     if not runs:
         raise ValueError("No included simulation files")
     return sorted(runs, key=lambda r: r.file), excluded

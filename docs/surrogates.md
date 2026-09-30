@@ -327,14 +327,14 @@ Saved outputs remain available locally. Original synthetic examples under
 `scripts/phase*` and the original repository notebooks remain unchanged.
 
 Prepare optical data using the integrated library, after installing the
-`optical-data` extra and setting the source directory in `config.optical.yaml`:
+`optical-data` extra and setting the input folders in `config.optical.data.yaml`:
 
 ```python
-from schemas.config import load_config
+from schemas.optical import load_optical_config
 from data import prepare_optical_data
 
-config = load_config("config.optical.yaml")
-prepared = prepare_optical_data(config.data)
+config = load_optical_config("config.optical.data.yaml")
+prepared = prepare_optical_data(config)
 ```
 
 This reads original LH5 files and saves normalized batches and split metadata;
@@ -359,3 +359,44 @@ The notebook checks prepared non-zero-hit LF/HF batches, uses 10 HF modeling vox
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
 map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
+
+
+## Multiple raw input folders
+
+`config.optical.data.yaml` controls preparation and accepts lists of folders per
+fidelity under `source.directories.lf` and `source.directories.hf`. Each folder
+must directly contain `.stp.lh5` files; fidelity comes from the configuration,
+so folder names need not be `lf` or `hf`. For example:
+
+```yaml
+source:
+  directories:
+    lf: [/path/to/lf1500_part1, /path/to/lf1500_part2]
+    hf: [/path/to/hf_part1, /path/to/hf_part2]
+```
+
+The previous `source.directory` form (one root containing `lf/` and `hf/`)
+remains supported. Specify one form only. Relative paths are resolved against
+the preparation YAML. Repeated references/symlinks to the same physical file
+are loaded once. Different files with the same fidelity and basename, and the
+same physical file assigned to both fidelities, are rejected as ambiguous.
+Splitting and training-only normalization happen after collecting all folders.
+LF event counts must still be homogeneous: this does not restore the retired
+LF500/750/1000/1500 pooling approach.
+
+The supplied preparation config uses these raw-data views under
+`/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/`:
+
+- `lf1500_hf_nonzero/`: 159 LF1500 + 56 HF files with optical hits.
+- `lf1500_hf_all/`: 224 LF1500 + 65 HF files, including zero-hit simulations.
+
+Both contain `lf/` and `hf/` symlink folders and a `manifest.json`. Seven failed
+HF simulations with only one primary event are excluded and listed in each
+manifest. Original files are preserved. The supplied preparation config points
+to the non-zero view and reuses the existing LF1500/HF10 split manifest.
+Changing the source file set requires a new manifest or an explicit manifest
+update through `prepare_optical_data`, as before.
+
+`config.optical.resum.yaml` remains the training configuration: its
+`data_directory` points to one prepared dataset, not a list of raw folders.
+No data preparation or training is triggered merely by editing either YAML.

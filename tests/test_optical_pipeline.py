@@ -291,3 +291,54 @@ def test_cnp_context_target_and_training_smoke(tmp_path):
         training_config=TrainingConfig(n_steps=2, batch_size=1, n_events_per_trial=8, eval_every=0),
     )
     assert np.isfinite(hist["loss"]).all()
+
+
+def test_multiple_input_folders_deduplicate_and_keep_identities(tmp_path):
+    from schemas.optical import SourceConfig
+
+    first = fixture_file(tmp_path / "a", "lf", run=1)
+    second = fixture_file(tmp_path / "b", "lf", run=2, center=(.4, .5, .6))
+    high = fixture_file(tmp_path / "c", "hf", run=3)
+    alias = tmp_path / "alias"
+    alias.mkdir()
+    (alias / first.name).symlink_to(first)
+    source = SourceConfig(directories={"lf": [first.parent, second.parent, alias], "hf": [high.parent]})
+    runs, excluded = read_optical_runs(source)
+    assert len(runs) == 3 and not excluded
+    assert {r.file for r in runs} == {f"lf/{first.name}", f"lf/{second.name}", f"hf/{high.name}"}
+    source.exclude_files = [f"lf/{second.name}"]
+    runs, excluded = read_optical_runs(source)
+    assert len(runs) == 2 and len(excluded) == 1
+
+
+def test_folder_lists_reject_ambiguous_sources(tmp_path):
+    from schemas.optical import SourceConfig
+    import shutil
+
+    with pytest.raises(ValueError, match="either directory"):
+        SourceConfig(directory=tmp_path, directories={"lf": [tmp_path]})
+    with pytest.raises(ValueError, match="either directory"):
+        SourceConfig()
+    with pytest.raises(ValueError, match="at least one folder"):
+        SourceConfig(directories={"lf": []})
+    first = fixture_file(tmp_path / "a")
+    other = tmp_path / "other"
+    other.mkdir()
+    shutil.copyfile(first, other / first.name)
+    with pytest.raises(ValueError, match="Ambiguous"):
+        read_optical_runs(SourceConfig(directories={"lf": [first.parent, other]}))
+    with pytest.raises(ValueError, match="LF and HF"):
+        read_optical_runs(SourceConfig(directories={"lf": [first.parent], "hf": [first.parent]}))
+    with pytest.raises(FileNotFoundError):
+        read_optical_runs(SourceConfig(directories={"lf": [tmp_path / "missing"]}))
+
+
+def test_preparation_config_resolves_folder_lists(tmp_path):
+    from schemas.optical import load_optical_config
+
+    path = tmp_path / "data.yaml"
+    path.write_text('source:\n  directories:\n    lf: [lf1, lf2]\n    hf: [hf]\noutput_directory: prepared\nsplit:\n  manifest: split.json\n')
+    c = load_optical_config(path)
+    assert c.source.directories['lf'] == [tmp_path / 'lf1', tmp_path / 'lf2']
+    assert c.output_directory == tmp_path / 'prepared'
+    assert c.split.manifest == tmp_path / 'split.json'
