@@ -135,4 +135,75 @@ def test_saved_projection_cache_tracks_settings_and_model(tmp_path, monkeypatch)
     (tmp_path / "model.pkl").write_bytes(b"model version 2")
     ensure_mfgp_projections(tmp_path, settings)
     assert len(calls) == 3
+    np.savez(
+        tmp_path / "hf_validation.npz", theta=x[2:], observed=np.arange(6) / 100, target_events=100
+    )
+    settings.quantity = "observed_fraction"
+    predictive_out = ensure_mfgp_projections(tmp_path, settings)
+    assert predictive_out.name == "projections_observed_fraction"
+    assert json.loads((predictive_out / "metadata.json").read_text())["target_events"] == 100
+    assert len(calls) == 4
     assert json.loads((out / "metadata.json").read_text())["signature"]["config"]["seed"] == 43
+
+
+def test_observed_fraction_matches_binomial_quantiles():
+    from scipy.stats import binom
+
+    class ConstantRate:
+        output_transform = "identity"
+
+        def predict_joint_transformed(self, x):
+            return np.full(len(x), 0.2), np.eye(len(x)) * 1e-20
+
+    settings = MFGPProjectionConfig(
+        quantity="observed_fraction", target_events=100, grid_steps=3, n_draws=8192
+    )
+    corners = np.array(list(product((0.0, 1.0), repeat=3)))
+    a, meta = marginalize_posterior(ConstantRate(), corners, np.zeros(3), np.ones(3), settings)
+    for key in ("0", "01"):
+        np.testing.assert_allclose(a[f"mean_{key}"], 0.2)
+        np.testing.assert_allclose(
+            a[f"lower_1_{key}"], binom.ppf(0.158655, 100, 0.2) / 100, atol=0.011
+        )
+        np.testing.assert_allclose(
+            a[f"upper_1_{key}"], binom.ppf(0.841345, 100, 0.2) / 100, atol=0.011
+        )
+        np.testing.assert_allclose(a[f"lower_3_{key}"] * 100, np.round(a[f"lower_3_{key}"] * 100))
+    assert meta["target_events"] == 100
+
+
+def test_observed_projection_retains_spatial_spread():
+    class SpatialRate:
+        output_transform = "identity"
+
+        def predict_joint_transformed(self, x):
+            return np.where(x[:, 2] < 0.5, 0.1, 0.9), np.eye(len(x)) * 1e-20
+
+    corners = np.array(list(product((0.0, 1.0), repeat=3)))
+    settings = MFGPProjectionConfig(
+        quantity="observed_fraction", target_events=10000, grid_steps=4, n_draws=2048
+    )
+    a, _ = marginalize_posterior(SpatialRate(), corners, np.zeros(3), np.ones(3), settings)
+    np.testing.assert_allclose(a["mean_01"], 0.5)
+    assert np.all(a["lower_1_01"] < 0.12)
+    assert np.all(a["upper_1_01"] > 0.88)
+
+
+def test_invalid_binomial_probabilities_are_not_clipped():
+    class InvalidGP:
+        output_transform = "identity"
+
+        def predict_joint_transformed(self, x):
+            return np.full(len(x), 1.1), np.eye(len(x)) * 1e-20
+
+    settings = MFGPProjectionConfig(
+        quantity="observed_fraction", target_events=100, grid_steps=3, n_draws=2048
+    )
+    with pytest.raises(ValueError, match="not silently clipped"):
+        marginalize_posterior(
+            InvalidGP(),
+            np.array(list(product((0.0, 1.0), repeat=3))),
+            np.zeros(3),
+            np.ones(3),
+            settings,
+        )

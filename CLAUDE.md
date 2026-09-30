@@ -570,3 +570,18 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   domain masking, covariance without observation noise, reproducibility/cache,
   and notebook display cell against the latest saved log-space run. Generated
   all four PNG/PDF diagnostics there; no training or GP refitting performed.
+
+## Observed-fraction predictive projections
+
+- Added projection quantity observed_fraction (optical default), keeping latent_mean.
+  Spatial variation is retained by sampling one location per retained bin per
+  posterior draw; binomial counts add finite-N noise. Equal-tail discrete quantiles
+  describe individual voxel fractions, not uncertainty in their spatial average.
+- N is stored with new validation artifacts; older runs recover it from the exact
+  fingerprint-checked prepared batch and saved context count. Explicit override
+  supported. Latest run uses N=4936. Invalid probabilities fail, never silently clip.
+- Labels/documentation state unconditional sampling and the nonzero-selection
+  mismatch. Generated predictive curves, plane interval widths and observed overlays
+  from the existing saved log GP without retraining; separate output directory.
+- Tests cover binomial quantiles, retained spatial spread, discrete interval bounds,
+  invalid probability rejection, saved-N resolution and unchanged latent behavior.

@@ -192,6 +192,8 @@ class SurrogateConfig(StrictConfigModel):
 
 
 class MFGPProjectionConfig(StrictConfigModel):
+    quantity: Literal["latent_mean", "observed_fraction"] = "latent_mean"
+    target_events: int | None = Field(default=None, gt=0)
     enabled: bool = False
     domain: Literal["training_convex_hull", "box"] = "training_convex_hull"
     bounds: list[tuple[float, float]] | None = None

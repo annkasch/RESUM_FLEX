@@ -135,6 +135,7 @@ def run_mfgp_stage(config, surrogate):
             directory / f"{fid}_validation.npz",
             theta=batch.theta,
             observed=observed,
+            target_events=np.array(target.n_events),
             cnp_mean=predicted,
             mean=mean,
             sigma=sigma,
