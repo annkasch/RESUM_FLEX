@@ -163,4 +163,8 @@ def run_mfgp_stage(config, surrogate):
     from viz.surrogate import plot_mfgp_run
 
     plot_mfgp_run(directory)
+    if cfg.projections.enabled:
+        from core.mfgp_projections import ensure_mfgp_projections
+
+        ensure_mfgp_projections(directory, cfg.projections)
     return directory

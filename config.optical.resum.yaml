@@ -35,6 +35,14 @@ output_directory: outputs/optical_resum/optical_map_v1/seed0
 validation_context_events: 64
 validation_seed: 12345
 mfgp:
+  projections:
+    enabled: true
+    domain: training_convex_hull
+    grid_steps: 12
+    n_draws: 8192
+    seed: 42
+    axis_labels: [x, y, z]
+    units: m
   output_transform: log
   raw_pseudocount: 0.5
   cnp_log_floor: 1.0e-12

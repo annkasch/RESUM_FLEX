@@ -191,7 +191,34 @@ class SurrogateConfig(StrictConfigModel):
         return self
 
 
+class MFGPProjectionConfig(StrictConfigModel):
+    enabled: bool = False
+    domain: Literal["training_convex_hull", "box"] = "training_convex_hull"
+    bounds: list[tuple[float, float]] | None = None
+    axis_labels: tuple[str, str, str] = ("x", "y", "z")
+    units: str = "m"
+    grid_steps: int = Field(default=12, ge=3, le=16)
+    n_draws: int = Field(default=8192, ge=2048, le=65536)
+    seed: int = 42
+
+    @model_validator(mode="after")
+    def valid_bounds(self):
+        import math
+
+        if self.domain == "box" and self.bounds is None:
+            raise ValueError("Box projections require explicit physical bounds")
+        if self.bounds is not None and (
+            len(self.bounds) != 3 or any(
+                not math.isfinite(lo) or not math.isfinite(hi) or lo >= hi
+                for lo, hi in self.bounds
+            )
+        ):
+            raise ValueError("Projection bounds must contain three finite increasing pairs")
+        return self
+
+
 class MFGPStageConfig(StrictConfigModel):
+    projections: MFGPProjectionConfig = Field(default_factory=MFGPProjectionConfig)
     output_transform: Literal["identity", "log"] = "identity"
     raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)

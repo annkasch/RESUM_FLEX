@@ -484,3 +484,66 @@ posterior-predictive count interval. Lognormal predictions can exceed one.
 Observation noise is learned in log space and is not CNP uncertainty.
 Active-learning acquisition/refitting currently requires identity mode; the
 offline optical-map training and prediction workflow supports both transforms.
+
+### Spatial posterior marginalizations
+
+`mfgp.projections.enabled: true` adds highest-fidelity spatial projections after
+GP fitting. The optical notebook also generates them from an existing saved
+model, without retraining or loading current raw data. The implementation follows
+[RESOLVE's posterior-draw averaging recipe](https://github.com/annkasch/resolve/blob/4219c8c101d30acc38401465c5dc17ba88dcce1a/resolve/regression_models/bayes_pce_multi_fidelity_visualizer.py#L164),
+not its single-prediction bin-percentile method, whose spread describes spatial
+variation rather than uncertainty in a population average.
+
+All three coordinates are queried jointly at the highest GP fidelity. Draws use
+the full latent posterior covariance, excluding likelihood noise, conditional on
+fitted hyperparameters. In log mode, each draw is exponentiated before averaging.
+Uniform midpoint cells approximate physical-volume averages. Curves integrate
+out two coordinates; plane maps integrate out one. Each remaining bin normalizes
+by its valid cell count, so this is a conditional average, not an unnormalized
+integral. Posterior quantiles of the averaged draws define 68.27%, 95.45%, and
+99.73% pointwise equal-tail intervals (not simultaneous bands). The plotted mean uses analytic pointwise latent
+moments averaged with the same weights. It is not the median. Observation-predictive
+coverage plots remain separate and retain their previous noise convention.
+
+Defaults in `config.optical.resum.yaml`:
+
+```yaml
+mfgp:
+  projections:
+    enabled: true
+    domain: training_convex_hull
+    grid_steps: 12
+    n_draws: 8192
+    seed: 42
+    axis_labels: [x, y, z]
+    units: m
+```
+
+The default domain is the convex hull of LF/HF **training** centers, mapped back
+using the saved normalization. It is empirical support, not a detector geometry
+model; it cannot represent concavities or holes. `domain: box` requires explicit
+`bounds: [[xmin, xmax], [ymin, ymax], [zmin, zmax]]` in physical units. A box must
+lie within the intended volume. Optional bounds also restrict a hull domain.
+No bounds are inferred from validation labels or validation positions. Grid
+midpoints outside the domain are excluded; unsupported projected cells remain
+blank, never filled with zero. Defaults are exploratory: check grid/draw
+convergence before interpreting fine structure or extreme tails. Dense joint
+covariance scales quadratically in valid grid points; grid_steps is capped at 16.
+
+Artifacts under `RUN_DIR/mfgp/projections/`:
+
+- `curves.png/pdf`: three coordinate curves with all three bands.
+- `curves_observed.png/pdf`: the same curves with individual HF training and
+  validation target fractions overlaid and identified separately.
+- `planes.png/pdf`: xy/xz/yz means and three interval-width maps.
+- `planes_observed.png/pdf`: mean maps with observed target fractions as colored
+  markers, on the same color scale; training circles and validation diamonds.
+- `projections.npz`: physical grids, domain mask, projected means/interval bounds,
+  and unchanged raw target fractions/positions from the saved run.
+- `metadata.json`: configuration, model/input hashes, numerical jitter, domain,
+  weighting and uncertainty definitions. Matching artifacts are cached.
+
+Overlaid observations are individual voxel measurements at different omitted
+coordinates, not volume-marginalized measurements. Their scatter includes spatial
+variation and counting noise. Their inclusion in the marginal bands is **not** a
+coverage test. Three-sigma tail quantiles are Monte Carlo estimates, not exact.
