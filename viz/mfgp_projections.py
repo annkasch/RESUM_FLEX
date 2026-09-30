@@ -13,7 +13,7 @@ from matplotlib.lines import Line2D
 
 
 def projection_counts(arrays, keep):
-    """Validation inclusion in saved projected grid cells; no extrapolation.
+    """Validation inclusion: interpolated 1D bands, grid-cell 2D bands.
 
     Only retained coordinates determine membership in a projected cell. Points
     outside its edges or in cells with no finite bands are reported separately.
@@ -33,6 +33,14 @@ def projection_counts(arrays, keep):
     for k in (1, 2, 3):
         lower = arrays[f"lower_{k}_{key}"][tuple(indices)]
         upper = arrays[f"upper_{k}_{key}"][tuple(indices)]
+        if len(keep) == 1:
+            axis = keep[0]
+            edges = arrays[f"edges_{axis}"]
+            centers = (edges[:-1] + edges[1:]) / 2
+            x = np.r_[edges[0], centers, edges[-1]]
+            lo, hi = arrays[f"lower_{k}_{key}"], arrays[f"upper_{k}_{key}"]
+            lower = np.interp(points[:, axis], x, np.r_[lo[0], lo, lo[-1]])
+            upper = np.interp(points[:, axis], x, np.r_[hi[0], hi, hi[-1]])
         eligible &= np.isfinite(lower) & np.isfinite(upper)
         bounds[k] = (lower, upper)
     total = int(eligible.sum())
@@ -117,7 +125,8 @@ def plot_mfgp_projections(directory):
         (directory / "coverage_counts.json").write_text(
             json.dumps(
                 {
-                    "definition": "HF validation inclusion in retained-coordinate grid cells; "
+                    "plot_version": 2,
+                    "definition": "Validation inclusion: interpolated curves and plane grid cells; "
                     "not calibration for the selected validation population",
                     "exclusions": "Outside projected grid edges or undefined projected interval",
                     "projections": counts,
@@ -140,17 +149,20 @@ def plot_mfgp_projections(directory):
         else:
             fig, axes = plt.subplots(1, 3, figsize=(15, 4.8), sharey=True, layout="constrained")
         for i, ax in enumerate(axes):
-            x = a[f"edges_{i}"] if predictive else a[f"axis_{i}"]
+            x = (
+                np.r_[a[f"edges_{i}"][0], a[f"axis_{i}"], a[f"edges_{i}"][-1]]
+                if predictive
+                else a[f"axis_{i}"]
+            )
 
             def displayed(values):
-                return np.r_[values, values[-1]] if predictive else values
+                return np.r_[values[0], values, values[-1]] if predictive else values
 
             for k in (3, 2, 1):
                 ax.fill_between(
                     x,
                     displayed(a[f"lower_{k}_{i}"]),
                     displayed(a[f"upper_{k}_{i}"]),
-                    step="post" if predictive else None,
                     color=colors[k],
                     alpha=0.35,
                     label=probabilities[k],
@@ -158,7 +170,6 @@ def plot_mfgp_projections(directory):
             ax.plot(
                 x,
                 displayed(a[f"mean_{i}"]),
-                drawstyle="steps-post" if predictive else "default",
                 color="C0",
                 label="Population mean" if predictive else "Marginalized mean",
             )
@@ -176,7 +187,7 @@ def plot_mfgp_projections(directory):
                 ax.scatter(
                     a["observed_validation_theta"][:, i],
                     a["observed_validation"],
-                    marker="x",
+                    marker="o",
                     color="black",
                     s=25,
                     label="Individual HF validation targets",
@@ -269,7 +280,7 @@ def plot_mfgp_projections(directory):
             cmap="viridis",
             shading="flat",
         )
-        for split, marker in (("train", "o"), ("validation", "D")):
+        for split, marker in (("train", "o"), ("validation", "o")):
             points = a[f"observed_{split}_theta"]
             ax.scatter(
                 points[:, i],
@@ -278,7 +289,7 @@ def plot_mfgp_projections(directory):
                 marker=marker,
                 norm=norm,
                 cmap="viridis",
-                edgecolors="black",
+                edgecolors="white" if split == "train" else "black",
                 linewidths=0.7,
                 s=40,
                 zorder=5,
@@ -298,12 +309,12 @@ def plot_mfgp_projections(directory):
             [],
             [],
             marker=marker,
-            color="black",
+            color="gray" if split == "training" else "black",
             markerfacecolor="white",
             linestyle="None",
             label=f"Individual HF {split} targets",
         )
-        for split, marker in (("training", "o"), ("validation", "D"))
+        for split, marker in (("training", "o"), ("validation", "o"))
     ]
     axes[0].legend(handles=handles, fontsize=8)
     fig.suptitle(

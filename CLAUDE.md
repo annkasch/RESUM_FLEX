@@ -595,3 +595,11 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   show N/A. Saved coverage_counts.json also triggers plot refresh for older runs.
 - Tests cover edge inclusion, out-of-range/undefined cells, separate 1D/2D counts
   and empty denominators. Regenerated latest saved predictive plots without fitting.
+
+## Readable predictive curves
+
+- Restored linearly connected 1D bands and circle observation markers at user
+  request. Counters now evaluate exactly the displayed interpolated bounds;
+  plane counters remain cell-based. Plot-version metadata refreshes cached figures.
+- Training-derived y bounds are [-0.761,0.750] m; validation extends to -0.882
+  and 0.761 m. Those points remain visible and excluded, without changing the domain.
