@@ -59,3 +59,22 @@ def test_gp_means_and_grouped_metrics_use_actual_counts():
     assert arrays['voxel_event_counts'].tolist() == [20, 40, 40, 40]
     assert metrics['mean_predicted'] == pytest.approx(.35)
     assert metrics['mean_observed'] == pytest.approx(np.concatenate([g.labels.mean(1) for g in groups]).mean())
+
+
+def test_event_count_levels_order_and_preserve_observations():
+    from core.surrogates.pipeline import mfgp_level_arrays
+
+    data = dict(X_lf=np.arange(6)[:, None], Y_lf_cnp=np.arange(6)[:, None] / 10,
+                X_hf=np.array([[9.]]), Y_hf_cnp=np.array([[.4]]), Y_hf_raw=np.array([[.01]]))
+    counts = np.array([1500, 500, 1000, 750, 500, 1500])
+    xs, ys, names, mapping = mfgp_level_arrays(data, counts, lf_levels="by_event_count")
+    assert len(xs) == 6
+    assert mapping == {500: 0, 750: 1, 1000: 2, 1500: 3}
+    assert [len(x) for x in xs] == [2, 1, 1, 2, 1, 1]
+    for size, level in mapping.items():
+        np.testing.assert_array_equal(xs[level], data['X_lf'][counts == size])
+        np.testing.assert_array_equal(ys[level], data['Y_lf_cnp'][counts == size])
+    np.testing.assert_array_equal(ys[-1], data['Y_hf_raw'])
+    pooled_x, pooled_y, _, _ = mfgp_level_arrays(data, counts)
+    np.testing.assert_array_equal(pooled_x[0], data['X_lf'])
+    np.testing.assert_array_equal(pooled_y[0], data['Y_lf_cnp'])

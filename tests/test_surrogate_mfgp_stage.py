@@ -10,8 +10,11 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-@pytest.mark.parametrize("lf_validation,grouped", [(True, False), (False, False), (False, True)])
-def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, grouped):
+@pytest.mark.parametrize("lf_validation,grouped,lf_levels", [
+    (True, False, "pooled"), (False, False, "pooled"),
+    (False, True, "pooled"), (False, True, "by_event_count"),
+])
+def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, grouped, lf_levels):
     pytest.importorskip("GPy")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
@@ -48,7 +51,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, grouped):
             "n_context_max": 4,
             "sampling": {"strategy": "class_aware_mixup", "mixup": {"mix_context": True}},
         },
-        mfgp={"n_restarts": 1, "n_context": 4},
+        mfgp={"n_restarts": 1, "n_context": 4, "lf_levels": lf_levels},
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
@@ -86,3 +89,16 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, grouped):
         with np.load(out / "lf_train_best.npz") as data:
             assert data["voxel_event_counts"].tolist() == [20] * 4 + [28] * 3
             assert len(data["labels"]) == 4 * 20 + 3 * 28
+
+    if lf_levels == "by_event_count":
+        assert meta["level_observations"] == [4, 3, 4, 4]
+        assert len(meta["levels"]) == 4
+        from core.surrogate_mfgp import load_mfgp
+        gp = load_mfgp(out / "mfgp/model.pkl")
+        with np.load(out / "mfgp/hf_validation.npz") as data:
+            np.testing.assert_array_equal(data["fidelity_levels"], 3)
+            mean, _ = gp.predict(data["theta"])
+            np.testing.assert_array_equal(mean, data["mean"])
+        with np.load(out / "mfgp/development_map.npz") as data:
+            mean, _ = gp.predict(data["theta"])
+            np.testing.assert_array_equal(mean, data["mean"])

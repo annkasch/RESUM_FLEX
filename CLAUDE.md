@@ -474,3 +474,22 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   inputs, actual event denominators, final checkpoint and coverage output.
   Actual notebook setup/data cells and real-data sampler preflight passed; no
   optical training run was launched.
+
+## Separate LF event-count GP levels
+
+- User requested testing separate GP fidelities for LF statistics. Added
+  mfgp.lf_levels = pooled (API default) or by_event_count (current optical config).
+- Event-count mode sorts LF source counts ascending, then appends HF CNP and
+  HF raw fractions. Current six-level row counts: 38,157,146,159,10,10. CNP and
+  per-voxel mean definitions are unchanged. Prediction/map use the highest level
+  dynamically; optional LF validation maps each event-count group correctly.
+- Shared stage accepts an alternate output_directory for GP-only comparisons.
+  Saved metadata records all levels, row counts and original CNP provenance;
+  training NPZ includes exact per-level arrays and LF source event counts.
+- Comparison uses the user's completed pooled run
+  outputs/optical_resum/notebook/20260930T045013_790495Z and writes mfgp_by_event_count
+  alongside its original mfgp. Verified source hashes and exact equality of all
+  training CNP mean arrays before fitting. No CNP retraining or HF reselection.
+- Eight focused tests passed, covering level ordering, observation preservation,
+  pooled and separated GP workflows, highest-level validation/map predictions
+  and checkpoint reload. Notebook code/format and updated config validated.
