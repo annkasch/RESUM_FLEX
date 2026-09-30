@@ -384,3 +384,15 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   fixture instead of deleted example files; transformer test uses schema defaults.
 - Validation: 64 schema, optical-data, and transformer tests passed; retained
   config validates as legacy_cnp, theory-truth, mixed context, full MFGP stage.
+
+## Maintained legacy optical notebook
+
+- User explicitly requested one notebook: notebooks/optical_map_legacy.ipynb.
+  Uses shared run_experiment, config.optical.resum.yaml and standard plot outputs.
+- Run All trains by default into a new timestamped folder. Existing-results mode
+  reports saved settings; loss override supports both legacy objectives.
+- Includes data checks, training, CNP/GP metrics, original coverage plots, optical
+  map and reloaded-model query example. No duplicated training or plotting code.
+- Validation: notebook format validated; every code cell executed with a two-step
+  CNP / one-restart GP smoke run, then again in saved-results mode. Plot paths and
+  reloaded GP predictions verified. Full 10,000-step defaults remain unchanged.
