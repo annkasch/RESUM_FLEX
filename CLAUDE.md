@@ -585,3 +585,13 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   from the existing saved log GP without retraining; separate output directory.
 - Tests cover binomial quantiles, retained spatial spread, discrete interval bounds,
   invalid probability rejection, saved-N resolution and unchanged latent behavior.
+
+## Per-projection validation counters
+
+- Added nominal-versus-measured bars beneath each observed predictive curve and
+  plane, with inside/evaluated counts, percentages and exclusions. Counters use
+  HF validation only and retained-coordinate cells; no interpolation/extrapolation.
+- Predictive bands now render as steps to match cell lookup. Empty denominators
+  show N/A. Saved coverage_counts.json also triggers plot refresh for older runs.
+- Tests cover edge inclusion, out-of-range/undefined cells, separate 1D/2D counts
+  and empty denominators. Regenerated latest saved predictive plots without fitting.
