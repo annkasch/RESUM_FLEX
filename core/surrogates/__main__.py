@@ -1,4 +1,4 @@
-"""Run: python -m core.surrogates train config.surrogate.cnp.yaml"""
+"""Run: python -m core.surrogates train config.optical.resum.yaml"""
 
 import argparse
 

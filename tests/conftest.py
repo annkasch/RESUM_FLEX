@@ -1,4 +1,8 @@
-seed: 42
+"""Self-contained legacy schema fixtures, independent of run configurations."""
+
+import pytest
+
+_LEGACY_CONFIG = """seed: 42
 
 encoder:
   type: mlp
@@ -40,3 +44,11 @@ mae_thresholds:
   s6: 0.08
   s7: 0.05
   s8: 0.08
+"""
+
+
+@pytest.fixture
+def legacy_config_path(tmp_path):
+    path = tmp_path / "legacy.yaml"
+    path.write_text(_LEGACY_CONFIG)
+    return path

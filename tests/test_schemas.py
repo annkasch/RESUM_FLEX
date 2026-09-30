@@ -31,6 +31,7 @@ def _binary_labels(rng: np.random.Generator, b: int = B, n: int = N) -> np.ndarr
 # Acceptance gate: S1 / S5 / S7 over multiple dimensionalities.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("d_theta,d_phi", [(1, 1), (2, 1), (1, 2), (2, 2)])
 def test_s1_full_mode_arbitrary_dims(d_theta: int, d_phi: int) -> None:
     """S1: FULL mode — both θ and φ present, across S1–S4 dimensionalities."""
@@ -81,6 +82,7 @@ def test_s7_design_only(d_theta: int) -> None:
 # ---------------------------------------------------------------------------
 # Negative tests: malformed batches must fail at construction.
 # ---------------------------------------------------------------------------
+
 
 def test_full_mode_requires_both() -> None:
     rng = np.random.default_rng(3)
@@ -174,6 +176,7 @@ def test_beta_in_range_ok() -> None:
 # DesignPoint / EventBatch / ModelPrediction.
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.parametrize("d_theta", [1, 2, 3, 5])
 def test_design_point_arbitrary_dim(d_theta: int) -> None:
     DesignPoint(theta=np.arange(d_theta, dtype=float))
@@ -222,6 +225,7 @@ def test_model_prediction_rejects_negative_variance() -> None:
 # Coercion: list / tuple inputs become ndarray.
 # ---------------------------------------------------------------------------
 
+
 def test_list_coercion() -> None:
     batch = StandardBatch(
         mode=InputMode.DESIGN_ONLY,
@@ -238,8 +242,9 @@ def test_list_coercion() -> None:
 # Config loader.
 # ---------------------------------------------------------------------------
 
-def test_config_loads() -> None:
-    cfg = load_config("config.yaml")
+
+def test_config_loads(legacy_config_path) -> None:
+    cfg = load_config(legacy_config_path)
     assert cfg.encoder.latent_dim == 64
     assert cfg.cnp.objective == "theory-truth"
     assert cfg.mfgp.n_fidelities == 3
@@ -248,6 +253,7 @@ def test_config_loads() -> None:
 
 def test_retired_or_unknown_config_fields_are_rejected() -> None:
     from pydantic import ValidationError
+
     from schemas.config import CNPConfig, MFGPConfig
 
     with pytest.raises(ValidationError):

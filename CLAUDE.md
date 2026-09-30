@@ -449,3 +449,12 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   readable; default behavior is unchanged. Regenerated coverage artifacts and
   removed obsolete *_coverage_bands files. No model or predictions changed.
 - Rendering and visual inspection passed; changed wrapper passes Ruff.
+
+## Run configuration cleanup
+
+- Only config.optical.resum.yaml is retained. Removed other standalone run
+  configurations, including the historical notebook minimal config.
+- Updated active docs/CLI and made legacy schema/recovery tests use a temporary
+  fixture instead of deleted example files; transformer test uses schema defaults.
+- Validation: 64 schema, optical-data, and transformer tests passed; retained
+  config validates as legacy_cnp, theory-truth, mixed context, full MFGP stage.

@@ -6,11 +6,16 @@ See [the component API and migration guide](docs/surrogates.md).
 
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  .venv/bin/python -m core.surrogates train config.surrogate.cnp.yaml
+  .venv/bin/python -m core.surrogates train config.optical.resum.yaml
 ```
 
-Use the corresponding `.mlp.yaml`, `.transformer.yaml` or `.bdt.yaml` config to
-switch models. New runs produce the same artifact format.
+The only retained run config is `config.optical.resum.yaml`, for the full optical
+CNP → MFGP pipeline. Model alternatives are documented in the component guide.
+
+For the complete optical CNP → MFGP pipeline, use `config.optical.resum.yaml`
+with the same command. See [data preparation and training](docs/surrogates.md).
+Experimental BDT/MLP/transformer notebooks and standalone runners have been
+removed; use this shared entry point for model comparisons.
 
 # RESUM_FLEX
 
@@ -166,7 +171,7 @@ RESUM_FLEX/
 ├── scripts/           runnable end-to-end demonstrations on synthetic data
 │   ├── phase{1..5}_*.py
 ├── tests/             pytest (no real-data fixtures; everything synthetic)
-├── config.yaml        canonical hyperparameter file (+ pydantic-validated)
+├── config.optical.resum.yaml  full optical pipeline configuration
 ├── pyproject.toml     canonical Python deps + uv compatibility groups
 ├── uv.lock            cross-platform Python dependency lock (managed by uv)
 ├── pixi.toml          outer tool/task manifest (Python deps are not repeated)
@@ -266,64 +271,18 @@ Target Gaussian rates: 68.27 / 95.45 / 99.73 %.
 
 ## Configuration
 
-All hyperparameters live in **`config.yaml`**, validated against the pydantic
-models in `schemas/config.py`. Two equivalent ways to use them:
-
-### Option A — load from YAML
+The retained run configuration is **`config.optical.resum.yaml`**. It uses the
+shared schema in `schemas/surrogates.py` and runs CNP training followed by MFGP.
 
 ```python
-from schemas.config import load_config
-
-cfg = load_config("config.yaml")
-print(cfg.cnp.n_context_min, cfg.training.learning_rate)
+from schemas.surrogates import load_surrogate_config
+cfg = load_surrogate_config("config.optical.resum.yaml")
+print(cfg.training.learning_rate)
 ```
 
-The full default `config.yaml`:
+Legacy APIs still accept their typed configurations, constructed in code:
 
-```yaml
-seed: 42
-
-encoder:                          # MLP encoder (Phase 2)
-  type: mlp
-  latent_dim: 64
-  hidden_dims: [128, 128]
-  dropout: 0.0
-
-cnp:                              # CNP (Phase 3)
-  n_context_min: 16
-  n_context_max: 64
-  objective: theory-truth         # or practice-truth
-
-mfgp:                             # MFGP (Phase 4)
-  kernel: rbf                     # 'rbf' or 'matern52'
-  n_fidelities: 3
-
-ivr:                              # IVR optimizer (Phase 5)
-  n_mc_samples: 1000
-
-training:                         # CNP training loop (Phase 3)
-  n_steps: 1500
-  learning_rate: 1.0e-3
-  batch_size: 16
-  n_events_per_trial: 128
-  grad_clip: 1.0
-  eval_every: 200
-  eval_batch_size: 32
-  eval_n_events: 256
-  seed: 0
-
-mae_thresholds:                   # Phase 3 acceptance gate per scenario
-  s1: 0.05
-  s2: 0.08
-  s3: 0.08
-  s4: 0.12
-  s5: 0.05
-  s6: 0.08
-  s7: 0.05
-  s8: 0.08
-```
-
-### Option B — build configs in code
+### Build legacy configs in code
 
 ```python
 from schemas.config import EncoderConfig, CNPConfig, TrainingConfig
@@ -337,16 +296,17 @@ train_cfg = TrainingConfig(n_steps=1500, learning_rate=1.0e-3, batch_size=16,
 
 ### Override a single field
 
-Pydantic models are immutable but support `model_copy(update=...)`:
+Validate updates through the shared training schema:
 
 ```python
-cfg = load_config("config.yaml")
-custom_cnp = cfg.cnp.model_copy(update={"n_context_min": 64, "n_context_max": 256})
-custom_train = cfg.training.model_copy(update={"n_steps": 3000, "learning_rate": 5e-4})
+from schemas.surrogates import NeuralTraining
+cfg = load_surrogate_config("config.optical.resum.yaml")
+custom_train = NeuralTraining.model_validate({
+    **cfg.training.model_dump(), "n_steps": 3000, "learning_rate": 5e-4,
+})
 ```
 
-The downstream API takes typed configs directly — no string-keyed dicts:
-`train_cnp(cnp, generator, cnp_config=custom_cnp, training_config=custom_train)`.
+Pass `custom_train` to the shared model's `fit` method.
 
 ---
 
