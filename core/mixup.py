@@ -62,6 +62,7 @@ class ClassAwareMixupSource:
         self.mix_context = mix_context
         self.context_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
         self.rng = np.random.default_rng(seed)
+        self.real_target_rng = np.random.default_rng(np.random.SeedSequence([seed, 3]))
         self.batch_size = batch_size
         self.nc, self.nt = n_context, n_events - n_context
         self.context_pool_size = min(
@@ -73,7 +74,11 @@ class ClassAwareMixupSource:
     def _draw(rng, pool, size):
         return rng.choice(pool, size=size, replace=len(pool) < size)
 
-    def next(self, *, n_context=None):
+    def next(self, *, n_context=None, real_target_ratio=None):
+        if real_target_ratio is not None and (
+            not np.isfinite(real_target_ratio) or real_target_ratio <= 0
+        ):
+            raise ValueError("real_target_ratio must be positive and finite")
         nc = self.nc if n_context is None else n_context
         n_events = self.nc + self.nt
         if not 0 < nc < n_events:
@@ -135,6 +140,22 @@ class ClassAwareMixupSource:
                     theta=None if self.batch.theta is None else self.batch.theta[trials],
                     phi=None if self.batch.phi is None else np.stack(features),
                     labels=np.stack(labels),
+                )
+            )
+        if real_target_ratio is not None:
+            nr = max(1, round(nt * real_target_ratio))
+            indices = np.stack([self._draw(self.real_target_rng, pool[1], nr) for pool in pools])
+            for record in self.last_provenance:
+                if record["side"] == 1:
+                    record["real_target_indices"] = indices[record["row"]].copy()
+            result.append(
+                StandardBatch(
+                    mode=self.batch.mode,
+                    theta=None if self.batch.theta is None else self.batch.theta[trials],
+                    phi=None
+                    if self.batch.phi is None
+                    else self.batch.phi[trials[:, None], indices],
+                    labels=self.batch.labels[trials[:, None], indices],
                 )
             )
         return tuple(result)

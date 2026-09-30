@@ -218,7 +218,14 @@ def test_legacy_import_preserves_predictions(kind, tmp_path):
 
 @pytest.mark.parametrize(
     "kind,mixup",
-    [("cnp", False), ("mlp", False), ("transformer", False), ("bdt", False), ("cnp", True)],
+    [
+        ("cnp", False),
+        ("mlp", False),
+        ("transformer", False),
+        ("bdt", False),
+        ("cnp", True),
+        ("cnp", "combined"),
+    ],
 )
 def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
     from core.surrogates.experiment import run_experiment
@@ -252,6 +259,10 @@ def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
                 "sampling": {"strategy": "class_aware_mixup", "mixup": {}},
                 "weighting": {"strategy": "none"},
             }
+        )
+    if mixup == "combined":
+        settings = NeuralTraining(
+            **{**settings.model_dump(), "objective": {"strategy": "real_plus_mixup"}}
         )
     config = SurrogateRunConfig(
         model=spec(kind),
@@ -378,3 +389,93 @@ def test_invalid_mixup_combinations(sampling, weighting):
 def test_tree_rejects_mixup():
     with pytest.raises(ValidationError):
         TreeTraining(sampling={"strategy": "class_aware_mixup", "mixup": {}})
+
+
+@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer"])
+@pytest.mark.parametrize("mix_context", [False, True])
+def test_real_plus_mixup_loss_history_counts_and_checkpoint(kind, mix_context, tmp_path):
+    s = for_scenario("S1", seed=0)
+    b = s.generate(n_trials=4, n_events=24)
+    b.labels[:, :12] = 0
+    b.labels[:, 12:] = 1
+    cfg = NeuralTraining(
+        n_steps=3,
+        eval_every=1,
+        batch_size=2,
+        n_events=12,
+        n_context_min=4,
+        n_context_max=4,
+        sampling={"strategy": "class_aware_mixup", "mixup": {"mix_context": mix_context}},
+        objective={
+            "strategy": "real_plus_mixup",
+            "mixup_loss_weight": 0.001,
+            "real_target_ratio": 0.5,
+        },
+    )
+    m = build_surrogate(spec(kind), s.dim_theta, s.dim_phi)
+    result = m.fit(b, cfg, checkpoints=tmp_path / "fit")
+    for row in result.history:
+        assert row["training_loss"] == pytest.approx(
+            row["training_real_bce"] + 0.001 * row["training_mixup_bce"], rel=1e-6
+        )
+    audit = result.sampling_audit
+    assert audit["real_target_events"] == 24
+    assert audit["mixed_target_events"] == 48
+    assert audit["total_target_predictions"] == 72
+    restored = load_surrogate(tmp_path / "fit/best")
+    assert restored.metadata["training"]["objective"] == cfg.objective.model_dump()
+    assert restored.metadata["sampling_audit"] == audit
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"sampling": {"strategy": "natural"}},
+        {"focal_gamma": 1},
+        {"objective": {"strategy": "real_plus_mixup", "real_target_ratio": 0}},
+        {"objective": {"strategy": "real_plus_mixup", "mixup_loss_weight": -1}},
+        {"objective": {"strategy": "single", "mixup_loss_weight": 0.1}},
+    ],
+)
+def test_invalid_combined_objective(extra):
+    args = dict(
+        sampling={"strategy": "class_aware_mixup", "mixup": {}},
+        objective={"strategy": "real_plus_mixup"},
+    )
+    args.update(extra)
+    with pytest.raises(ValidationError):
+        NeuralTraining(**args)
+
+
+def test_zero_mixup_weight_matches_real_only_optimizer_update():
+    import torch
+
+    from core.binary_losses import binary_focal_loss_with_logits
+    from core.mixup import ClassAwareMixupSource
+
+    s = for_scenario("S1", seed=0)
+    b = s.generate(n_trials=4, n_events=24)
+    cfg = NeuralTraining(
+        n_steps=1,
+        eval_every=1,
+        batch_size=2,
+        n_events=12,
+        n_context_min=4,
+        n_context_max=4,
+        sampling={"strategy": "class_aware_mixup", "mixup": {}},
+        objective={"strategy": "real_plus_mixup", "mixup_loss_weight": 0},
+    )
+    actual = build_surrogate(spec("cnp"), s.dim_theta, s.dim_phi, seed=11)
+    expected = build_surrogate(spec("cnp"), s.dim_theta, s.dim_phi, seed=11)
+    sampler = ClassAwareMixupSource(
+        b, alpha=0.2, seed=cfg.seed, batch_size=2, n_events=12, n_context=4, mix_context=False
+    )
+    context, _, real = sampler.next(real_target_ratio=1)
+    optimizer = torch.optim.Adam(expected.module.parameters(), lr=cfg.learning_rate)
+    loss = binary_focal_loss_with_logits(expected.module(context, real), real.labels, gamma=0)
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(expected.module.parameters(), cfg.grad_clip)
+    optimizer.step()
+    actual.fit(b, cfg)
+    for a, e in zip(actual.module.parameters(), expected.module.parameters(), strict=True):
+        torch.testing.assert_close(a, e)
