@@ -581,3 +581,13 @@ sampling or conditioning on positive counts is silently applied.
 Artifacts are written under `mfgp/projections_observed_fraction/`, keeping the
 latent-mean artifacts separate. Grid/draw resolution and tail Monte Carlo error
 remain relevant; discrete intervals may contain more than nominal probability.
+
+Predictive observed-overlay figures include per-projection validation counters
+for all three bands, alongside their nominal probabilities. Counts use the saved
+retained-coordinate grid cell (last edge inclusive) and inclusive interval bounds.
+Predictive curves are drawn stepwise to match this lookup exactly. Points outside
+projected edges, in undefined cells, or with nonfinite values are excluded and
+reported; denominators count only evaluable validation points, never training
+points. `coverage_counts.json` stores the counts for all six projections. These
+are descriptive interval-inclusion rates, not proof of population calibration
+for the spatially/nonzero-selected HF validation sample. No extrapolation is used.

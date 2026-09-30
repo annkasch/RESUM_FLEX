@@ -207,3 +207,31 @@ def test_invalid_binomial_probabilities_are_not_clipped():
             np.ones(3),
             settings,
         )
+
+
+def test_projection_validation_counters_use_bins_and_report_exclusions():
+    from viz.mfgp_projections import projection_counts
+
+    a = dict(
+        edges_0=np.array([0.0, 1.0, 2.0]),
+        edges_1=np.array([0.0, 1.0, 2.0]),
+        observed_validation_theta=np.array(
+            [[0.0, 0.0, 0.0], [1.0, 1.0, 0.0], [2.0, 2.0, 0.0], [-0.1, 0.0, 0.0], [0.5, 1.5, 0.0]]
+        ),
+        observed_validation=np.array([0.1, 0.3, 0.5, 0.1, 0.2]),
+    )
+    for k in (1, 2, 3):
+        a[f"lower_{k}_0"] = np.array([0.1, 0.3])
+        a[f"upper_{k}_0"] = np.array([0.2, 0.4 if k == 1 else 0.5])
+        a[f"lower_{k}_01"] = np.array([[0.1, np.nan], [0.1, 0.3]])
+        a[f"upper_{k}_01"] = np.array([[0.2, np.nan], [0.2, 0.5]])
+    one = projection_counts(a, (0,))
+    assert one["evaluated"] == 4 and one["excluded"] == 1
+    assert one["bands"]["1"]["inside"] == 3
+    assert one["bands"]["2"]["inside"] == 4
+    two = projection_counts(a, (0, 1))
+    assert two["evaluated"] == 3 and two["excluded"] == 2
+    assert two["bands"]["1"]["inside"] == 3
+    # An empty projected sample is explicitly undefined, not 0% coverage.
+    a["observed_validation_theta"][:] = 9
+    assert projection_counts(a, (0,))["evaluated"] == 0

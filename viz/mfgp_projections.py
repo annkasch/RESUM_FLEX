@@ -12,6 +12,73 @@ from matplotlib.colors import Normalize
 from matplotlib.lines import Line2D
 
 
+def projection_counts(arrays, keep):
+    """Validation inclusion in saved projected grid cells; no extrapolation.
+
+    Only retained coordinates determine membership in a projected cell. Points
+    outside its edges or in cells with no finite bands are reported separately.
+    """
+    points = arrays["observed_validation_theta"]
+    observed = arrays["observed_validation"].ravel()
+    eligible = np.isfinite(observed)
+    indices = []
+    for axis in keep:
+        edges = arrays[f"edges_{axis}"]
+        coordinate = points[:, axis]
+        eligible &= np.isfinite(coordinate) & (coordinate >= edges[0]) & (coordinate <= edges[-1])
+        index = np.searchsorted(edges, coordinate, side="right") - 1
+        indices.append(np.clip(index, 0, len(edges) - 2))
+    key = "".join(map(str, keep))
+    bounds = {}
+    for k in (1, 2, 3):
+        lower = arrays[f"lower_{k}_{key}"][tuple(indices)]
+        upper = arrays[f"upper_{k}_{key}"][tuple(indices)]
+        eligible &= np.isfinite(lower) & np.isfinite(upper)
+        bounds[k] = (lower, upper)
+    total = int(eligible.sum())
+    return dict(
+        total_validation=len(observed),
+        evaluated=total,
+        excluded=int(len(observed) - total),
+        bands={
+            str(k): dict(
+                inside=int((eligible & (observed >= lower) & (observed <= upper)).sum()),
+                total=total,
+            )
+            for k, (lower, upper) in bounds.items()
+        },
+    )
+
+
+def plot_projection_counts(ax, counts):
+    nominal = np.array([0.68268949, 0.95449974, 0.99730020])
+    total = counts["evaluated"]
+    measured = [counts["bands"][str(k)]["inside"] / total if total else 0 for k in (1, 2, 3)]
+    x = np.arange(3)
+    ax.bar(x - 0.18, nominal, width=0.36, color="lightgray", label="Nominal probability")
+    bars = ax.bar(x + 0.18, measured, width=0.36, color="teal", label="Validation inclusion")
+    for k, bar in enumerate(bars, 1):
+        inside = counts["bands"][str(k)]["inside"]
+        label = f"{inside}/{total}\n{inside / total:.1%}" if total else "N/A"
+        ax.text(
+            bar.get_x() + bar.get_width() / 2,
+            bar.get_height() + 0.025,
+            label,
+            ha="center",
+            va="bottom",
+            fontsize=9,
+        )
+    ax.set(
+        xticks=x,
+        xticklabels=["68.27%", "95.45%", "99.73%"],
+        ylim=(0, 1.28),
+        ylabel="Fraction of validation points",
+        title=f"Evaluated: {total}/{counts['total_validation']}; excluded: {counts['excluded']}",
+    )
+    ax.legend(fontsize=8, loc="upper left")
+    ax.grid(axis="y", alpha=0.2)
+
+
 def plot_mfgp_projections(directory):
     directory = Path(directory)
     metadata = json.loads((directory / "metadata.json").read_text())
@@ -38,24 +105,60 @@ def plot_mfgp_projections(directory):
             fig.savefig(directory / f"{name}.{ext}", dpi=160)
         plt.close(fig)
 
+    counts = (
+        {
+            "".join(map(str, keep)): projection_counts(a, keep)
+            for keep in ((0,), (1,), (2,), (0, 1), (0, 2), (1, 2))
+        }
+        if predictive
+        else {}
+    )
+    if predictive:
+        (directory / "coverage_counts.json").write_text(
+            json.dumps(
+                {
+                    "definition": "HF validation inclusion in retained-coordinate grid cells; "
+                    "not calibration for the selected validation population",
+                    "exclusions": "Outside projected grid edges or undefined projected interval",
+                    "projections": counts,
+                },
+                indent=2,
+            )
+        )
     colors = {1: "#2ca02c", 2: "#e5b82c", 3: "#d65b5b"}
     probabilities = {1: "68.27%", 2: "95.45%", 3: "99.73%"}
     for overlay in (False, True):
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4.8), sharey=True, layout="constrained")
+        if overlay and predictive:
+            fig, rows = plt.subplots(
+                2, 3, figsize=(15, 8), layout="constrained", gridspec_kw={"height_ratios": [2, 1]}
+            )
+            axes = rows[0]
+            for ax in axes[1:]:
+                ax.sharey(axes[0])
+            for i in range(3):
+                plot_projection_counts(rows[1, i], counts[str(i)])
+        else:
+            fig, axes = plt.subplots(1, 3, figsize=(15, 4.8), sharey=True, layout="constrained")
         for i, ax in enumerate(axes):
-            x = a[f"axis_{i}"]
+            x = a[f"edges_{i}"] if predictive else a[f"axis_{i}"]
+
+            def displayed(values):
+                return np.r_[values, values[-1]] if predictive else values
+
             for k in (3, 2, 1):
                 ax.fill_between(
                     x,
-                    a[f"lower_{k}_{i}"],
-                    a[f"upper_{k}_{i}"],
+                    displayed(a[f"lower_{k}_{i}"]),
+                    displayed(a[f"upper_{k}_{i}"]),
+                    step="post" if predictive else None,
                     color=colors[k],
                     alpha=0.35,
                     label=probabilities[k],
                 )
             ax.plot(
                 x,
-                a[f"mean_{i}"],
+                displayed(a[f"mean_{i}"]),
+                drawstyle="steps-post" if predictive else "default",
                 color="C0",
                 label="Population mean" if predictive else "Marginalized mean",
             )
@@ -148,7 +251,15 @@ def plot_mfgp_projections(directory):
     )
     save(fig, "planes")
 
-    fig, axes = plt.subplots(1, 3, figsize=(16, 5), layout="constrained")
+    if predictive:
+        fig, rows = plt.subplots(
+            2, 3, figsize=(16, 9), layout="constrained", gridspec_kw={"height_ratios": [2, 1]}
+        )
+        axes = rows[0]
+        for ax, (i, j) in zip(rows[1], planes, strict=True):
+            plot_projection_counts(ax, counts[f"{i}{j}"])
+    else:
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5), layout="constrained")
     for ax, (i, j) in zip(axes, planes, strict=True):
         mesh = ax.pcolormesh(
             a[f"edges_{i}"],
