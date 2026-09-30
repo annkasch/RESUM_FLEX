@@ -480,3 +480,24 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Validation: 21 optical tests passed, including folder lists, duplicate handling,
   ambiguous sources and relative-path resolution. Real configured sources read
   successfully and match all 215 existing manifest records and split assignments.
+
+
+## Automatic preparation before notebook training
+
+- Cell 3 failed because outputs/optical_data_alllf_hf10_nonzero was absent (the
+  outputs directory had become empty). Raw inputs were intact. Rebuilt the saved
+  LF1500/HF10 arrays from raw files without starting training.
+- User requested automatic generation. Added explicit split.lf_train_only and
+  split.hf_train_count settings, enabled in config.optical.data.yaml. They reproduce
+  all 159 LF training and seeded 10/46 HF assignments even without a manifest.
+- Added ensure_prepared_optical_data; notebook invokes it before data counts,
+  checks data/preparation directory agreement, rebuilds missing/stale prepared
+  artifacts and reuses a verified cache. Source/split changes retain manifest
+  protection. Same-voxel conflicts are rejected.
+- Binary event labels are existing targets, based on any hit event-ID match, not
+  a newly introduced scheme. Checked all selected raw files: all 518500 events
+  have n_part == 1 (one primary per event).
+- Validation: 22 optical tests passed, including missing-data/manifest recovery,
+  cache reuse and split preservation. Actual notebook setup/data cells passed;
+  regenerated arrays match previous inputs exactly, and repeat preflight preserves
+  batch modification times. No model training launched.

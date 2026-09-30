@@ -342,3 +342,32 @@ def test_preparation_config_resolves_folder_lists(tmp_path):
     assert c.source.directories['lf'] == [tmp_path / 'lf1', tmp_path / 'lf2']
     assert c.output_directory == tmp_path / 'prepared'
     assert c.split.manifest == tmp_path / 'split.json'
+
+
+def test_automatic_preparation_recovers_batches_and_keeps_split(tmp_path):
+    from data.optical_pipeline import ensure_prepared_optical_data
+
+    c = config(tmp_path)
+    for i in range(4):
+        fixture_file(c.source.directory, 'lf', i, center=(float(i), 0., 0.))
+    for i in range(5):
+        fixture_file(c.source.directory, 'hf', i, center=(float(i), 1., 0.))
+    c.split.lf_train_only = True
+    c.split.hf_train_count = 2
+    out = ensure_prepared_optical_data(c)
+    manifest = json.loads(c.split.manifest.read_text())
+    assert all(r['split'] == 'train' for r in manifest['files'] if r['fidelity'] == 'lf')
+    assert sum(r['split'] == 'train' and r['fidelity'] == 'hf' for r in manifest['files']) == 2
+    assert not (out / 'batches/validation/lf.npz').exists()
+    path = out / 'batches/train/lf.npz'
+    before = path.stat().st_mtime_ns
+    ensure_prepared_optical_data(c)
+    assert path.stat().st_mtime_ns == before
+    path.unlink()
+    ensure_prepared_optical_data(c)
+    assert path.exists()
+    assert json.loads(c.split.manifest.read_text()) == manifest
+    # Rebuilding after losing the manifest also reproduces the explicit policy.
+    c.split.manifest.unlink()
+    ensure_prepared_optical_data(c)
+    assert json.loads(c.split.manifest.read_text()) == manifest

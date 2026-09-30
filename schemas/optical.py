@@ -64,6 +64,8 @@ class TargetConfig(StrictModel):
 
 
 class SplitConfig(StrictModel):
+    lf_train_only: bool = False
+    hf_train_count: int | None = Field(default=None, gt=0)
     train_fraction: float = Field(default=0.7, gt=0, lt=1)
     validation_fraction: float = Field(default=0.15, gt=0, lt=1)
     test_fraction: float = Field(default=0.15, gt=0, lt=1)
