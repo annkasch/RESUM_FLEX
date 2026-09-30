@@ -462,3 +462,21 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Validation: optical/surrogate/legacy/MFGP regression suite passed; main notebook
   setup/data checks and all display-only cells passed against the saved LF1500
   run. Repository search found no active pooled/event-count LF workflow references.
+
+
+## Raw input views and folder lists
+
+- Created data/lar_optical_map/lf1500_hf_nonzero (159 LF1500 + 56 HF) and
+  lf1500_hf_all (224 LF1500 + 65 HF), each with lf/hf symlinks and a manifest.
+  Seven errored HF one-primary files are excluded and recorded; originals intact.
+- User clarified configuration should accept multiple folders. Added
+  SourceConfig.directories mapping lf/hf to folder lists, mutually exclusive with
+  the original single directory root. Loader resolves relative YAML paths.
+- Reader assigns fidelity explicitly for arbitrary folder names, deduplicates
+  symlink/physical-file repeats, rejects conflicting fidelity or filename identities.
+  Homogeneous event-count requirement remains; no combined-statistics approach restored.
+- New config.optical.data.yaml points to non-zero input folders and the existing
+  LF1500/HF10 split manifest. Training config/data and notebook remain unchanged.
+- Validation: 21 optical tests passed, including folder lists, duplicate handling,
+  ambiguous sources and relative-path resolution. Real configured sources read
+  successfully and match all 215 existing manifest records and split assignments.
