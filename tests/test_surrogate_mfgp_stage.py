@@ -10,8 +10,8 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-@pytest.mark.parametrize("lf_validation", [True, False])
-def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
+@pytest.mark.parametrize("lf_validation,grouped", [(True, False), (False, False), (False, True)])
+def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, grouped):
     pytest.importorskip("GPy")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
@@ -29,6 +29,12 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
                 phi=batch.phi,
                 labels=batch.labels,
             )
+    if grouped:
+        folder = root / "batches/train"
+        (folder / "lf.npz").rename(folder / "lf_24.npz")
+        extra = source.generate(n_trials=3, n_events=32)
+        np.savez(folder / "lf_32.npz", mode=extra.mode.value, theta=extra.theta,
+                 phi=extra.phi, labels=extra.labels)
     config = SurrogateRunConfig(
         model={"kind": "legacy_cnp", "encoder": {"latent_dim": 8, "hidden_dims": [12]}},
         training={
@@ -73,3 +79,10 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation):
         assert (data["sigma"] >= 0).all()
     with np.load(out / "mfgp/training_arrays.npz") as data:
         assert data["X_hf"].shape[0] == 4
+
+    if grouped:
+        with np.load(out / "mfgp/training_arrays.npz") as data:
+            assert data["X_lf"].shape[0] == 7
+        with np.load(out / "lf_train_best.npz") as data:
+            assert data["voxel_event_counts"].tolist() == [20] * 4 + [28] * 3
+            assert len(data["labels"]) == 4 * 20 + 3 * 28

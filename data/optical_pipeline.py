@@ -17,12 +17,17 @@ from schemas.optical import OpticalDataConfig
 
 @dataclass
 class PreparedOpticalData:
-    batches: dict[str, dict[str, StandardBatch]]
+    batches: dict[str, dict[str, StandardBatch | list[StandardBatch]]]
     metadata: dict
     normalization: dict
 
     def training_source(self, fidelity="lf"):
-        return FixedBatchSource(self.batches["train"][fidelity], replace_events=False)
+        from data.grouped_batches import batch_groups, GroupedFixedBatchSource
+
+        groups = batch_groups(self.batches["train"][fidelity])
+        if len(groups) > 1:
+            return GroupedFixedBatchSource(groups)
+        return FixedBatchSource(groups[0], replace_events=False)
 
 
 def load_prepared_batch(path: str | Path) -> StandardBatch:
@@ -33,6 +38,23 @@ def load_prepared_batch(path: str | Path) -> StandardBatch:
             labels=arrays["labels"],
             phi=arrays["phi"] if "phi" in arrays else None,
         )
+
+
+def prepared_partition_paths(root, split, fidelity):
+    folder = Path(root) / "batches" / split
+    dense = folder / f"{fidelity}.npz"
+    grouped = sorted(folder.glob(f"{fidelity}_*.npz"), key=lambda p: int(p.stem.rsplit("_", 1)[1]))
+    if dense.exists() and grouped:
+        raise ValueError(f"Ambiguous dense/grouped batches in {folder}")
+    paths = [dense] if dense.exists() else grouped
+    if not paths:
+        raise FileNotFoundError(f"No prepared {split}/{fidelity} batches in {root}")
+    return paths
+
+
+def load_prepared_partition(root, split, fidelity):
+    batches = [load_prepared_batch(p) for p in prepared_partition_paths(root, split, fidelity)]
+    return batches[0] if len(batches) == 1 else batches
 
 
 def prepare_optical_data(
@@ -70,37 +92,41 @@ def prepare_optical_data(
             if not selected:
                 metadata[split][fidelity] = {"files": [], "status": "empty"}
                 continue
-            if len({r.n_events for r in selected}) != 1:
-                raise ValueError(
-                    f"{split}/{fidelity}: unequal event counts; no padding or truncation"
+            event_counts = sorted({r.n_events for r in selected})
+            all_selected = selected
+            partition_batches, partition_metadata = [], []
+            for event_count in event_counts:
+                selected = [r for r in all_selected if r.n_events == event_count]
+                theta = theta_transform.transform(np.stack([features[r.file][0] for r in selected]))
+                phi = (
+                    phi_transform.transform(np.stack([features[r.file][1] for r in selected]))
+                    if has_phi
+                    else None
                 )
-            theta = theta_transform.transform(np.stack([features[r.file][0] for r in selected]))
-            phi = (
-                phi_transform.transform(np.stack([features[r.file][1] for r in selected]))
-                if has_phi
-                else None
-            )
-            labels = np.stack([make_labels(r, config) for r in selected])
-            mode = InputMode.FULL if has_phi else InputMode.DESIGN_ONLY
-            batch = StandardBatch(mode=mode, theta=theta, phi=phi, labels=labels)
-            batches[split][fidelity] = batch
-            metadata[split][fidelity] = {
-                "files": [r.file for r in selected],
-                "nominal_centers": [r.nominal_center.tolist() for r in selected],
-                "measured_centers": [r.measured_center.tolist() for r in selected],
-                "features": features[selected[0].file][2],
-                "shape": list(labels.shape),
-                "mode": mode.value,
-            }
-            arrays = {
-                "theta": theta,
-                "labels": labels,
-                "mode": np.array(mode.value),
-                "event_ids": np.stack([r.event_ids for r in selected]),
-            }
-            if has_phi:
-                arrays["phi"] = phi
-            arrays_to_save.append((split, fidelity, arrays))
+                labels = np.stack([make_labels(r, config) for r in selected])
+                mode = InputMode.FULL if has_phi else InputMode.DESIGN_ONLY
+                batch = StandardBatch(mode=mode, theta=theta, phi=phi, labels=labels)
+                partition_batches.append(batch)
+                partition_metadata.append({
+                    "files": [r.file for r in selected],
+                    "nominal_centers": [r.nominal_center.tolist() for r in selected],
+                    "measured_centers": [r.measured_center.tolist() for r in selected],
+                    "features": features[selected[0].file][2],
+                    "shape": list(labels.shape),
+                    "mode": mode.value,
+                })
+                arrays = {
+                    "theta": theta,
+                    "labels": labels,
+                    "mode": np.array(mode.value),
+                    "event_ids": np.stack([r.event_ids for r in selected]),
+                }
+                if has_phi:
+                    arrays["phi"] = phi
+                suffix = fidelity if len(event_counts) == 1 else f"{fidelity}_{event_count}"
+                arrays_to_save.append((split, suffix, arrays))
+            batches[split][fidelity] = partition_batches[0] if len(partition_batches) == 1 else partition_batches
+            metadata[split][fidelity] = partition_metadata[0] if len(partition_metadata) == 1 else {"groups": partition_metadata}
     out = config.output_directory
     # Validate everything before replacing prepared artifacts or the manifest.
     out.mkdir(parents=True, exist_ok=True)
@@ -108,12 +134,13 @@ def prepare_optical_data(
         directory = out / "batches" / split
         directory.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(directory / f"{fidelity}.npz", **arrays)
-    # Remove stale batches when an updated manifest leaves a partition empty.
+    # Remove obsolete dense/grouped files when a partition changes shape.
+    expected = {out / "batches" / split / f"{name}.npz" for split, name, _ in arrays_to_save}
     for split in SPLITS:
         for fidelity in FIDELITIES:
-            p = out / "batches" / split / f"{fidelity}.npz"
-            if fidelity not in batches[split] and p.exists():
-                p.unlink()
+            for p in (out / "batches" / split).glob(f"{fidelity}*.npz"):
+                if p not in expected:
+                    p.unlink()
     for name, payload in [
         ("metadata", metadata),
         ("normalization", normalization),

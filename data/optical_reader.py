@@ -113,7 +113,7 @@ def read_run(path: Path, root: Path) -> OpticalRun:
 
 def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
     root = config.directory.resolve()
-    paths = sorted(root.glob("hf/*.stp.lh5")) + sorted(root.glob("lf/*.stp.lh5"))
+    paths = sorted((root / "hf").rglob("*.stp.lh5")) + sorted((root / "lf").rglob("*.stp.lh5"))
     if not paths:
         raise ValueError(f"No simulation files found in {root}")
     exclusions = set(config.exclude_files) | {ANOMALOUS_FILE}

@@ -1,11 +1,29 @@
 """One set of metrics and output arrays for all event models."""
 
 import numpy as np
+from scipy.special import expit
 
 from core.precision_recall import precision_recall
 
 
 def evaluate_surrogate(model, target, *, context=None):
+    if isinstance(target, list):
+        if context is None:
+            context = [None] * len(target)
+        if not isinstance(context, list) or len(context) != len(target):
+            raise ValueError("Grouped evaluation requires matching context groups")
+        parts = [evaluate_surrogate(model, t, context=c)[1]
+                 for t, c in zip(target, context, strict=True)]
+        labels = np.concatenate([p["labels"].ravel() for p in parts])
+        logits = np.concatenate([p["logits"].ravel() for p in parts])
+        observed = np.concatenate([p["observed"] for p in parts])
+        predicted = np.concatenate([p["predicted"] for p in parts])
+        metrics, arrays = summarize_predictions(labels, logits, observed, predicted)
+        arrays["voxel_event_counts"] = np.concatenate([
+            np.full(t.batch_size, t.n_events, dtype=int) for t in target])
+        if all("legacy_scale" in p for p in parts):
+            arrays["legacy_scale"] = np.concatenate([p["legacy_scale"].ravel() for p in parts])
+        return metrics, arrays
     prediction = model.predict(target, context=context)
     labels = np.asarray(target.labels)
     if not np.isin(labels, [0, 1]).all():
@@ -14,6 +32,14 @@ def evaluate_surrogate(model, target, *, context=None):
     if logits.shape != labels.shape:
         raise ValueError("Predictions and labels must have identical shapes")
     observed, predicted = labels.mean(1), prediction.mean
+    metrics, arrays = summarize_predictions(labels, logits, observed, predicted)
+    if prediction.legacy_scale is not None:
+        arrays["legacy_scale"] = prediction.legacy_scale
+    return metrics, arrays
+
+
+def summarize_predictions(labels, logits, observed, predicted):
+    """Voxel metrics weight voxels equally; event metrics use all real events."""
     residual = predicted - observed
     curve = (
         precision_recall(labels.ravel(), logits.ravel())
@@ -42,7 +68,7 @@ def evaluate_surrogate(model, target, *, context=None):
         bernoulli_log_loss=float(
             np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits)).mean()
         ),
-        brier_score=float(np.square(prediction.probabilities - labels).mean()),
+        brier_score=float(np.square(expit(logits) - labels).mean()),
         average_precision=curve["average_precision"],
         prevalence=curve["prevalence"],
     )
@@ -56,6 +82,4 @@ def evaluate_surrogate(model, target, *, context=None):
         recall=curve["recall"],
         logit_threshold=curve["logit_threshold"],
     )
-    if prediction.legacy_scale is not None:
-        arrays["legacy_scale"] = prediction.legacy_scale
     return metrics, arrays
