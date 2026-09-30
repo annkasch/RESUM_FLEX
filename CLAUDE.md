@@ -501,3 +501,19 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   cache reuse and split preservation. Actual notebook setup/data cells passed;
   regenerated arrays match previous inputs exactly, and repeat preflight preserves
   batch modification times. No model training launched.
+
+
+## Count-based raw-data organization
+
+- User requested directories by primary count, not LF/HF identity, with nonzero
+  and zero subfolders. Created by_primaries/N500,N750,N1000,N1500,N5000 views under
+  the raw-data root, using symlinks to originals. N naming follows user's steering.
+- Nonzero/zero file counts: 38/47,157/70,146/78,159/65,56/9. Root manifest records
+  sources and eight excluded one-primary failed simulations.
+- Data config selects N1500/nonzero as LF and N5000/nonzero as HF. Physical folder
+  names are independent of modeling roles. Existing LF1500/HF10 experiment retained.
+- Removed notebook hard-coded 1500/nonzero assertions so configured folder choice
+  controls contents; table still reports event and zero-hit counts. The underlying
+  homogeneous-per-fidelity requirement remains; no combined-LF approach reinstated.
+- Verified all new links resolve and notebook preparation/data-count cells pass.
+  Prepared arrays remain numerically identical after switching the folder paths.

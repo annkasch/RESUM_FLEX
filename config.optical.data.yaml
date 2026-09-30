@@ -1,13 +1,14 @@
-# Raw simulation inputs; folder lists contain .stp.lh5 files directly.
+# Raw folders describe event statistics; lf/hf below assign modeling roles.
+# To include zero-hit files, add the corresponding by_primaries/N<count>/zero folder.
 # Explicit split rules also reproduce the LF1500/HF10 split from scratch.
 source:
   directories:
     lf:
-    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/lf1500_hf_nonzero/lf
+    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/nonzero
     hf:
-    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/lf1500_hf_nonzero/hf
+    - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N5000/nonzero
   exclude_files: []
-output_directory: outputs/optical_data_alllf_hf10_nonzero
+output_directory: outputs/optical_map_v1
 theta:
   coordinates: cartesian
   center_source: filename
@@ -30,7 +31,7 @@ split:
   validation_fraction: 0.15
   test_fraction: 0.15
   seed: 42
-  manifest: outputs/optical_data_alllf_hf10_nonzero/splits/voxel_split.json
+  manifest: outputs/optical_map_v1/splits/voxel_split.json
 normalization:
   method: standard
   fit_on: training
