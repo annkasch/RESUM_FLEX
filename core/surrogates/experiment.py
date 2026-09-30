@@ -14,7 +14,7 @@ from schemas.surrogates import SurrogateRunConfig
 
 
 def run_experiment(config: SurrogateRunConfig):
-    """Fit on LF train; select on LF validation; report LF/HF best/final.
+    """Fit on LF train; optionally select on LF validation; report available splits.
 
     Prepared batches are already normalized. Test files are never opened.
     Output must be empty, preventing accidental overwriting of prior runs.
@@ -26,7 +26,10 @@ def run_experiment(config: SurrogateRunConfig):
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
     batches, provenance = {}, {}
-    for split, fidelity in [("train", "lf"), ("validation", "lf"), ("validation", "hf")]:
+    partitions = [("train", "lf"), ("validation", "hf")]
+    if config.lf_validation:
+        partitions.insert(1, ("validation", "lf"))
+    for split, fidelity in partitions:
         path = root / f"batches/{split}/{fidelity}.npz"
         batches[split, fidelity] = load_prepared_batch(path)
         provenance[f"{split}/{fidelity}"] = dict(
@@ -54,7 +57,8 @@ def run_experiment(config: SurrogateRunConfig):
         data=provenance,
         context_conditioning=model.uses_context,
         test_data="Not loaded",
-        selection_split="validation/lf",
+        selection_split="validation/lf" if config.lf_validation else None,
+        checkpoint_policy="best LF validation" if config.lf_validation else "final training step",
         training_pr="In-sample",
         score_weights="Uniform natural events; no resampling during evaluation",
     )
@@ -69,7 +73,7 @@ def run_experiment(config: SurrogateRunConfig):
     result = model.fit(
         train,
         config.training,
-        validation=episodes["validation", "lf"],
+        validation=episodes.get(("validation", "lf")),
         selection=config.selection,
         checkpoints=output / "checkpoints",
     )

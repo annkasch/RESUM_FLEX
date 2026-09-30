@@ -20,33 +20,43 @@ def plot_surrogate_run(directory):
             fig.savefig(directory / f"{name}.{suffix}", dpi=150)
         plt.close(fig)
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4), layout="constrained")
-    for ax, key in zip(
-        axes, ["voxel_rate_mae", "average_precision", "bernoulli_log_loss"], strict=True
-    ):
-        ax.plot([r["step"] for r in history], [r.get(key) for r in history])
-        ax.set(xlabel="Training step / tree count", ylabel=key)
-        ax.grid(alpha=0.2)
-    save(fig, "validation_history")
-    for fidelity in ("lf", "hf"):
-        fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True, layout="constrained")
-        for checkpoint in ("best", "final"):
-            with np.load(directory / f"{fidelity}_validation_{checkpoint}.npz") as arrays:
-                observed, predicted = arrays["observed"], arrays["predicted"]
-            axes[0].plot(predicted, "o-", label=checkpoint)
-            axes[1].plot(predicted - observed, "o-", label=checkpoint)
-        axes[0].plot(observed, "ko-", label="Observed target fraction")
-        axes[0].set(ylabel="Detection fraction", title=f"{fidelity.upper()} validation")
-        axes[1].axhline(0, color="black", ls="--")
-        axes[1].set(xlabel="Validation voxel index", ylabel="Predicted − observed")
-        for ax in axes:
-            ax.legend()
+    has_validation = any("voxel_rate_mae" in r for r in history)
+    if has_validation:
+        fig, axes = plt.subplots(1, 3, figsize=(14, 4), layout="constrained")
+        for ax, key in zip(
+            axes, ["voxel_rate_mae", "average_precision", "bernoulli_log_loss"], strict=True
+        ):
+            ax.plot([r["step"] for r in history], [r.get(key) for r in history])
+            ax.set(xlabel="Training step / tree count", ylabel=key)
             ax.grid(alpha=0.2)
-        save(fig, f"{fidelity}_means")
+        save(fig, "validation_history")
+    else:
+        fig, ax = plt.subplots(layout="constrained")
+        ax.plot([r["step"] for r in history], [r.get("training_loss", np.nan) for r in history])
+        ax.set(xlabel="Training step", ylabel="Training loss")
+        save(fig, "training_history")
+    for fidelity in ("lf", "hf"):
+        if (directory / f"{fidelity}_validation_best.npz").exists():
+            fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True, layout="constrained")
+            for checkpoint in ("best", "final"):
+                with np.load(directory / f"{fidelity}_validation_{checkpoint}.npz") as arrays:
+                    observed, predicted = arrays["observed"], arrays["predicted"]
+                axes[0].plot(predicted, "o-", label=checkpoint)
+                axes[1].plot(predicted - observed, "o-", label=checkpoint)
+            axes[0].plot(observed, "ko-", label="Observed target fraction")
+            axes[0].set(ylabel="Detection fraction", title=f"{fidelity.upper()} validation")
+            axes[1].axhline(0, color="black", ls="--")
+            axes[1].set(xlabel="Validation voxel index", ylabel="Predicted − observed")
+            for ax in axes:
+                ax.legend()
+                ax.grid(alpha=0.2)
+            save(fig, f"{fidelity}_means")
         for logscale in (False, True):
             fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
             for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
                 for split in ("train", "validation") if fidelity == "lf" else ("validation",):
+                    if not (directory / f"{fidelity}_{split}_{checkpoint}.npz").exists():
+                        continue
                     row = next(
                         r
                         for r in records
@@ -76,6 +86,8 @@ def plot_mfgp_run(directory):
     """Mean/residual and observation coverage diagnostics on held-out voxels."""
     directory = Path(directory)
     for fid in ("lf", "hf"):
+        if not (directory / f"{fid}_validation.npz").exists():
+            continue
         with np.load(directory / f"{fid}_validation.npz") as a:
             obs, mean, sigma = a["observed"], a["mean"], a["sigma"]
             cnp = a["cnp_mean"]

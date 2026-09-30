@@ -272,10 +272,11 @@ existing three-level MFGP on training data only: LF CNP means, HF CNP means,
 and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
 56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
 assigned to validation, including former HF test voxels. There is no separate
-HF test set; LF splits remain 111/24/24. Validation represents the non-zero-hit
+HF test set. The current all-LF test uses all 159 retained LF voxels for training
+and skips LF validation/test. Validation represents the non-zero-hit
 subset, not the full spatial population.
 
-The prepared dataset is `outputs/optical_data_lf1500_hf10_nonzero`. Its
+The prepared dataset is `outputs/optical_data_alllf_hf10_nonzero`. Its
 `split_policy.json` records the selection and excluded files; `config.json`
 and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
 with the saved assignments. Normalization is refitted using training files only.
@@ -288,8 +289,11 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 
 The optional `mfgp` run-config section enables this second stage. It requires the
 GP dependencies. `kernel`, `n_restarts`, `seed`, and `n_context` are explicit.
-Omitting the section preserves neural-only runs. The CNP is selected by LF
-validation MAE; MFGP hyperparameters are fitted on training arrays only.
+Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
+validation MAE. The current optical test sets `lf_validation: false`: it uses
+the final CNP checkpoint after all configured steps, without selecting on HF.
+LF validation files and diagnostics are skipped; LF training PR and training
+loss history remain available. MFGP hyperparameters use training arrays only.
 HF validation is used for reporting; no test files are loaded.
 
 Alongside the CNP artifacts, `mfgp/` contains:
