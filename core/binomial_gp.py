@@ -168,14 +168,24 @@ class BinomialGP:
         x = np.asarray(theta, dtype=float)
         if x.ndim != 2 or x.shape[1] != len(self.offset) or not np.isfinite(x).all():
             raise ValueError("Query coordinates must match training dimensions and be finite")
-        mean, variance = self.model.predict(
-            (x - self.offset) / self.scale, full_cov=full_cov, include_likelihood=False
-        )
+        query = (x - self.offset) / self.scale
+        model = self.model
+        cross = model.kern.K(model.X, query)
+        mean = cross.T @ model.posterior.woodbury_vector
+        # Avoid materializing the inverse in K** - K*X R KX*. For large,
+        # nearly constant kernels that multiplication suffers cancellation.
+        # The Laplace covariance is K** - V.T V, with
+        # V = chol(I + sqrt(W) K sqrt(W))^-1 sqrt(W) KX*.
+        W = model.inference_method.W
+        root_w = np.sqrt(W)
+        K = model.kern.K(model.X)
+        B = np.eye(len(K)) + root_w * K * root_w.T
+        V = solve_triangular(jitchol(B), root_w * cross, lower=True)
         if full_cov:
-            variance = np.asarray(variance).reshape(len(x), len(x))
+            variance = model.kern.K(query) - V.T @ V
             variance = (variance + variance.T) / 2
         else:
-            variance = np.maximum(variance.ravel(), 0)
+            variance = np.maximum(model.kern.Kdiag(query) - np.sum(V * V, axis=0), 0)
         return mean.ravel(), variance
 
     def predict(self, theta):

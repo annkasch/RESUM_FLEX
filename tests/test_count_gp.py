@@ -112,3 +112,21 @@ def test_optical_counts_end_to_end(tmp_path):
     fixture_file(c.source.directory, "lf", 10, center=(10.0, 0.0, 0.0), n=15)
     updated = prepare_optical_counts(c)[0]
     assert 15 in updated["train"]["trials"]
+
+
+def test_prediction_covariance_with_large_nearly_constant_kernel():
+    """Regression: inverse-based prediction lost PSD on the all-budget data."""
+    rng = np.random.default_rng(42)
+    x = rng.uniform(-1, 1, (100, 3))
+    n = np.full(len(x), 1500)
+    m = rng.binomial(n, expit(-6 + x[:, 2]))
+    gp = BinomialGP().fit(x, m, n, max_iters=5, n_restarts=1)
+    gp.model[:] = [9992.0, 5735.0, 6811.0, 7.48, 4105.0]
+    query = rng.uniform(-1, 1, (30, 3))
+    mean, covariance = gp.predict_latent(query, full_cov=True)
+    _, diagonal = gp.predict_latent(query)
+    np.testing.assert_allclose(diagonal, np.diag(covariance), atol=1e-9)
+    assert np.linalg.eigvalsh(covariance).min() > -1e-9
+    assert np.isfinite(mean).all()
+    samples = gp.predict_observations(query, 5000, n_draws=2048)
+    assert np.isfinite(samples).all()
