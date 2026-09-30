@@ -398,3 +398,17 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   not a proven bias correction. No full simulation-data training comparison yet.
 - Validation: 111 shared API/sampler/training tests passed, plus 13 focused
   combined-objective checks after final edits; Ruff and example config pass.
+
+## Legacy two-output shared API integration
+
+- Added explicit model.kind=legacy_cnp backed by the existing build_cnp network.
+  training.loss selects theory-truth or practice-truth explicitly, with the
+  original cnp_loss functions; single-logit backends retain bernoulli default.
+- Combined real_plus_mixup objective applies the selected loss to both branches.
+  Gaussian components are logged as NLL, not BCE; legacy weights/focal rejected.
+- Predictions expose effective probabilities and preserve legacy_scale separately;
+  shared metrics and MFGP use the effective mean, not raw sigmoid(mu_logit).
+- Separate theory/practice example configs, both decoder outputs checkpointed.
+  The legacy scale is not claimed to be calibrated uncertainty.
+- Validation: 144 legacy/shared API/sampler/training tests passed, plus both
+  full-runner loss variants; Ruff and both example configurations passed.
