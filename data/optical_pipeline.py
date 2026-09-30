@@ -129,12 +129,13 @@ def prepare_optical_data(
 def ensure_prepared_optical_data(config: OpticalDataConfig) -> Path:
     """Prepare absent/stale artifacts; reuse data only after checking raw inputs.
 
-    Changed source membership or split rules still obey manifest protection:
-    choose a new manifest or request an explicit update when reassigning data.
+    Source/configuration changes automatically update the manifest and rebuild
+    arrays and normalization. Compatible existing split assignments are retained;
+    explicit split policies take precedence. Invalid inputs still fail validation.
     """
     out = config.output_directory
     runs, _ = read_optical_runs(config.source)
-    _, expected_manifest = assign_splits(runs, config)
+    _, expected_manifest = assign_splits(runs, config, update=True)
     required = [out / f"{name}.json" for name in ("config", "metadata", "normalization", "manifest_snapshot")]
     required += [out / "batches" / split / f"{fid}.npz"
                  for split, fid in sorted({(r["split"], r["fidelity"]) for r in expected_manifest["files"]})]
@@ -146,5 +147,5 @@ def ensure_prepared_optical_data(config: OpticalDataConfig) -> Path:
         except (ValueError, OSError):
             valid = False
     if not valid:
-        prepare_optical_data(config)
+        prepare_optical_data(config, update_manifest=True)
     return out
