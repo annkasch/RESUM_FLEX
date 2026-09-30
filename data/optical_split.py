@@ -86,13 +86,30 @@ def assign_splits(runs, config: OpticalDataConfig, *, update=False):
             for f in FIDELITIES
         ]
     )
+    forced = {}
+    if config.split.lf_train_only:
+        forced.update({r.file: "train" for r in runs if r.fidelity == "lf"})
+        targets[:, 0] = [sum(r.fidelity == "lf" for r in runs), 0, 0]
+    if config.split.hf_train_count is not None:
+        hf = sorted(r.file for r in runs if r.fidelity == "hf")
+        n_train = config.split.hf_train_count
+        if n_train >= len(hf):
+            raise ValueError("hf_train_count must leave at least one HF validation voxel")
+        selected = set(np.random.default_rng(config.split.seed).choice(hf, n_train, replace=False))
+        forced.update({name: "train" if name in selected else "validation" for name in hf})
+        targets[:, 1] = [n_train, len(hf) - n_train, 0]
     assignments, pending = {}, []
     for group in groups:
         locked = {previous[r.file]["split"] for r in group if r.file in previous}
         if not locked.issubset(SPLITS) or len(locked) > 1:
             raise ValueError("Equivalent voxel inputs cross splits; use a new versioned manifest")
-        if locked:
-            split = locked.pop()
+        requested = {forced[r.file] for r in group if r.file in forced}
+        if len(requested) > 1:
+            raise ValueError("Explicit LF/HF split policy conflicts within a voxel group")
+        if requested and locked and requested != locked and not update:
+            raise ValueError("Explicit split policy changed; use a new manifest or explicit update")
+        if requested or locked:
+            split = next(iter(requested or locked))
             for r in group:
                 assignments[r.file] = split
                 counts[SPLITS.index(split), FIDELITIES.index(r.fidelity)] += 1
@@ -129,6 +146,7 @@ def assign_splits(runs, config: OpticalDataConfig, *, update=False):
     payload = {
         "version": 1,
         "settings": settings,
+        "policy": {"lf_train_only": config.split.lf_train_only, "hf_train_count": config.split.hf_train_count},
         "files": sorted(records, key=lambda r: r["file"]),
         "targets": targets.tolist(),
         "actual_counts": counts.tolist(),

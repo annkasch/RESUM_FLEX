@@ -281,6 +281,10 @@ The prepared dataset is `outputs/optical_data_alllf_hf10_nonzero`. Its
 and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
 with the saved assignments. Normalization is refitted using training files only.
 The previous prepared dataset and model outputs are retained.
+The notebook automatically checks/prepares these inputs before training; it
+reuses valid cached arrays. `split.lf_train_only: true` and
+`split.hf_train_count: 10` make the split reproducible even if the outputs and
+manifest are missing. Fractional targets apply only where no explicit rule is set.
 
 ```bash
 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
@@ -355,7 +359,7 @@ is a two-output CNP, theory-truth, standard class-aware mixup, mixed context,
 and the three-fidelity MFGP. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
 NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
 
-The notebook checks prepared non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
+The notebook prepares/checks non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
 map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
@@ -400,3 +404,28 @@ update through `prepare_optical_data`, as before.
 `config.optical.resum.yaml` remains the training configuration: its
 `data_directory` points to one prepared dataset, not a list of raw folders.
 No data preparation or training is triggered merely by editing either YAML.
+
+
+## Automatic notebook preparation
+
+Before showing data counts, the notebook loads `config.optical.data.yaml` and
+calls `ensure_prepared_optical_data`. Its output directory must equal the
+training config's `data_directory`. The helper checks raw-file fingerprints,
+configuration, manifest, and required artifacts; missing or outdated prepared
+arrays are rebuilt. Unchanged valid inputs are reused. Changes in source
+membership or split assignments still require a new manifest or explicit update,
+to avoid silently changing an established experiment.
+
+The optical config explicitly sets all LF files to training and selects 10 HF
+files from sorted filenames without replacement using seed 42. Other HF files
+are validation. Conflicting split requests for a shared voxel are rejected.
+This is independent of the training-time context/target split and mixup.
+
+Preparation matches `stp/optical/evtid` to `vtx/evtid`, making one binary target
+per simulated event: one if any configured detector recorded a hit, zero otherwise.
+Multiple recorded hits for an event count once. This is an observed simulation
+outcome, not a model-assigned label. Current selected inputs all have one primary
+per event (`vtx/n_part == 1`). Theta is the filename center; phi contains vertex
+offsets from that center and momentum components. Standardization is fitted on
+training files only, then applied to both training and validation. Prepared
+arrays, normalization, source fingerprints, split metadata and reports are saved.

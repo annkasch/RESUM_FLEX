@@ -1,5 +1,5 @@
 # Raw simulation inputs; folder lists contain .stp.lh5 files directly.
-# Existing manifest preserves all LF1500 training and the HF 10/46 split.
+# Explicit split rules also reproduce the LF1500/HF10 split from scratch.
 source:
   directories:
     lf:
@@ -24,6 +24,8 @@ target:
   kind: any_channel
   detector_id: null
 split:
+  lf_train_only: true
+  hf_train_count: 10
   train_fraction: 0.7
   validation_fraction: 0.15
   test_fraction: 0.15
