@@ -347,108 +347,34 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - **Always check the detailed code** if you are not sure about something, if you cannot find the answer from the code, then ask me. don't guess, but check and ask.
 - **Always update the design doc (CLAUDE.md for this project)**, with implementation details and mark the completed bullet points. and record the test results when the tests are done. you don't need to wait until a full commit is finished. you can update more frequently once a bullet point is finished.
 
-## Integrated event surrogates
+## Integrated event-surrogate and optical workflow
 
-- `core.surrogates` provides interchangeable single-logit CNP, MLP, FT-style
-  transformer, and histogram BDT models; see `docs/surrogates.md`.
-- Use `python -m core.surrogates train config.surrogate.cnp.yaml` or the other
-  model configurations. Shared evaluation, checkpointing, and MFGP integration
-  use the same event/voxel contracts. Optional extras: bdt and optical-data.
-- The shared API supports natural and sampling-corrected positive-quota training.
-  Mixup remains in the legacy CNP API. Permutation mixup uses independent
-  Beta weights per pair within each voxel, preserving label means in expectation.
-
-## Fresh class-aware source splits (2026-09-29)
-
-- ClassAwareMixupSource now samples voxels uniformly with replacement and makes
-  a fresh label-independent context/target source partition per voxel occurrence
-  per batch. Replaces fixed pools and negative-once-per-epoch scheduling.
-- Both mixture parents stay on their assigned side. Single-class pools emit real
-  events; singleton positives may switch roles across batches. Independent pair
-  weights and matched targets across real/mixed context modes are preserved.
-- Legacy training uses this sampler; shared surrogate API integration is pending.
-
-- Validation: all 21 targeted mixup and training tests passed.
-- User workflow: commit and push verified integrated changes regularly to the
-  fork (origin); exclude experimental notebooks and scripts.
-
-## Shared class-aware mixup integration
-
-
-- NeuralTraining sampling.strategy=class_aware_mixup with nested mixup.alpha
-  and mixup.mix_context connects the fresh-split sampler to all neural models.
-- Context sizes follow the configured random range; real validation is preserved.
-  BDT, positive quotas, and weighting corrections cannot be combined with mixup.
-- Audits report soft-label mass/mean rather than truncated positive counts.
-  Example: config.surrogate.cnp.mixup.yaml.
-- Validation: shared API, mixup, training and target-sampling tests passed;
-  dedicated end-to-end mixup artifact test passed; Ruff checks passed.
-
-## Optional real-plus-mixup BCE objective
-
-- NeuralTraining.objective selects single (default) or real_plus_mixup, with
-  mixup_loss_weight and real_target_ratio. Combined training requires class-aware
-  mixup, stable BCE and no extra weights; supports CNP/MLP/transformer.
-- Sampler can additionally return uniform real targets from the same target source
-  pool, using independent RNG. Both branches share context observations, losses
-  are averaged separately, and one optimizer update uses their weighted sum.
-- History includes each BCE component; audit/checkpoints include branch counts
-  and settings. Ratio 1 doubles target predictions. Real validation is unchanged.
-- Example config.surrogate.cnp.real_plus_mixup.yaml. This objective is experimental,
-  not a proven bias correction. No full simulation-data training comparison yet.
-- Validation: 111 shared API/sampler/training tests passed, plus 13 focused
-  combined-objective checks after final edits; Ruff and example config pass.
-
-## Legacy two-output shared API integration
-
-- Added explicit model.kind=legacy_cnp backed by the existing build_cnp network.
-  training.loss selects theory-truth or practice-truth explicitly, with the
-  original cnp_loss functions; single-logit backends retain bernoulli default.
-- Combined real_plus_mixup objective applies the selected loss to both branches.
-  Gaussian components are logged as NLL, not BCE; legacy weights/focal rejected.
-- Predictions expose effective probabilities and preserve legacy_scale separately;
-  shared metrics and MFGP use the effective mean, not raw sigmoid(mu_logit).
-- Separate theory/practice example configs, both decoder outputs checkpointed.
-  The legacy scale is not claimed to be calibrated uncertainty.
-- Validation: 144 legacy/shared API/sampler/training tests passed, plus both
-  full-runner loss variants; Ruff and both example configurations passed.
-
-## Full optical CNP -> MFGP run
-
-- Optional SurrogateRunConfig.mfgp invokes core.surrogates.mfgp_stage after
-  CNP selection. Fits existing three-fidelity GP on LF/HF training only; no test
-  data read. Saves exact arrays, source hashes, model, normalization and metrics.
-- config.optical.resum.yaml: non-zero-hit LF prepared data, legacy CNP,
-  theory-truth, standard class-aware mixup with mixed context, single objective.
-  10k updates; RBF MFGP with five restarts. HF zero-hit voxels retained.
-- GP means/coverage and development-coordinate map plots emitted by viz.surrogate.
-  Observation variance includes GP noise; no CNP-scale substitution or clipping.
-- Validation: 79 integrated/shared API tests passed; full optical run completed.
-  CNP best step9000: LFmean .0383296 vs .00324977 (r .3810), HFmean .0368694
-  vs .00206645 (r .83874). Highest-level GP HFmean .00214950, MAE .000757885,
-  r .893889, observation coverage 8/10 at1sigma and10/10 at2sigma/3sigma.
-- GP reload predictions match exactly. Development-coordinate map has190points;
-  two HF validation predictions are slightly negative (unconstrained Gaussian GP).
-  LF level0 retains CNP bias and has zero coverage against raw LF fractions.
-- Outputs: outputs/optical_resum/legacy_mixup_context/seed0. Additional GP-only
-  mean plots avoid obscuring the GP comparison with the CNP mean offset.
-
-## MFGP sigma-band plots
-
-- Added voxel-wise ±1/2/3sigma observation bands and coverage bars in
-  {lf,hf}_coverage_bands.png/pdf, using saved GP predictions without refitting.
-  Run IDs are read from experiment metadata. Rendered and visually inspected HF.
-- Optical run timings from artifacts: final CNP checkpoint195.6s after run
-  manifest; MFGP metrics243.4s. GP uses111+45+45=201training observations.
-
-## Reuse existing coverage plotting
-
-- Removed duplicate MFGP coverage/band rendering from viz.surrogate. It now
-  calls existing viz.dispatch.plot_coverage_test for LF/HF PNG and PDF plots.
-- Added optional ylim to the existing function so rare-event values remain
-  readable; default behavior is unchanged. Regenerated coverage artifacts and
-  removed obsolete *_coverage_bands files. No model or predictions changed.
-- Rendering and visual inspection passed; changed wrapper passes Ruff.
+- Use `python -m core.surrogates train CONFIG.yaml` for all current workflows.
+  See docs/surrogates.md for model alternatives. The only retained run config,
+  config.optical.resum.yaml, runs legacy CNP -> MFGP. Tests use temporary configs.
+- Core modules, schemas, data preparation, evaluation, checkpoints and tests are
+  integrated. Experiments must not introduce separate model-specific scripts.
+- Sampling: natural, corrected positive quota, and class-aware mixup. Mixup uses
+  fresh disjoint source pools each batch and independent pair weights. Context
+  may be real or mixed; both mixture parents remain on the same source side.
+- Training objective: single (default) or optional real_plus_mixup with separately
+  averaged losses, one optimizer update, explicit loss weight and target ratio.
+  Legacy two-output losses are explicit theory-truth or practice-truth. Legacy
+  scale is preserved separately and is not treated as calibrated uncertainty.
+- MFGP optional stage fits LF means, HF means and HF raw fractions using training
+  voxels only. Predictive variance includes fitted GP observation noise. Existing
+  viz.dispatch.plot_coverage_test renders coverage; do not duplicate it.
+- Completed optical run: outputs/optical_resum/legacy_mixup_context/seed0.
+  Legacy CNP theory-truth, standard mixup, mixed context, best step9000/10000.
+  HF MFGP mean .00214950 vs observed .00206645, MAE .000757885, r .893889.
+  Coverage 8/10 at1sigma,10/10 at2sigma. Two negative Gaussian GP means retained.
+  Outputs/checkpoints are preserved locally; no test files used.
+- User workflow: commit and push verified integrated changes regularly to origin
+  (the fork). Exclude experimental notebooks/scripts and generated outputs.
+- Cleanup: removed assistant-generated experiment scripts/notebooks and obsolete
+  one-off configs. Original tracked examples and integrated unit tests remain.
+  Data preparation is available through data.prepare_optical_data; document its
+  library API rather than resurrecting a separate preparation script.
 
 ## Run configuration cleanup
 
