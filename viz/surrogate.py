@@ -82,8 +82,35 @@ def plot_surrogate_run(directory):
             save(fig, f"{fidelity}_precision_recall" + ("_log" if logscale else ""))
 
 
+def plot_mfgp_training_inputs(directory):
+    """Plot the exact saved surrogate means passed to the GP, in training-row order."""
+    directory = Path(directory)
+    with np.load(directory / "training_arrays.npz") as arrays:
+        lf = arrays["Y_lf_cnp"].reshape(-1)
+        hf = arrays["Y_hf_cnp"].reshape(-1)
+        raw = arrays["Y_hf_raw"].reshape(-1)
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=True, layout="constrained")
+    for ax, fid, values, level in zip(axes, ("LF", "HF"), (lf, hf), (0, 1), strict=True):
+        ax.scatter(np.arange(len(values)), values, s=18,
+                   label=f"CNP mean → GP level {level}")
+        ax.set(title=f"{fid}: {len(values)} GP training voxels",
+               xlabel=f"{fid} training voxel index (saved row order)",
+               ylabel="Detection fraction")
+        ax.grid(alpha=0.2)
+    axes[1].scatter(np.arange(len(raw)), raw, marker="x", color="black",
+                    label="Raw target fraction → GP level 2")
+    for ax in axes:
+        ax.legend(fontsize=9)
+    fig.suptitle("CNP predictions supplied to the MFGP")
+    for suffix in ("png", "pdf"):
+        fig.savefig(directory / f"training_inputs.{suffix}", dpi=150)
+    plt.close(fig)
+    return directory / "training_inputs.png"
+
+
 def plot_mfgp_run(directory):
-    """Mean/residual and observation coverage diagnostics on held-out voxels."""
+    """Training inputs and mean/residual/coverage diagnostics on held-out voxels."""
+    plot_mfgp_training_inputs(directory)
     directory = Path(directory)
     for fid in ("lf", "hf"):
         if not (directory / f"{fid}_validation.npz").exists():

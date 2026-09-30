@@ -517,3 +517,11 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   homogeneous-per-fidelity requirement remains; no combined-LF approach reinstated.
 - Verified all new links resolve and notebook preparation/data-count cells pass.
   Prepared arrays remain numerically identical after switching the folder paths.
+
+
+## MFGP training-input diagnostic
+
+- Added a shared plot of exact saved LF/HF CNP voxel means supplied to the GP,
+  with HF raw target fractions on the same axes. Indices preserve training rows.
+- Pipeline saves training_inputs.png/pdf; notebook can regenerate them for saved
+  runs without training. Verified both existing runs and notebook cell syntax.
