@@ -383,3 +383,18 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   Example: config.surrogate.cnp.mixup.yaml.
 - Validation: shared API, mixup, training and target-sampling tests passed;
   dedicated end-to-end mixup artifact test passed; Ruff checks passed.
+
+## Optional real-plus-mixup BCE objective
+
+- NeuralTraining.objective selects single (default) or real_plus_mixup, with
+  mixup_loss_weight and real_target_ratio. Combined training requires class-aware
+  mixup, stable BCE and no extra weights; supports CNP/MLP/transformer.
+- Sampler can additionally return uniform real targets from the same target source
+  pool, using independent RNG. Both branches share context observations, losses
+  are averaged separately, and one optimizer update uses their weighted sum.
+- History includes each BCE component; audit/checkpoints include branch counts
+  and settings. Ratio 1 doubles target predictions. Real validation is unchanged.
+- Example config.surrogate.cnp.real_plus_mixup.yaml. This objective is experimental,
+  not a proven bias correction. No full simulation-data training comparison yet.
+- Validation: 111 shared API/sampler/training tests passed, plus 13 focused
+  combined-objective checks after final edits; Ruff and example config pass.

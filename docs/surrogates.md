@@ -174,3 +174,52 @@ Validation and reported train/validation metrics use real binary events. The
 sampling audit records soft-label mass, mean target label, and soft-label event
 count instead of treating soft labels as positive-event counts. Resolved mixup
 settings are saved in checkpoints and experiment metadata.
+
+## Optional real-plus-mixup BCE
+
+For CNP, MLP, or transformer, add this to class-aware mixup training:
+
+```yaml
+training:
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: false
+  weighting:
+    strategy: none
+  focal_gamma: 0
+  objective:
+    strategy: real_plus_mixup
+    mixup_loss_weight: 0.001
+    real_target_ratio: 1.0
+```
+
+The objective is `mean(real BCE) + mixup_loss_weight * mean(mixed BCE)`.
+Both branches use the same context observations and model parameters, with one
+optimizer update. Real targets are sampled uniformly from that batch's target
+source pool, independently of labels. No source event crosses the context/target
+split. Positive source events can be reused as mixture parents. Real targets
+are sampled without replacement unless the requested count exceeds the pool.
+
+`real_target_ratio` adds `max(1, round(ratio * mixed_target_count))` real targets
+per voxel; it does not reduce the mixed target count. A ratio of 1 doubles target
+predictions. Each branch is averaged separately, so its sample count does not
+implicitly multiply its loss weight. Zero mixup loss weight is allowed. The
+Beta `alpha` and the loss coefficient have distinct meanings. Extra class weights
+and focal loss are rejected for this objective. `objective.strategy: single`
+remains the default and uses the existing one-branch objective.
+
+The sampler's optional `next(real_target_ratio=...)` returns
+`(context, mixed_targets, real_targets)`; without the argument its two-result
+interface and mixed-batch random sequence are unchanged. Shared training handles
+this interface automatically.
+
+History records `training_real_bce`, `training_mixup_bce`, and their weighted sum
+as `training_loss`, averaged over each reporting interval. Checkpoints record
+objective settings and sampling counts; the audit includes both target counts,
+real positive counts and total target predictions. Validation still uses real
+binary events. This is an experimental augmentation objective, not an unbiased
+probability correction or an established performance improvement.
+
+Example: `python -m core.surrogates train config.surrogate.cnp.real_plus_mixup.yaml`.

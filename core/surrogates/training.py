@@ -46,7 +46,7 @@ def fit_surrogate(
             return deepcopy(model.estimator)
         return {k: v.detach().cpu().clone() for k, v in model.module.state_dict().items()}
 
-    def observe(step, loss=None):
+    def observe(step, loss=None, components=None):
         nonlocal best_score, best_step, best_state
         metrics = (
             {}
@@ -56,6 +56,8 @@ def fit_surrogate(
         row = dict(step=step, **metrics)
         if loss is not None:
             row["training_loss"] = loss
+        if components is not None:
+            row.update(components)
         history.append(row)
         score = metrics.get(selection)
         better = validation is None or (
@@ -137,12 +139,22 @@ def fit_surrogate(
                 n_context_max=training.n_context_max,
                 positive_fraction=training.sampling.positive_fraction,
             )
+        combined = training.objective.strategy == "real_plus_mixup"
+        real_events, real_positives = 0, 0
+        real_losses, mixup_losses = [], []
         positives, events, losses = 0, 0, []
         label_mass, soft_events = 0.0, 0
         for step in range(1, training.n_steps + 1):
             if mixup:
                 nc = int(size_rng.integers(training.n_context_min, training.n_context_max + 1))
-                context, target = sampler.next(n_context=nc)
+                if combined:
+                    context, target, real_target = sampler.next(
+                        n_context=nc, real_target_ratio=training.objective.real_target_ratio
+                    )
+                    real_events += int(real_target.labels.size)
+                    real_positives += int(real_target.labels.sum())
+                else:
+                    context, target = sampler.next(n_context=nc)
                 weights = None
                 label_mass += float(target.labels.sum())
                 soft_events += int(((target.labels > 0) & (target.labels < 1)).sum())
@@ -157,6 +169,13 @@ def fit_surrogate(
             loss = binary_focal_loss_with_logits(
                 logits, target.labels, gamma=training.focal_gamma, weights=weights
             )
+            if combined:
+                mixup_loss = loss
+                real_logits = model.module(context, real_target)
+                real_loss = binary_focal_loss_with_logits(real_logits, real_target.labels, gamma=0)
+                loss = real_loss + training.objective.mixup_loss_weight * mixup_loss
+                real_losses.append(float(real_loss.detach()))
+                mixup_losses.append(float(mixup_loss.detach()))
             if not torch.isfinite(loss):
                 raise ValueError(f"Nonfinite training loss at step {step}")
             optimizer.zero_grad()
@@ -166,7 +185,15 @@ def fit_surrogate(
             optimizer.step()
             losses.append(float(loss.detach()))
             if step % training.eval_every == 0 or step == training.n_steps:
-                observe(step, float(np.mean(losses)))
+                components = None
+                if combined:
+                    components = dict(
+                        training_real_bce=float(np.mean(real_losses)),
+                        training_mixup_bce=float(np.mean(mixup_losses)),
+                    )
+                    real_losses.clear()
+                    mixup_losses.clear()
+                observe(step, float(np.mean(losses)), components)
                 losses.clear()
         last_step = training.n_steps
         audit = dict(
@@ -187,6 +214,17 @@ def fit_surrogate(
                 mix_context=training.sampling.mixup.mix_context,
                 source_split="fresh_per_batch",
                 weighting="none",
+            )
+        if combined:
+            audit.update(
+                objective="real_plus_mixup",
+                real_target_events=real_events,
+                real_target_positives=real_positives,
+                real_target_positive_fraction=real_positives / real_events,
+                mixed_target_events=events,
+                total_target_predictions=real_events + events,
+                mixup_loss_weight=training.objective.mixup_loss_weight,
+                real_target_ratio=training.objective.real_target_ratio,
             )
     model.metadata["sampling_audit"] = audit
     if destination:

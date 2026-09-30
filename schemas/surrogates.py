@@ -100,6 +100,19 @@ class WeightingConfig(StrictConfigModel):
         return self
 
 
+class SingleObjective(StrictConfigModel):
+    strategy: Literal["single"] = "single"
+
+
+class RealPlusMixupObjective(StrictConfigModel):
+    strategy: Literal["real_plus_mixup"] = "real_plus_mixup"
+    mixup_loss_weight: float = Field(default=0.001, ge=0, allow_inf_nan=False)
+    real_target_ratio: float = Field(default=1.0, gt=0, allow_inf_nan=False)
+
+
+ObjectiveSpec = Annotated[SingleObjective | RealPlusMixupObjective, Field(discriminator="strategy")]
+
+
 class NeuralTraining(StrictConfigModel):
     backend: Literal["neural"] = "neural"
     n_steps: int = Field(default=10000, gt=0)
@@ -113,6 +126,7 @@ class NeuralTraining(StrictConfigModel):
     device: Literal["cpu", "cuda"] = "cpu"
     grad_clip: float | None = Field(default=1.0, gt=0, allow_inf_nan=False)
     focal_gamma: float = Field(default=0.0, ge=0, allow_inf_nan=False)
+    objective: ObjectiveSpec = Field(default_factory=SingleObjective)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     weighting: WeightingConfig = Field(default_factory=WeightingConfig)
 
@@ -122,6 +136,11 @@ class NeuralTraining(StrictConfigModel):
             raise ValueError("Context range must leave at least two target events")
         if self.sampling.strategy == "class_aware_mixup" and self.weighting.strategy != "none":
             raise ValueError("class_aware_mixup currently requires weighting=none")
+        if self.objective.strategy == "real_plus_mixup":
+            if self.sampling.strategy != "class_aware_mixup":
+                raise ValueError("real_plus_mixup requires class_aware_mixup sampling")
+            if self.focal_gamma != 0 or self.weighting.strategy != "none":
+                raise ValueError("real_plus_mixup requires stable BCE without extra weights")
         quota = self.sampling.strategy == "positive_quota"
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:
