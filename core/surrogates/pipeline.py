@@ -32,3 +32,26 @@ def prepare_surrogate_datasets(
         if fidelity == "hf":
             result["Y_hf_raw"] = np.concatenate(raw)
     return result
+
+
+def mfgp_level_arrays(data, lf_event_counts, *, lf_levels="pooled"):
+    """Arrange the same observations into pooled or event-count LF levels."""
+    counts = np.asarray(lf_event_counts)
+    if counts.shape != (len(data["X_lf"]),):
+        raise ValueError("LF event counts must identify every LF training row")
+    if lf_levels == "pooled":
+        xs, ys = [data["X_lf"]], [data["Y_lf_cnp"]]
+        names = ["LF surrogate mean"]
+        mapping = {int(n): 0 for n in np.unique(counts)}
+    elif lf_levels == "by_event_count":
+        sizes = sorted(np.unique(counts))
+        xs = [data["X_lf"][counts == n] for n in sizes]
+        ys = [data["Y_lf_cnp"][counts == n] for n in sizes]
+        names = [f"LF{int(n)} surrogate mean" for n in sizes]
+        mapping = {int(n): i for i, n in enumerate(sizes)}
+    else:
+        raise ValueError(f"Unknown LF level strategy: {lf_levels}")
+    xs.extend([data["X_hf"], data["X_hf"]])
+    ys.extend([data["Y_hf_cnp"], data["Y_hf_raw"]])
+    names.extend(["HF surrogate mean", "HF raw target fraction"])
+    return xs, ys, names, mapping

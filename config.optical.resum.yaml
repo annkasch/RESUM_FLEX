@@ -35,6 +35,7 @@ output_directory: outputs/optical_resum/pooledlf_hf10_nonzero/seed0
 validation_context_events: 64
 validation_seed: 12345
 mfgp:
+  lf_levels: by_event_count
   kernel: rbf
   n_restarts: 5
   n_context: 64

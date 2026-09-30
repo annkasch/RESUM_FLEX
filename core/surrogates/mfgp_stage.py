@@ -1,4 +1,4 @@
-"""Optional three-fidelity GP stage following event-surrogate training."""
+"""Optional pooled or event-count fidelity GP stage following event-surrogate training."""
 
 import hashlib
 import json
@@ -6,17 +6,18 @@ import json
 import numpy as np
 
 
-def run_mfgp_stage(config, surrogate):
+def run_mfgp_stage(config, surrogate, *, output_directory=None):
     # Keep optional GPy/Emukit dependencies out of the neural import path.
-    from core.mfgp_pipeline import fit_mfgp_three_fidelity
     from core.surrogate_cnp import split_context_target
-    from core.surrogate_mfgp import load_mfgp, save_mfgp
-    from core.surrogates.pipeline import prepare_surrogate_datasets
+    from core.surrogate_mfgp import MultiFidelityGP, load_mfgp, save_mfgp
+    from core.surrogates.pipeline import prepare_surrogate_datasets, mfgp_level_arrays
     from data.optical_pipeline import load_prepared_partition, prepared_partition_paths
     from data.grouped_batches import batch_groups
 
     cfg = config.mfgp
-    directory = config.output_directory / "mfgp"
+    from pathlib import Path
+
+    directory = config.output_directory / "mfgp" if output_directory is None else Path(output_directory)
     directory.mkdir(exist_ok=False)
     batches, provenance = {}, {}
     partitions = [
@@ -41,11 +42,23 @@ def run_mfgp_stage(config, surrogate):
         n_hf_context=cfg.n_context,
         seed=cfg.seed,
     )
-    np.savez_compressed(directory / "training_arrays.npz", **data)
+    event_counts = np.concatenate([
+        np.full(g.batch_size, g.n_events, dtype=int) for g in batch_groups(batches["train", "lf"])])
+    xs, ys, level_names, lf_mapping = mfgp_level_arrays(data, event_counts, lf_levels=cfg.lf_levels)
+    for group in batch_groups(batches.get(("validation", "lf"), [])):
+        if cfg.lf_levels == "pooled":
+            lf_mapping[group.n_events] = 0
+        elif group.n_events not in lf_mapping:
+            raise ValueError("LF validation event count has no matching GP training level")
+    np.savez_compressed(directory / "training_arrays.npz", **data,
+                        lf_event_counts=event_counts,
+                        **{f"X_level_{i}": x for i, x in enumerate(xs)},
+                        **{f"Y_level_{i}": y for i, y in enumerate(ys)})
     state = np.random.get_state()
     try:
         np.random.seed(cfg.seed)
-        gp = fit_mfgp_three_fidelity(data, kernel=cfg.kernel, n_restarts=cfg.n_restarts)
+        gp = MultiFidelityGP(n_fidelities=len(xs), dim_theta=xs[0].shape[1],
+                             kernel=cfg.kernel).fit(xs, ys, n_restarts=cfg.n_restarts)
     finally:
         np.random.set_state(state)
     save_mfgp(directory / "model.pkl", gp)
@@ -54,7 +67,9 @@ def run_mfgp_stage(config, surrogate):
         config=cfg.model_dump(mode="json"),
         data=provenance,
         surrogate_checkpoint=str(config.output_directory / "checkpoints/best"),
-        levels=["LF surrogate mean", "HF surrogate mean", "HF raw target fraction"],
+        levels=level_names,
+        level_observations=[len(x) for x in xs],
+        lf_event_count_to_level=lf_mapping,
         fit_split="train",
         evaluation_split="validation",
         test_data="Not loaded",
@@ -78,13 +93,17 @@ def run_mfgp_stage(config, surrogate):
             positions.append(group.theta)
             observed_parts.append(target.labels.mean(1))
             predicted_parts.append(surrogate.predict(target, context=context).mean)
+        levels = [lf_mapping[g.n_events] if fid == "lf" else gp.n_fidelities - 1
+                  for g in batch_groups(batch)]
         coordinates = np.concatenate(positions)
         observed, predicted = np.concatenate(observed_parts), np.concatenate(predicted_parts)
-        level = 0 if fid == "lf" else 2
-        mean, variance = gp.predict(coordinates, fidelity=level)
-        loaded_mean, loaded_var = restored.predict(coordinates, fidelity=level)
-        np.testing.assert_array_equal(mean, loaded_mean)
-        np.testing.assert_array_equal(variance, loaded_var)
+        predictions = [gp.predict(x, fidelity=k) for x, k in zip(positions, levels, strict=True)]
+        mean = np.concatenate([p[0] for p in predictions])
+        variance = np.concatenate([p[1] for p in predictions])
+        loaded = [restored.predict(x, fidelity=k) for x, k in zip(positions, levels, strict=True)]
+        np.testing.assert_array_equal(mean, np.concatenate([p[0] for p in loaded]))
+        np.testing.assert_array_equal(variance, np.concatenate([p[1] for p in loaded]))
+        level = levels[0] if len(set(levels)) == 1 else sorted(set(levels))
         sigma = np.sqrt(variance)
         residual = mean - observed
         if not np.isfinite(mean).all() or not np.isfinite(sigma).all():
@@ -107,6 +126,8 @@ def run_mfgp_stage(config, surrogate):
         np.savez_compressed(
             directory / f"{fid}_validation.npz",
             theta=coordinates,
+            fidelity_levels=np.concatenate([np.full(len(x), k, dtype=int)
+                                             for x, k in zip(positions, levels, strict=True)]),
             observed=observed,
             cnp_mean=predicted,
             mean=mean,
@@ -115,7 +136,7 @@ def run_mfgp_stage(config, surrogate):
         )
     # Highest-fidelity map at all available development coordinates, excluding test files.
     theta = np.unique(np.concatenate([g.theta for b in batches.values() for g in batch_groups(b)]), axis=0)
-    mean, variance = gp.predict(theta, fidelity=2)
+    mean, variance = gp.predict(theta, fidelity=gp.n_fidelities - 1)
     physical = theta
     normalization = config.data_directory / "normalization.json"
     if normalization.exists():
