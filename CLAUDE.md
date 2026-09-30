@@ -603,3 +603,19 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   plane counters remain cell-based. Plot-version metadata refreshes cached figures.
 - Training-derived y bounds are [-0.761,0.750] m; validation extends to -0.882
   and 0.761 m. Those points remain visible and excluded, without changing the domain.
+
+## Direct optical count GP
+
+- `core/binomial_gp.py`: binomial-logit likelihood, Laplace inference with damped
+  Newton mode finding, spatial ARD kernel plus Bias; shared p across budgets.
+- `core/gp_backends.py` selects the optional backend; `schemas/count_gp.py` validates
+  the independent YAML. `data/optical_counts.py` aggregates complete runs to m,N,
+  using existing spatial split grouping and unique event labels.
+- `core/count_gp_experiment.py` persists immutable run artifacts and evaluates
+  exact-coordinate latent draws plus binomial counts; `viz/count_gp.py` reuses
+  the existing coverage renderer. No Gaussian observation-noise parameter.
+- `notebooks/lar_optical_map_binomial_gp.ipynb` and `config.optical.binomial.yaml`
+  are the maintained entry point. Defaults retain nonzero-only folders, all LF
+  training, 10 HF training. Full N1500/5000; selection caveat is explicit.
+- `tests/test_count_gp.py` checks analytic likelihood derivatives, integer counts,
+  zero counts, N-dependent uncertainty, persistence and end-to-end optical output.

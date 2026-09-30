@@ -289,6 +289,8 @@ def plot_coverage_test(
     ylim: tuple[float, float] | None = None,
     intervals: dict[int, tuple[np.ndarray, np.ndarray]] | None = None,
     interval_label: str = "σ",
+    ylabel: str = "y",
+    nominal_label: str = "target (Gaussian)",
 ) -> dict[str, float]:
     """Figure-5-style coverage diagnostic with a calibration sub-panel.
 
@@ -361,7 +363,7 @@ def plot_coverage_test(
     ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
     ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
     ax_ts.set_xlabel(xlabel)
-    ax_ts.set_ylabel("y")
+    ax_ts.set_ylabel(ylabel)
     lo = min(-0.02, float(intervals[3][0].min()) - 0.02)
     hi = max(
         1.02,
@@ -380,7 +382,7 @@ def plot_coverage_test(
     w = 0.38
     ax_cal.bar(
         pos - w / 2, target_vals, w,
-        color="lightgray", edgecolor="black", label="target (Gaussian)",
+        color="lightgray", edgecolor="black", label=nominal_label,
     )
     ax_cal.bar(
         pos + w / 2, actual_vals, w,

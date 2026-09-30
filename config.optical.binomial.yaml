@@ -1,0 +1,44 @@
+# One probability function; source groups differ only in simulation statistics.
+data:
+  source:
+    directories:
+      lf:
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/nonzero
+      hf:
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N5000/nonzero
+    exclude_files: []
+  output_directory: outputs/optical_binomial_data
+  theta:
+    coordinates: cartesian
+    center_source: filename
+    cylindrical:
+      include_azimuth: true
+      angle_encoding: sin_cos
+  phi:
+    vertex:
+      representation: omit
+    momentum:
+      representation: omit
+  target:
+    kind: any_channel
+    detector_id: null
+  split:
+    lf_train_only: true
+    hf_train_count: 10
+    train_fraction: 0.7
+    validation_fraction: 0.15
+    test_fraction: 0.15
+    seed: 42
+    manifest: outputs/optical_binomial_data/splits/voxel_split.json
+  normalization:
+    method: standard
+    fit_on: training
+backend:
+  kind: binomial_laplace
+  kernel: matern52
+  max_iters: 300
+  n_restarts: 2
+  seed: 42
+output_directory: outputs/optical_binomial
+prediction_draws: 32768
+prediction_seed: 42
