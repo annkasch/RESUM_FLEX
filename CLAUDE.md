@@ -396,3 +396,14 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
 - Validation: notebook format validated; every code cell executed with a two-step
   CNP / one-restart GP smoke run, then again in saved-results mode. Plot paths and
   reloaded GP predictions verified. Full 10,000-step defaults remain unchanged.
+
+## Optical notebook simplification
+
+- Reduced executable notebook code from 142 to 78 lines. Read experiment settings
+  directly from the optical YAML; removed redundant overrides, data-count table,
+  timing boilerplate and optional checkpoint/query demo. Retained LF checks,
+  saved configuration, metrics, sampling audit and every plot.
+- Verified identical resolved training settings (except fresh output paths) for
+  both default and Gaussian loss. Executed all revised cells in training and
+  saved-run modes against existing smoke artifacts, stubbing the unchanged
+  run_experiment call; no new full training was needed.

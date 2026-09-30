@@ -345,5 +345,5 @@ NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
 
 The notebook checks prepared non-zero-hit LF batches, retains zero-hit HF voxels,
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
-map, and demonstrates checkpoint reload and normalized spatial queries. It does
+map, and leaves all checkpoints and prediction arrays in the run directory. It does
 not read test files, regenerate simulation data, or submit a Slurm job.
