@@ -388,7 +388,7 @@ Splitting and training-only normalization happen after collecting all folders.
 LF event counts must still be homogeneous: this does not restore the retired
 LF500/750/1000/1500 pooling approach.
 
-The supplied preparation config uses these raw-data views under
+The earlier raw-data views remain available under
 `/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/`:
 
 - `lf1500_hf_nonzero/`: 159 LF1500 + 56 HF files with optical hits.
@@ -396,8 +396,8 @@ The supplied preparation config uses these raw-data views under
 
 Both contain `lf/` and `hf/` symlink folders and a `manifest.json`. Seven failed
 HF simulations with only one primary event are excluded and listed in each
-manifest. Original files are preserved. The supplied preparation config points
-to the non-zero view and reuses the existing LF1500/HF10 split manifest.
+manifest. Original files are preserved. The supplied preparation config now uses the count-based folders described
+below and reuses the existing LF1500/HF10 split manifest.
 Changing the source file set requires a new manifest or an explicit manifest
 update through `prepare_optical_data`, as before.
 
@@ -429,3 +429,31 @@ per event (`vtx/n_part == 1`). Theta is the filename center; phi contains vertex
 offsets from that center and momentum components. Standardization is fitted on
 training files only, then applied to both training and validation. Prepared
 arrays, normalization, source fingerprints, split metadata and reports are saved.
+
+
+## Folder names describe simulation statistics
+
+The canonical input layout under
+`/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/` is:
+
+```text
+N500/    nonzero/    zero/
+N750/    nonzero/    zero/
+N1000/   nonzero/    zero/
+N1500/   nonzero/    zero/
+N5000/   nonzero/    zero/
+```
+
+`N` denotes simulated primary count. Each category contains symlinks to the
+original `.stp.lh5` files. Counts (nonzero / zero) are 38/47, 157/70, 146/78,
+159/65 and 56/9 respectively. The root manifest records every source and excludes
+eight failed one-primary simulations. Original source folders are preserved.
+
+Folders have no inherent LF/HF role: `source.directories` assigns that role when
+preparing a dataset. The default selects `N1500/nonzero` for LF and
+`N5000/nonzero` for HF, preserving the current data and split. To include zeros,
+list the matching `zero` folder too and choose a new manifest/dataset or explicitly
+update the existing split. The notebook reports zero counts without rejecting
+those voxels, and does not hard-code an LF event count. Preparation still requires
+consistent event counts within each fidelity; this layout does not reintroduce
+training pooled across different LF primary counts.
