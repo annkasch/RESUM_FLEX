@@ -7,6 +7,7 @@ import yaml
 from pydantic import Field, model_validator
 
 from schemas.optical import OpticalDataConfig, StrictModel
+from schemas.projections import ProjectionConfig
 
 
 class CountGPBackendConfig(StrictModel):
@@ -23,6 +24,7 @@ class CountGPConfig(StrictModel):
     output_directory: Path = Path("outputs/optical_binomial")
     prediction_draws: int = Field(default=32768, ge=2048)
     prediction_seed: int = 42
+    projections: ProjectionConfig = Field(default_factory=ProjectionConfig)
 
     @model_validator(mode="after")
     def validate_coordinates(self):

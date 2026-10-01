@@ -781,3 +781,51 @@ These metrics evaluate held-out observations including counting noise. They do
 not establish true latent-rate error or tank-wide population accuracy. Spatial
 weighting, regional scores and distance-based validation require a specified
 physical evaluation design; no volume weighting is inferred from sparse points.
+
+### Shared spatial projections
+
+`core/spatial_projections.py` implements the integration grid, physical-volume
+averages, individual-voxel mixtures, and all x/y/z and xy/xz/yz projections.
+`viz/spatial_projections.py` renders the common artifact format. The old MFGP
+entry points and `MFGPProjectionConfig` remain compatible aliases/wrappers.
+Both approaches use `schemas.projections.ProjectionConfig`.
+
+The count-GP notebook now displays both projection types. Set `RUN_TRAINING=False`
+to project a saved run without fitting; YAML `projections.enabled` controls this
+step. Saved outputs are `projections/` (latent mean) and
+`projections_observed_fraction/` (individual observations), each with curves,
+planes, NPZ arrays and metadata. Predictive projections have validation inclusion
+counters. They use the saved HF budget when unique; mixed budgets require an
+explicit `target_events`. No implicit median budget is substituted.
+
+To add a new GP, implement a projection adapter's `prepare(physical_coordinates)`
+method returning an object with `mean`, `metadata`, and `sample(n_draws, rng)`.
+The returned array must have shape `(draws, locations)` and preserve joint spatial
+correlations. Values are in physical response units, with no observation noise.
+The adapter owns coordinate scaling, fidelity selection, and the latent link.
+For Gaussian latent posteriors, `GaussianResponse` supports identity, log and
+logit links. Other posteriors can supply their own joint-draw implementation.
+Register an adapter factory with `register_projection_adapter(name, factory)`;
+no integration or plotting code changes are necessary.
+
+```python
+from core.projection_adapters import projection_adapter, BinomialObservation
+from core.spatial_projections import project_response
+from schemas.projections import ProjectionConfig
+
+adapter = projection_adapter("binomial_laplace", fitted_gp)
+settings = ProjectionConfig(quantity="observed_fraction", target_events=5000)
+arrays, metadata = project_response(
+    adapter, physical_training_centers, settings,
+    observation_model=BinomialObservation(5000),
+)
+```
+
+For `latent_mean`, omit the observation model: each joint response draw is
+averaged before its quantiles are computed. For `observed_fraction`, the engine
+retains omitted-coordinate variation and applies a separate observation model.
+Neither built-in adapter includes learned Gaussian observation noise. Invalid
+binomial probabilities fail rather than being clipped. Uniform midpoint-cell
+weights and dense joint covariance are currently used; grid size is capped to
+control memory. To compare models, use the same explicit physical box, grid,
+weights, and counting budget. Training convex hulls can differ between datasets.

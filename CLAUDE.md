@@ -631,3 +631,18 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   continuous response density; zero-support lognormal observations are explicit.
 - `tests/test_gp_metrics.py` verifies bias sign, correlation degeneracy, CRPS
   against pairwise definition, interval/WIS formulas and lognormal support.
+
+## Backend-independent spatial projections
+
+- Shared `core/spatial_projections.py` consumes joint response adapters from
+  `core/projection_adapters.py`; no GP-specific transforms in integration code.
+  MFGP affine normalization/log link and count-GP internal scaling/logit link
+  live in adapters. Binomial observation sampling is a separate explicit object.
+- `schemas/projections.py` owns settings; legacy MFGP config/imports preserved.
+  `viz/spatial_projections.py` owns plotting; legacy viz wrapper retained.
+- `core/count_gp_projections.py` handles saved count-run fingerprints, N resolution,
+  overlays and cache. Notebook supports both projections without training.
+- Tests cover new-adapter registration, joint logit uncertainty, discrete bands,
+  invalid probabilities and mixed-N cache behavior; original MFGP tests retained.
+- Refactor was checked against the previous engine: all arrays identical for
+  latent and predictive projections on the same correlated synthetic field.
