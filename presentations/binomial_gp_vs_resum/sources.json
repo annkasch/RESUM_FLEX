@@ -1,5 +1,5 @@
 {
-  "slides": 14,
+  "slides": 15,
   "scope": "Current optical-map RESUM_FLEX implementation; unmatched runs are not a ranking",
   "count_gp_run": "outputs/optical_binomial/20261001T173754_521023Z",
   "resum_run": "outputs/optical_resum/notebook/20260930T195141_282030Z",
@@ -10,5 +10,9 @@
   "files": [
     "binomial_gp_vs_resum.pptx",
     "binomial_gp_vs_resum.pdf"
-  ]
+  ],
+  "main_slides": 12,
+  "appendix_slides": 3,
+  "revision": "Visual explanation for an audience without a strong statistics background",
+  "illustrations": "Schematic grids, event counts and exact binomial probability examples; actual validation data only on slide 11"
 }
