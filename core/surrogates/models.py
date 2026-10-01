@@ -42,6 +42,12 @@ class NeuralSurrogate(EventSurrogate):
 
             self.module = BernoulliTransformer(config.architecture, dim_theta, dim_phi)
 
+    def output_layer(self):
+        """Explicit final projection for each architecture; never infer by ordering."""
+        if self.config.kind == "transformer":
+            return self.module.head[-1]
+        return self.module.decoder.net[-1]
+
     def predict(self, target, *, context=None):
         import torch
 

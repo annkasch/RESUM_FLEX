@@ -118,6 +118,15 @@ class RealPlusMixupObjective(StrictConfigModel):
 ObjectiveSpec = Annotated[SingleObjective | RealPlusMixupObjective, Field(discriminator="strategy")]
 
 
+class LastLayerFineTuning(StrictConfigModel):
+    """A second stage using natural real events and unweighted Bernoulli loss."""
+
+    n_steps: int = Field(default=2000, gt=0)
+    learning_rate: float = Field(default=0.0003, gt=0, allow_inf_nan=False)
+    eval_every: int = Field(default=250, gt=0)
+    n_events: int | None = Field(default=None, ge=3)
+
+
 class NeuralTraining(StrictConfigModel):
     backend: Literal["neural"] = "neural"
     n_steps: int = Field(default=10000, gt=0)
@@ -135,6 +144,7 @@ class NeuralTraining(StrictConfigModel):
     objective: ObjectiveSpec = Field(default_factory=SingleObjective)
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     weighting: WeightingConfig = Field(default_factory=WeightingConfig)
+    fine_tuning: LastLayerFineTuning | None = None
 
     @model_validator(mode="after")
     def compatible(self):
@@ -155,6 +165,10 @@ class NeuralTraining(StrictConfigModel):
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:
             raise ValueError("positive_quota and sampling_correction must be used together")
+        if self.fine_tuning is not None:
+            ne = self.fine_tuning.n_events or self.n_events
+            if ne < self.n_context_max + 2:
+                raise ValueError("Fine-tuning events must leave at least two targets")
         return self
 
 
@@ -205,11 +219,19 @@ class MFGPStageConfig(StrictConfigModel):
 
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
+    hf_validation: bool = True
+    test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)
     mfgp: MFGPStageConfig | None = None
     data_directory: Path
     output_directory: Path
     validation_context_events: int = Field(default=64, gt=0)
     validation_seed: int = 12345
+
+    @model_validator(mode="after")
+    def unique_tests(self):
+        if len(set(self.test_fidelities)) != len(self.test_fidelities):
+            raise ValueError("test_fidelities must be unique")
+        return self
 
 
 def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
