@@ -8,6 +8,9 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 class ProjectionConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
     quantity: Literal["latent_mean", "observed_fraction"] = "latent_mean"
+    plots: list[
+        Literal["projected_axes", "projected_planes", "marginalized_axes", "marginalized_planes"]
+    ] = Field(default_factory=lambda: ["projected_axes", "projected_planes"])
     target_events: int | None = Field(default=None, gt=0)
     enabled: bool = False
     domain: Literal["training_convex_hull", "box"] = "training_convex_hull"

@@ -157,7 +157,7 @@ def run_mfgp_stage(config, surrogate):
 
     plot_mfgp_run(directory)
     if cfg.projections.enabled:
-        from core.mfgp_projections import ensure_mfgp_projections
+        from core.projection_selection import ensure_selected_projections
 
-        ensure_mfgp_projections(directory, cfg.projections)
+        ensure_selected_projections(directory, cfg.projections, backend="mfgp")
     return directory

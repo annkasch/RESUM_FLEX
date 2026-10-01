@@ -49,7 +49,7 @@ prediction_seed: 42
 # Shared projection engine; both plot types are available in the notebook.
 projections:
   enabled: true
-  quantity: latent_mean
+  plots: [projected_axes, projected_planes]
   domain: training_convex_hull
   grid_steps: 12
   n_draws: 8192

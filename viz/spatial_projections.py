@@ -103,6 +103,10 @@ def plot_spatial_projections(directory):
         if predictive
         else "Detection Probability — Plane Marginalizations"
     )
+    from core.projection_selection import selected_figures
+    from schemas.projections import ProjectionConfig
+
+    selected = selected_figures(ProjectionConfig.model_validate(settings))
     with np.load(directory / "projections.npz") as data:
         a = dict(data)
 
@@ -135,6 +139,8 @@ def plot_spatial_projections(directory):
     colors = {1: "#2ca02c", 2: "#e5b82c", 3: "#d65b5b"}
     probabilities = {1: "68.27%", 2: "95.45%", 3: "99.73%"}
     for overlay in (False, True):
+        if ("curves_observed" if overlay else "curves") not in selected:
+            continue
         if overlay and predictive:
             fig, rows = plt.subplots(
                 2, 3, figsize=(15, 8), layout="constrained", gridspec_kw={"height_ratios": [2, 1]}
@@ -209,101 +215,105 @@ def plot_spatial_projections(directory):
     means = np.concatenate([a[f"mean_{i}{j}"].ravel() for i, j in planes])
     values = np.concatenate((means, a["observed_train"], a["observed_validation"]))
     norm = Normalize(vmin=float(np.nanmin(values)), vmax=float(np.nanmax(values)))
-    fig, axes = plt.subplots(3, 4, figsize=(17, 12), layout="constrained")
-    width_norms = {}
-    for k in (1, 2, 3):
-        high = max(
-            float(np.nanmax(a[f"upper_{k}_{i}{j}"] - a[f"lower_{k}_{i}{j}"])) for i, j in planes
-        )
-        width_norms[k] = Normalize(vmin=0, vmax=high or 1e-12)
-    for row, (i, j) in enumerate(planes):
-        for col, ax in enumerate(axes[row]):
-            values = (
-                a[f"mean_{i}{j}"]
-                if col == 0
-                else (a[f"upper_{col}_{i}{j}"] - a[f"lower_{col}_{i}{j}"])
+    if "planes" in selected:
+        fig, axes = plt.subplots(3, 4, figsize=(17, 12), layout="constrained")
+        width_norms = {}
+        for k in (1, 2, 3):
+            high = max(
+                float(np.nanmax(a[f"upper_{k}_{i}{j}"] - a[f"lower_{k}_{i}{j}"])) for i, j in planes
             )
+            width_norms[k] = Normalize(vmin=0, vmax=high or 1e-12)
+        for row, (i, j) in enumerate(planes):
+            for col, ax in enumerate(axes[row]):
+                values = (
+                    a[f"mean_{i}{j}"]
+                    if col == 0
+                    else (a[f"upper_{col}_{i}{j}"] - a[f"lower_{col}_{i}{j}"])
+                )
+                mesh = ax.pcolormesh(
+                    a[f"edges_{i}"],
+                    a[f"edges_{j}"],
+                    values.T,
+                    cmap="viridis" if col == 0 else "magma",
+                    norm=norm if col == 0 else width_norms[col],
+                    shading="flat",
+                )
+                ax.set(
+                    xlabel=labels[i],
+                    ylabel=labels[j],
+                    aspect="equal",
+                    title=f"{names[i]}–{names[j]}: "
+                    + ("mean" if col == 0 else f"{probabilities[col]} interval width"),
+                )
+                fig.colorbar(mesh, ax=ax, shrink=0.75)
+        fig.suptitle(plane_title, fontsize=13)
+        save(fig, "planes")
+
+    if "planes_observed" in selected:
+        if predictive:
+            fig, rows = plt.subplots(
+                2, 3, figsize=(16, 9), layout="constrained", gridspec_kw={"height_ratios": [2, 1]}
+            )
+            axes = rows[0]
+            for ax, (i, j) in zip(rows[1], planes, strict=True):
+                plot_projection_counts(ax, counts[f"{i}{j}"])
+        else:
+            fig, axes = plt.subplots(1, 3, figsize=(16, 5), layout="constrained")
+        for ax, (i, j) in zip(axes, planes, strict=True):
             mesh = ax.pcolormesh(
                 a[f"edges_{i}"],
                 a[f"edges_{j}"],
-                values.T,
-                cmap="viridis" if col == 0 else "magma",
-                norm=norm if col == 0 else width_norms[col],
+                a[f"mean_{i}{j}"].T,
+                norm=norm,
+                cmap="viridis",
                 shading="flat",
             )
+            for split, marker in (("train", "o"), ("validation", "o")):
+                points = a[f"observed_{split}_theta"]
+                ax.scatter(
+                    points[:, i],
+                    points[:, j],
+                    c=a[f"observed_{split}"],
+                    marker=marker,
+                    norm=norm,
+                    cmap="viridis",
+                    edgecolors="white" if split == "train" else "black",
+                    linewidths=0.7,
+                    s=40,
+                    zorder=5,
+                )
             ax.set(
                 xlabel=labels[i],
                 ylabel=labels[j],
                 aspect="equal",
-                title=f"{names[i]}–{names[j]}: "
-                + ("mean" if col == 0 else f"{probabilities[col]} interval width"),
+                title=(
+                    f"Projected onto {names[i]}–{names[j]}"
+                    if predictive
+                    else f"{names[i]}–{names[j]}: average over {names[3 - i - j]}"
+                ),
             )
-            fig.colorbar(mesh, ax=ax, shrink=0.75)
-    fig.suptitle(plane_title, fontsize=13)
-    save(fig, "planes")
-
-    if predictive:
-        fig, rows = plt.subplots(
-            2, 3, figsize=(16, 9), layout="constrained", gridspec_kw={"height_ratios": [2, 1]}
+        fig.colorbar(
+            mesh,
+            ax=axes,
+            label="Detection fraction"
+            if predictive
+            else "Detection probability / observed fraction",
+            shrink=0.8,
         )
-        axes = rows[0]
-        for ax, (i, j) in zip(rows[1], planes, strict=True):
-            plot_projection_counts(ax, counts[f"{i}{j}"])
-    else:
-        fig, axes = plt.subplots(1, 3, figsize=(16, 5), layout="constrained")
-    for ax, (i, j) in zip(axes, planes, strict=True):
-        mesh = ax.pcolormesh(
-            a[f"edges_{i}"],
-            a[f"edges_{j}"],
-            a[f"mean_{i}{j}"].T,
-            norm=norm,
-            cmap="viridis",
-            shading="flat",
-        )
-        for split, marker in (("train", "o"), ("validation", "o")):
-            points = a[f"observed_{split}_theta"]
-            ax.scatter(
-                points[:, i],
-                points[:, j],
-                c=a[f"observed_{split}"],
+        handles = [
+            Line2D(
+                [],
+                [],
                 marker=marker,
-                norm=norm,
-                cmap="viridis",
-                edgecolors="white" if split == "train" else "black",
-                linewidths=0.7,
-                s=40,
-                zorder=5,
+                color="gray" if split == "training" else "black",
+                markerfacecolor="white",
+                linestyle="None",
+                label=f"{observation_group} {split} targets",
             )
-        ax.set(
-            xlabel=labels[i],
-            ylabel=labels[j],
-            aspect="equal",
-            title=(
-                f"Projected onto {names[i]}–{names[j]}"
-                if predictive
-                else f"{names[i]}–{names[j]}: average over {names[3 - i - j]}"
-            ),
-        )
-    fig.colorbar(
-        mesh,
-        ax=axes,
-        label="Detection fraction" if predictive else "Detection probability / observed fraction",
-        shrink=0.8,
-    )
-    handles = [
-        Line2D(
-            [],
-            [],
-            marker=marker,
-            color="gray" if split == "training" else "black",
-            markerfacecolor="white",
-            linestyle="None",
-            label=f"{observation_group} {split} targets",
-        )
-        for split, marker in (("training", "o"), ("validation", "o"))
-    ]
-    axes[0].legend(handles=handles, fontsize=8)
-    fig.suptitle(plane_title, fontsize=11)
-    save(fig, "planes_observed")
+            for split, marker in (("training", "o"), ("validation", "o"))
+        ]
+        axes[0].legend(handles=handles, fontsize=8)
+        fig.suptitle(plane_title, fontsize=11)
+        save(fig, "planes_observed")
 
     (directory / "plot_metadata.json").write_text(json.dumps({"plot_version": 3}))

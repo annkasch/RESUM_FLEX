@@ -112,7 +112,9 @@ def ensure_mfgp_projections(directory, settings):
         output.mkdir(exist_ok=True)
         np.savez_compressed(data_path, **arrays)
         metadata_path.write_text(json.dumps(dict(signature=signature, **metadata), indent=2))
-    names = ("curves", "curves_observed", "planes", "planes_observed")
+    from core.projection_selection import selected_figures
+
+    names = selected_figures(settings)
     plot_meta = output / "plot_metadata.json"
     stale_labels = (
         not plot_meta.exists() or json.loads(plot_meta.read_text()).get("plot_version") != 3

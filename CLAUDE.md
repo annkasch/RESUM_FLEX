@@ -646,3 +646,13 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   invalid probabilities and mixed-N cache behavior; original MFGP tests retained.
 - Refactor was checked against the previous engine: all arrays identical for
   latent and predictive projections on the same correlated synthetic field.
+
+## Configurable projection figure selection
+
+- `ProjectionConfig.plots` defaults to projected_axes/projected_planes only,
+  including observations and coverage counters. Marginalized axes/planes are opt-in.
+- `core/projection_selection.py` drives both run pipelines and notebook cells;
+  the renderer and cache checks honor selected figure names. Empty selection or
+  enabled=false skips work. Legacy quantity is used only by lower-level calls.
+- Existing unselected artifact files are preserved; notebook displays are replaced
+  with the selection. Selection tests cover defaults, opt-in averages and rendering.

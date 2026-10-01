@@ -36,7 +36,7 @@ validation_context_events: 64
 validation_seed: 12345
 mfgp:
   projections:
-    quantity: observed_fraction
+    plots: [projected_axes, projected_planes]
     enabled: true
     domain: training_convex_hull
     grid_steps: 12
