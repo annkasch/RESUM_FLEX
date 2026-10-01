@@ -116,7 +116,7 @@ def run_count_gp(config, prepared=None):
 
     plot_count_gp(out)
     if config.projections.enabled:
-        from core.count_gp_projections import ensure_count_gp_projections
+        from core.projection_selection import ensure_selected_projections
 
-        ensure_count_gp_projections(out, config.projections)
+        ensure_selected_projections(out, config.projections, backend="binomial_laplace")
     return out

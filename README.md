@@ -790,7 +790,7 @@ averages, individual-voxel mixtures, and all x/y/z and xy/xz/yz projections.
 entry points and `MFGPProjectionConfig` remain compatible aliases/wrappers.
 Both approaches use `schemas.projections.ProjectionConfig`.
 
-The count-GP notebook now displays both projection types. Set `RUN_TRAINING=False`
+The notebooks display only the configured projection figures. Set `RUN_TRAINING=False`
 to project a saved run without fitting; YAML `projections.enabled` controls this
 step. Saved outputs are `projections/` (latent mean) and
 `projections_observed_fraction/` (individual observations), each with curves,
@@ -829,3 +829,19 @@ binomial probabilities fail rather than being clipped. Uniform midpoint-cell
 weights and dense joint covariance are currently used; grid size is capped to
 control memory. To compare models, use the same explicit physical box, grid,
 weights, and counting budget. Training convex hulls can differ between datasets.
+
+Projection figure selection is controlled by `projections.plots` (count GP) or
+`mfgp.projections.plots` (RESuM). The default, when omitted, is:
+
+```yaml
+plots: [projected_axes, projected_planes]
+```
+
+These are the axis and plane predictions with observed data and coverage counters.
+Add `marginalized_axes` and/or `marginalized_planes` for spatially averaged
+probabilities. Any subset and order is supported; `plots: []` selects none.
+`enabled: false` disables the whole step. Both notebooks and experiment runners
+use `ensure_selected_projections`; it computes only requested quantities and
+renders only requested figures. Existing unselected files are retained but not
+displayed. The `quantity` field is retained for low-level, single-quantity calls;
+the high-level runner derives quantity from `plots`.
