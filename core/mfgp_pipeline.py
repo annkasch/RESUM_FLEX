@@ -203,7 +203,11 @@ def evaluate_mfgp_coverage_from_batch(
     sigma = np.sqrt(var)
     intervals = {k: mfgp.predict_interval(holdout_hf_batch.theta, n_sigma=k)
                  for k in (1, 2, 3)}
+    from core.gp_metrics import mfgp_metrics
+
+    metrics = mfgp_metrics(mfgp, holdout_hf_batch.theta, y_obs, seed=seed)
     return {
+        "metrics": metrics,
         "theta": holdout_hf_batch.theta,
         "y_obs": y_obs,
         "mu": mu,

@@ -619,3 +619,15 @@ This is the project's gold-standard test. The ablation without `y_CNP` got 12% /
   training, 10 HF training. Full N1500/5000; selection caveat is explicit.
 - `tests/test_count_gp.py` checks analytic likelihood derivatives, integer counts,
   zero counts, N-dependent uncertainty, persistence and end-to-end optical output.
+
+## Shared GP metrics
+
+- `core/gp_metrics.py` defines common mean, trend, empirical CRPS and interval
+  scores for held-out observations. Equal voxel weights; bias is predicted minus
+  observed; WIS uses predictive median; invalid inputs fail, undefined scores null.
+- Count-GP and MFGP stages emit scores by default to metrics.json. MFGP coverage
+  evaluator includes a nested metrics record. Existing coverage fields preserved.
+- Distribution-specific NLL metadata distinguishes discrete count mass from
+  continuous response density; zero-support lognormal observations are explicit.
+- `tests/test_gp_metrics.py` verifies bias sign, correlation degeneracy, CRPS
+  against pairwise definition, interval/WIS formulas and lognormal support.

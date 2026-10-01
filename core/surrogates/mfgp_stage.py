@@ -5,6 +5,8 @@ import json
 
 import numpy as np
 
+from core.gp_metrics import mfgp_metrics
+
 
 def run_mfgp_stage(config, surrogate):
     # Keep optional GPy/Emukit dependencies out of the neural import path.
@@ -114,23 +116,13 @@ def run_mfgp_stage(config, surrogate):
         residual = mean - observed
         if not np.isfinite(mean).all() or not np.isfinite(sigma).all():
             raise ValueError("Nonfinite MFGP predictions")
-        metrics.append(
-            dict(
-                fidelity=fid,
-                level=level,
-                voxels=len(mean),
-                mean_observed=float(observed.mean()),
-                mean_predicted=float(mean.mean()),
-                mae=float(np.abs(residual).mean()),
-                rmse=float(np.sqrt(np.square(residual).mean())),
-                pearson_r=float(np.corrcoef(mean, observed)[0, 1])
-                if mean.std() and observed.std()
-                else None,
-                coverage={str(k): float(((observed >= intervals[k][0]) &
-                                        (observed <= intervals[k][1])).mean())
-                          for k in (1, 2, 3)},
-            )
-        )
+        scores = mfgp_metrics(gp, batch.theta, observed, fidelity=level,
+                              seed=config.validation_seed)
+        scores.update(fidelity=fid, level=level,
+                      coverage={str(k): float(((observed >= intervals[k][0]) &
+                                              (observed <= intervals[k][1])).mean())
+                                for k in (1, 2, 3)})
+        metrics.append(scores)
         np.savez_compressed(
             directory / f"{fid}_validation.npz",
             theta=batch.theta,

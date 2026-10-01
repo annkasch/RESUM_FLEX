@@ -756,3 +756,28 @@ exact-coordinate predictive coverage under `outputs/optical_binomial/<run>/`.
 Predictive intervals use latent logistic-GP draws followed by binomial counts with
 each validation voxel's own N. Set `RUN_TRAINING=False` to view saved results.
 The existing CNP/MFGP notebook remains a separate workflow.
+
+### Default GP validation metrics
+
+Count-GP and MFGP experiments write a shared set of original-scale, equally
+weighted per-voxel scores to their `metrics.json`: mean bias (predicted minus
+observed), MAE, RMSE, Pearson/Spearman correlations, descriptive calibration
+intercept/slope, CRPS, and weighted interval score. `interval_metrics` contains
+nominal probability, inside/total counts, measured coverage, mean width and
+interval score at each 1/2/3-sigma-equivalent level. WIS uses the predictive
+median, not the mean. Undefined correlations are JSON null. Existing coverage
+keys remain compatible. The low-level MFGP coverage evaluator returns these
+scores under `metrics` as well.
+
+Likelihood scores describe their measure explicitly: the count GP evaluates
+binomial count mass integrated by Monte Carlo over latent probability; MFGP
+uses its Gaussian/lognormal predictive density in response units. These NLLs
+must not be ranked against each other directly. A lognormal model assigns zero
+probability to a zero observation; its nonfinite NLL is saved as null with an
+explanation rather than silently clipping the observation. Predictive sampling
+uses a fixed seed, and the method/draw count are recorded.
+
+These metrics evaluate held-out observations including counting noise. They do
+not establish true latent-rate error or tank-wide population accuracy. Spatial
+weighting, regional scores and distance-based validation require a specified
+physical evaluation design; no volume weighting is inferred from sparse points.

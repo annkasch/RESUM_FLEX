@@ -4,8 +4,11 @@ import json
 from math import erf, sqrt
 
 import numpy as np
+from scipy.special import expit, logsumexp
+from scipy.stats import binom
 
 from core.gp_backends import build_count_gp_backend
+from core.gp_metrics import gp_metrics
 from data.optical_counts import prepare_optical_counts
 
 
@@ -62,23 +65,35 @@ def run_count_gp(config, prepared=None):
                 for i, bound in enumerate(("lower", "upper"))
             },
         )
-        results.append(
-            dict(
-                source_group=str(group),
-                voxels=len(x),
-                mean_observed=float(observed.mean()),
-                mean_predicted=float(mean.mean()),
-                mae=float(np.abs(mean - observed).mean()),
-                rmse=float(np.sqrt(np.square(mean - observed).mean())),
-                coverage={
-                    str(k): dict(
-                        inside=int(((observed >= lo) & (observed <= hi)).sum()), total=len(x)
-                    )
-                    for k, (lo, hi) in intervals.items()
-                },
-            )
+        metrics = gp_metrics(observed, mean, intervals=intervals, samples=samples)
+        mu, latent_variance = gp.predict_latent(x)
+        rng = np.random.default_rng(config.prediction_seed)
+        probabilities = expit(
+            rng.normal(mu, np.sqrt(latent_variance), size=(config.prediction_draws, len(x)))
         )
-    (out / "metrics.json").write_text(json.dumps(results, indent=2))
+        log_mass = logsumexp(binom.logpmf(hits, n, probabilities), axis=0) - np.log(
+            len(probabilities)
+        )
+        metrics.update(
+            source_group=str(group),
+            predictive_nll=float(-log_mass.mean()) if np.isfinite(log_mass).all() else None,
+            predictive_nll_status="finite"
+            if np.isfinite(log_mass).all()
+            else "nonfinite Monte Carlo estimate",
+            predictive_distribution=(
+                "binomial counts mixed over logistic Gaussian latent probability"
+            ),
+            nll_measure="count probability mass; not comparable to continuous response density",
+            distribution_score_method=(
+                f"Monte Carlo; draws={config.prediction_draws}, seed={config.prediction_seed}"
+            ),
+            coverage={
+                str(k): dict(inside=d["inside"], total=d["total"])
+                for k, d in ((k, metrics["interval_metrics"][str(k)]) for k in intervals)
+            },
+        )
+        results.append(metrics)
+    (out / "metrics.json").write_text(json.dumps(results, indent=2, allow_nan=False))
     metadata = dict(
         backend=gp.backend,
         link="logistic",

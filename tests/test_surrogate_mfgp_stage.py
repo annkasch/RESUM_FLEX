@@ -68,6 +68,12 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert best["metadata"]["step"] == 2
         with np.load(out / "hf_validation_best.npz") as best_arrays, np.load(out / "hf_validation_final.npz") as final_arrays:
             np.testing.assert_array_equal(best_arrays["predicted"], final_arrays["predicted"])
+    scores = json.loads((out / "mfgp/metrics.json").read_text())
+    for row in scores:
+        assert row["mean_bias"] == pytest.approx(row["mean_predicted"] - row["mean_observed"])
+        assert row["crps"] >= 0
+        assert "weighted_interval_score" in row
+        assert "mean_width" in row["interval_metrics"]["2"]
     assert meta["test_data"] == "Not loaded"
     assert (out / "mfgp/hf_coverage.png").exists()
     assert (out / "mfgp/model.pkl").exists()
