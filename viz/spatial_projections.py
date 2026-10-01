@@ -94,22 +94,14 @@ def plot_spatial_projections(directory):
     labels = [f"{name} [{settings['units']}]" for name in settings["axis_labels"]]
     names = settings["axis_labels"]
     observation_group = metadata.get("observation_group", "HF")
-    response_label = metadata.get("response_label", "HF-equivalent response")
-    domain = (
-        "training convex hull" if settings["domain"] == "training_convex_hull" else "specified box"
-    )
     predictive = settings.get("quantity") == "observed_fraction"
-    observation = metadata.get("observation_model") or {}
-    noise_label = observation.get("noise_description", "binomial noise")
-    budget_label = (f"N={settings['target_events']}; "
-                    if settings.get("target_events") is not None else "")
-    subtitle = (
-        (
-            f"Uniform-volume sampling within {domain}; {budget_label}"
-            f"spatial variation + GP uncertainty + {noise_label}"
-        )
+    axis_title = (
+        "Projected Detection Fractions" if predictive else "Marginalized Detection Probability"
+    )
+    plane_title = (
+        "Detection Fractions — Plane Projections"
         if predictive
-        else (f"Uniform-volume averages within {domain}; latent uncertainty, no observation noise")
+        else "Detection Probability — Plane Marginalizations"
     )
     with np.load(directory / "projections.npz") as data:
         a = dict(data)
@@ -187,7 +179,7 @@ def plot_spatial_projections(directory):
                     facecolors="none",
                     edgecolors="gray",
                     s=25,
-                    label=f"Individual {observation_group} training targets",
+                    label=f"{observation_group} training targets",
                     zorder=5,
                 )
                 ax.scatter(
@@ -196,31 +188,21 @@ def plot_spatial_projections(directory):
                     marker="o",
                     color="black",
                     s=25,
-                    label=f"Individual {observation_group} validation targets",
+                    label=f"{observation_group} validation targets",
                     zorder=6,
                 )
             ax.set(
                 xlabel=labels[i],
                 title=(
-                    ("Sample " if predictive else "Average over ")
-                    + ", ".join(names[j] for j in range(3) if j != i)
+                    f"Projected onto {names[i]}"
+                    if predictive
+                    else "Average over " + ", ".join(names[j] for j in range(3) if j != i)
                 ),
             )
             ax.grid(alpha=0.2)
-        axes[0].set_ylabel("Detection fraction")
+        axes[0].set_ylabel("Detection fraction" if predictive else "Detection probability")
         axes[-1].legend(fontsize=8)
-        title = (
-            "Observed-fraction predictive distribution"
-            if predictive
-            else f"Marginalized {response_label}"
-        )
-        if overlay:
-            title += (
-                " — unconditional bands; nonzero-selected data need not have nominal coverage"
-                if predictive
-                else " — observations are individual voxels, not marginal averages"
-            )
-        fig.suptitle(title + "\n" + subtitle, fontsize=11)
+        fig.suptitle(axis_title, fontsize=11)
         save(fig, "curves_observed" if overlay else "curves")
 
     planes = ((0, 1), (0, 2), (1, 2))
@@ -257,15 +239,7 @@ def plot_spatial_projections(directory):
                 + ("mean" if col == 0 else f"{probabilities[col]} interval width"),
             )
             fig.colorbar(mesh, ax=ax, shrink=0.75)
-    fig.suptitle(
-        (
-            "Observed-fraction projections: mean and predictive interval widths\n"
-            if predictive
-            else "Plane marginalizations: mean and uncertainty widths\n"
-        )
-        + subtitle,
-        fontsize=13,
-    )
+    fig.suptitle(plane_title, fontsize=13)
     save(fig, "planes")
 
     if predictive:
@@ -305,11 +279,17 @@ def plot_spatial_projections(directory):
             ylabel=labels[j],
             aspect="equal",
             title=(
-                f"{names[i]}–{names[j]} "
-                + f"({'sample' if predictive else 'average over'} {names[3 - i - j]})"
+                f"Projected onto {names[i]}–{names[j]}"
+                if predictive
+                else f"{names[i]}–{names[j]}: average over {names[3 - i - j]}"
             ),
         )
-    fig.colorbar(mesh, ax=axes, label="Detection fraction (shared map/point scale)", shrink=0.8)
+    fig.colorbar(
+        mesh,
+        ax=axes,
+        label="Detection fraction" if predictive else "Detection probability / observed fraction",
+        shrink=0.8,
+    )
     handles = [
         Line2D(
             [],
@@ -318,20 +298,12 @@ def plot_spatial_projections(directory):
             color="gray" if split == "training" else "black",
             markerfacecolor="white",
             linestyle="None",
-            label=f"Individual {observation_group} {split} targets",
+            label=f"{observation_group} {split} targets",
         )
         for split, marker in (("training", "o"), ("validation", "o"))
     ]
     axes[0].legend(handles=handles, fontsize=8)
-    fig.suptitle(
-        (
-            "Population mean with observed target fractions\n"
-            "Unconditional predictions; nonzero-selected validation is not a coverage test\n"
-            if predictive
-            else "Marginalized means with observed target fractions\n"
-            "Marker colors are individual voxel observations, not marginalized measurements\n"
-        )
-        + subtitle,
-        fontsize=11,
-    )
+    fig.suptitle(plane_title, fontsize=11)
     save(fig, "planes_observed")
+
+    (directory / "plot_metadata.json").write_text(json.dumps({"plot_version": 3}))
