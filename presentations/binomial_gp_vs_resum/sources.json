@@ -1,0 +1,14 @@
+{
+  "slides": 14,
+  "scope": "Current optical-map RESUM_FLEX implementation; unmatched runs are not a ranking",
+  "count_gp_run": "outputs/optical_binomial/20261001T173754_521023Z",
+  "resum_run": "outputs/optical_resum/notebook/20260930T195141_282030Z",
+  "references": [
+    "https://proceedings.mlr.press/v80/garnelo18a.html",
+    "https://gaussianprocess.org/gpml/chapters/RW3.pdf"
+  ],
+  "files": [
+    "binomial_gp_vs_resum.pptx",
+    "binomial_gp_vs_resum.pdf"
+  ]
+}
