@@ -44,3 +44,14 @@ backend:
 output_directory: outputs/optical_binomial
 prediction_draws: 32768
 prediction_seed: 42
+
+# Shared projection engine; both plot types are available in the notebook.
+projections:
+  enabled: true
+  quantity: latent_mean
+  domain: training_convex_hull
+  grid_steps: 12
+  n_draws: 8192
+  seed: 42
+  # For observed_fraction, null uses the saved HF budget if it is unique.
+  target_events: null

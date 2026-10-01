@@ -115,4 +115,8 @@ def run_count_gp(config, prepared=None):
     from viz.count_gp import plot_count_gp
 
     plot_count_gp(out)
+    if config.projections.enabled:
+        from core.count_gp_projections import ensure_count_gp_projections
+
+        ensure_count_gp_projections(out, config.projections)
     return out
