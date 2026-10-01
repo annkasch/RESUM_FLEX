@@ -33,6 +33,7 @@ def evaluate_surrogate(model, target, *, context=None):
         positives=int(labels.sum()),
         mean_observed=mean_observed,
         mean_predicted=float(predicted.mean()),
+        mean_bias=float(residual.mean()),
         ratio_of_means=float(predicted.mean() / mean_observed) if mean_observed else None,
         pearson_r=float(np.corrcoef(observed, predicted)[0, 1])
         if observed.std() > 0 and predicted.std() > 0

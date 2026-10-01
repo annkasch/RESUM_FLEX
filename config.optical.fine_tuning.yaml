@@ -1,0 +1,40 @@
+# Optional two-stage training through the standard interchangeable-model API.
+model:
+  kind: legacy_cnp
+  encoder:
+    type: mlp
+    latent_dim: 64
+    hidden_dims: [128, 128]
+    dropout: 0
+training:
+  backend: neural
+  loss: theory-truth
+  n_steps: 12000
+  eval_every: 250
+  learning_rate: 0.001
+  batch_size: 16
+  n_events: 128
+  n_context_min: 16
+  n_context_max: 64
+  seed: 0
+  device: cpu
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: true
+  weighting:
+    strategy: none
+  fine_tuning:
+    n_steps: 2000
+    learning_rate: 0.0003
+    eval_every: 250
+    n_events: 512
+selection: voxel_rate_mae
+lf_validation: true
+hf_validation: false
+test_fidelities: [lf]
+data_directory: outputs/optical_fine_tuning/data
+output_directory: outputs/optical_fine_tuning/runs/seed0
+validation_context_events: 64
+validation_seed: 12345

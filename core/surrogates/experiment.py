@@ -16,7 +16,8 @@ from schemas.surrogates import SurrogateRunConfig
 def run_experiment(config: SurrogateRunConfig):
     """Fit on LF train; optionally select on LF validation; report available splits.
 
-    Prepared batches are already normalized. Test files are never opened.
+    Prepared batches are already normalized. Explicitly requested test files
+    are opened only after fitting and checkpoint selection have completed.
     Output must be empty, preventing accidental overwriting of prior runs.
     """
     from data.optical_pipeline import load_prepared_batch
@@ -26,7 +27,9 @@ def run_experiment(config: SurrogateRunConfig):
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
     batches, provenance = {}, {}
-    partitions = [("train", "lf"), ("validation", "hf")]
+    partitions = [("train", "lf")]
+    if config.hf_validation:
+        partitions.append(("validation", "hf"))
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
     for split, fidelity in partitions:
@@ -79,8 +82,44 @@ def run_experiment(config: SurrogateRunConfig):
     )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
+    # Selection is complete. Never pass test episodes into either training stage.
+    test_provenance = {}
+    for fidelity in config.test_fidelities:
+        path = root / f"batches/test/{fidelity}.npz"
+        batch = load_prepared_batch(path)
+        if (
+            batch.theta is not None
+            and train.theta is not None
+            and any(np.array_equal(row, other) for row in batch.theta for other in train.theta)
+        ):
+            raise ValueError("Test voxel coordinates overlap training inputs")
+        episodes["test", fidelity] = Episode(
+            *split_context_target(
+                batch,
+                config.validation_context_events,
+                seed=config.validation_seed,
+            )
+        )
+        test_provenance[fidelity] = dict(
+            path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        )
+    if test_provenance:
+        (output / "test_evaluation.json").write_text(
+            json.dumps(
+                {
+                    "data": test_provenance,
+                    "used_for_selection": False,
+                    "context_events": config.validation_context_events,
+                    "context_seed": config.validation_seed,
+                },
+                indent=2,
+            )
+        )
     metrics = []
-    for checkpoint in ("best", "final"):
+    checkpoints = ["best", "final"]
+    if (output / "checkpoints/pretraining/model.json").exists():
+        checkpoints.insert(0, "pretraining")
+    for checkpoint in checkpoints:
         saved = load_surrogate(output / "checkpoints" / checkpoint)
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, context=episode.context)
@@ -98,6 +137,10 @@ def run_experiment(config: SurrogateRunConfig):
     from viz.surrogate import plot_surrogate_run
 
     plot_surrogate_run(output)
+    if "pretraining" in checkpoints:
+        from viz.surrogate import plot_fine_tuning_comparison
+
+        plot_fine_tuning_comparison(output)
     if config.mfgp is not None:
         from core.surrogates.mfgp_stage import run_mfgp_stage
 

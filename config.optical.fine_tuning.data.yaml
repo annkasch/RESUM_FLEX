@@ -1,0 +1,37 @@
+# Independent budget test: LF1500 development, LF1000 external test.
+source:
+  directories:
+    lf:
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/nonzero
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/zero
+  exclude_files: []
+test_source:
+  directories:
+    lf:
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1000/nonzero
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1000/zero
+  exclude_files: []
+training_primaries: 1500
+test_primaries: 1000
+spatial_separation_mm: 5
+output_directory: outputs/optical_fine_tuning/data
+theta:
+  coordinates: cartesian
+  center_source: filename
+phi:
+  vertex:
+    representation: offset
+    coordinates: cartesian
+  momentum:
+    representation: components
+target:
+  kind: any_channel
+split:
+  train_fraction: 0.8
+  validation_fraction: 0.2
+  test_fraction: 0
+  seed: 42
+  manifest: outputs/optical_fine_tuning/data/splits/voxel_split.json
+normalization:
+  method: standard
+  fit_on: training

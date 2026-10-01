@@ -22,6 +22,34 @@ def fit_surrogate(
 ):
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
+    if training.backend == "neural" and training.fine_tuning is not None:
+        from core.surrogates.fine_tuning import fit_two_stages
+
+        return fit_two_stages(
+            model,
+            train,
+            training,
+            validation=validation,
+            selection=selection,
+            checkpoints=checkpoints,
+        )
+    return _fit_stage(
+        model, train, training, validation=validation, selection=selection, checkpoints=checkpoints
+    )
+
+
+def _fit_stage(
+    model,
+    train,
+    training,
+    *,
+    validation=None,
+    selection="voxel_rate_mae",
+    checkpoints=None,
+    last_layer_only=False,
+):
+    config = SurrogateConfig(model=model.config, training=training, selection=selection)
+    training = config.training
     # Training batches must be real, normalized inputs with binary labels.
     model.validate(train, train if model.uses_context else None)
     if not np.isin(train.labels, [0, 1]).all():
@@ -125,8 +153,11 @@ def fit_surrogate(
         if training.device == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA requested but unavailable")
         torch.manual_seed(training.seed)
-        model.module.to(training.device).train()
-        optimizer = torch.optim.Adam(model.module.parameters(), lr=training.learning_rate)
+        model.module.to(training.device)
+        # Frozen features must be deterministic: dropout stays disabled in stage 2.
+        model.module.train(not last_layer_only)
+        parameters = [p for p in model.module.parameters() if p.requires_grad]
+        optimizer = torch.optim.Adam(parameters, lr=training.learning_rate)
         mixup = training.sampling.strategy == "class_aware_mixup"
         sampler_args = dict(
             seed=training.seed,

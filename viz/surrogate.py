@@ -29,6 +29,11 @@ def plot_surrogate_run(directory):
             ax.plot([r["step"] for r in history], [r.get(key) for r in history])
             ax.set(xlabel="Training step / tree count", ylabel=key)
             ax.grid(alpha=0.2)
+            boundary = next((r["step"] - r["stage_step"] for r in history
+                             if r.get("stage") == "fine_tuning"), None)
+            if boundary is not None:
+                ax.axvline(boundary, color="gray", ls="--", label="Start last-layer fitting")
+                ax.legend(fontsize=8)
         save(fig, "validation_history")
     else:
         fig, ax = plt.subplots(layout="constrained")
@@ -77,9 +82,57 @@ def plot_surrogate_run(directory):
                     yscale="log" if logscale else "linear",
                     ylim=(1e-4, 1.05) if logscale else (0, 1.05),
                 )
-                ax.legend(fontsize=8)
+                if ax.get_legend_handles_labels()[0]:
+                    ax.legend(fontsize=8)
                 ax.grid(alpha=0.2)
             save(fig, f"{fidelity}_precision_recall" + ("_log" if logscale else ""))
+
+
+def plot_fine_tuning_comparison(directory):
+    """Before/after means and ranking on exactly the same saved real targets."""
+    directory = Path(directory)
+    records = json.loads((directory / "metrics.json").read_text())
+    for split, fidelity in sorted({(r["split"], r["fidelity"]) for r in records}):
+        before_path = directory / f"{fidelity}_{split}_pretraining.npz"
+        after_path = directory / f"{fidelity}_{split}_best.npz"
+        with np.load(before_path) as before, np.load(after_path) as after:
+            if not np.array_equal(before["labels"], after["labels"]):
+                raise ValueError("Fine-tuning comparison requires identical target events")
+            x = np.arange(len(before["observed"]))
+            fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
+                                     layout="constrained")
+            axes[0].plot(x, before["observed"], "ko", label="Observed target fraction")
+            for arrays, label in ((before, "Before fine-tuning"), (after, "After fine-tuning")):
+                axes[0].plot(x, arrays["predicted"], "o-", label=label)
+                axes[1].plot(x, arrays["residual"], "o-", label=label)
+            axes[0].set(title=f"{fidelity.upper()} {split} — last-layer fitting",
+                        ylabel="Detection fraction")
+            axes[1].axhline(0, color="black", ls="--")
+            axes[1].set(xlabel=f"{split.capitalize()} voxel index",
+                        ylabel="Predicted − observed")
+            for ax in axes:
+                ax.grid(alpha=0.2)
+                ax.legend()
+            for suffix in ("png", "pdf"):
+                fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_means.{suffix}", dpi=150)
+            plt.close(fig)
+            fig, ax = plt.subplots(figsize=(7, 5), layout="constrained")
+            for arrays, checkpoint, label in ((before, "pretraining", "Before fine-tuning"),
+                                               (after, "best", "After fine-tuning")):
+                metric = next(r for r in records if r["split"] == split
+                              and r["fidelity"] == fidelity and r["checkpoint"] == checkpoint)
+                ap = metric["average_precision"]
+                ap_label = "undefined" if ap is None else f"{ap:.4g}"
+                ax.step(arrays["recall"], arrays["precision"], where="pre",
+                        label=f"{label}, AP={ap_label}")
+            ax.axhline(metric["prevalence"], ls="--", color="gray", label="Positive fraction")
+            ax.set(xlabel="Recall", ylabel="Precision", xlim=(0, 1), ylim=(0, 1.05),
+                   title=f"{fidelity.upper()} {split} — precision–recall")
+            ax.legend()
+            ax.grid(alpha=0.2)
+            for suffix in ("png", "pdf"):
+                fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_pr.{suffix}", dpi=150)
+            plt.close(fig)
 
 
 def plot_mfgp_training_inputs(directory):
