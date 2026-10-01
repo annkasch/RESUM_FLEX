@@ -743,7 +743,7 @@ and Laplace inference. Kernel hyperparameters are optimized; their uncertainty
 is not integrated. Coordinate scaling uses training data only. LF/HF tags control
 splits and reporting, not separate latent functions.
 
-The default uses the current nonzero-only N1500/N5000 folders, all LF voxels and
+The default uses nonzero N1500 LF files and both zero/nonzero N5000 HF files, all LF voxels and
 10 HF voxels for training, and the remaining HF voxels for validation. The full
 primary budget enters the likelihood; no context events are removed. Nonzero-only
 selection can bias population inference: this is an ordinary binomial likelihood,
