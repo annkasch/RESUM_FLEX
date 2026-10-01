@@ -104,7 +104,14 @@ def test_optical_counts_end_to_end(tmp_path):
     gp = BinomialGP.load(out / "model.pkl")
     np.testing.assert_allclose(gp.offset, data["train"]["theta"].mean(0))
     assert (out / "hf_coverage.png").exists()
-    assert len(json.loads((out / "metrics.json").read_text())) == 1
+    rows = json.loads((out / "metrics.json").read_text())
+    assert len(rows) == 1
+    assert rows[0]["mean_bias"] == pytest.approx(
+        rows[0]["mean_predicted"] - rows[0]["mean_observed"]
+    )
+    assert rows[0]["crps"] >= 0
+    assert rows[0]["predictive_nll"] >= 0
+    assert "mean_width" in rows[0]["interval_metrics"]["2"]
     with np.load(out / "hf_validation.npz") as predictions:
         assert (predictions["trials"] == 12).all()
         assert (predictions["lower_3"] >= 0).all()
