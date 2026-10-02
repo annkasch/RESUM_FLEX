@@ -55,3 +55,14 @@ mlruns/
 .env
 .env.*
 !.env.example
+
+# Local presentation materials and slide decks
+presentations/
+slides/
+*.ppt
+*.pptx
+*.pptm
+*.pps
+*.ppsx
+*.odp
+*.key
