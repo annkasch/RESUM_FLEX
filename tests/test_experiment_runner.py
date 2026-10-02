@@ -99,3 +99,34 @@ def test_failure_is_recorded(tmp_path):
     failed = RunStore(cfg.store).list(status="failed")
     assert len(failed) == 1
     assert "no target" in failed[0]["error"]
+
+
+def test_saved_bdt_evaluates_without_a_training_spec(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    from schemas.experiments import EventPipeline
+
+    cfg = config(tmp_path)
+    cfg.pipeline = EventPipeline(
+        model={
+            "kind": "bdt",
+            "architecture": {"max_iter": 2, "eval_every": 1, "min_samples_leaf": 2},
+        },
+        training={"backend": "bdt"},
+    )
+    cfg.evaluation.plots = []
+    trained = run(cfg)
+    cfg.pipeline = EventPipeline(
+        model=cfg.pipeline.model, fit=False, initial_checkpoint=trained / "backend/checkpoints/best"
+    )
+    from core.surrogates import training
+
+    def no_training(*args, **kwargs):
+        raise AssertionError("Saved tree must not be retrained")
+
+    monkeypatch.setattr(training, "_fit_stage", no_training)
+    evaluated = run(cfg)
+    before = [
+        r for r in json.loads((trained / "metrics.json").read_text()) if "event_best_" in r["name"]
+    ]
+    after = json.loads((evaluated / "metrics.json").read_text())
+    assert [r["metrics"] for r in before] == [r["metrics"] for r in after]

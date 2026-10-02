@@ -55,11 +55,13 @@ def projection_settings(spec):
 
 
 def event_config(spec, data, out):
-    from schemas.surrogates import NeuralTraining, SurrogateRunConfig
+    from schemas.surrogates import NeuralTraining, SurrogateRunConfig, TreeTraining
 
     p, e = spec.pipeline, spec.evaluation
-    training = p.training or NeuralTraining(
-        loss="theory-truth" if p.model.kind == "legacy_cnp" else "bernoulli"
+    training = p.training or (
+        TreeTraining()
+        if p.model.kind == "bdt"
+        else NeuralTraining(loss="theory-truth" if p.model.kind == "legacy_cnp" else "bernoulli")
     )
     spatial = None if p.spatial_regression is None else p.spatial_regression.model_copy(deep=True)
     if spatial:
