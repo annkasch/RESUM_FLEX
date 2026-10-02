@@ -86,6 +86,7 @@ class SplitConfig(StrictModel):
 class NormalizationConfig(StrictModel):
     method: Literal["standard", "minmax", "none"] = "standard"
     fit_on: Literal["training"] = "training"
+    fit_fidelities: list[Literal["lf", "hf"]] | None = Field(default=None, min_length=1)
 
 
 class OpticalDataConfig(StrictModel):

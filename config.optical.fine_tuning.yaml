@@ -32,9 +32,22 @@ training:
     n_events: 512
 selection: voxel_rate_mae
 lf_validation: true
-hf_validation: false
+hf_validation: true
 test_fidelities: [lf]
 data_directory: outputs/optical_fine_tuning/data
 output_directory: outputs/optical_fine_tuning/runs/seed0
 validation_context_events: 64
 validation_seed: 12345
+
+# Three levels: fine-tuned LF score, fine-tuned HF score, observed HF fraction.
+mfgp:
+  output_transform: log
+  raw_pseudocount: 0.5
+  cnp_log_floor: 1.0e-12
+  kernel: rbf
+  n_restarts: 5
+  seed: 0
+  n_context: 64
+  projections:
+    enabled: true
+    plots: [projected_axes, projected_planes]

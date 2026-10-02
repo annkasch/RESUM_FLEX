@@ -73,3 +73,37 @@ def test_transfer_requires_exact_simulation_budgets(tmp_path):
     )
     with pytest.raises(ValueError, match="1500 single-primary events"):
         prepare_optical_transfer_data(cfg)
+
+
+def test_transfer_adds_hf_without_changing_lf_normalization(tmp_path):
+    source, external = tmp_path / "dev", tmp_path / "test"
+    for i in range(10):
+        fixture_file(source, run=i, center=(i * 0.1, 0, 0), n=8)
+    fixture_file(external, run=1, center=(2.003, 0, 0), n=12)
+    fixture_file(external, run=2, center=(9, 0, 0), n=12)
+    cfg = OpticalTransferDataConfig(
+        source={"directories": {"lf": [source / "lf"]}},
+        test_source={"directories": {"lf": [external / "lf"]}},
+        output_directory=tmp_path / "prepared",
+        training_primaries=8, hf_primaries=20, test_primaries=12,
+        normalization={"fit_fidelities": ["lf"]},
+        split={"train_fraction": .8, "validation_fraction": .2, "test_fraction": 0,
+               "manifest": tmp_path / "manifest.json"},
+    )
+    before = prepare_optical_transfer_data(cfg)
+    for i in range(4):
+        fixture_file(source, fidelity="hf", run=i, center=(2+i, 0, 0), n=20,
+                     hit_ids=(), detectors=())
+    cfg.source.directories["hf"] = [source / "hf"]
+    cfg.split.hf_train_count = 2
+    after = prepare_optical_transfer_data(cfg)
+    assert after.normalization == before.normalization
+    assert after.batches["train"]["hf"].batch_size == 2
+    assert after.batches["validation"]["hf"].batch_size == 2
+    assert after.batches["train"]["hf"].labels.sum() == 0
+    assert after.batches["test"]["lf"].batch_size == 1
+    np.testing.assert_array_equal(before.batches["train"]["lf"].theta,
+                                  after.batches["train"]["lf"].theta)
+    cfg.hf_primaries = 21
+    with pytest.raises(ValueError, match="21 single-primary events"):
+        prepare_optical_transfer_data(cfg)

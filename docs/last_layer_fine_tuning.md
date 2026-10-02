@@ -68,14 +68,25 @@ random-seed independence cannot be inferred from the available file metadata.
 
 The prepared LF1000 batch is loaded by `run_experiment` only after fitting and
 selection. `test_fidelities` defaults to an empty list in ordinary RESuM runs;
-requesting `[lf]` explicitly enables this final evaluation. `hf_validation: false`
-allows this LF-only experiment without assigning LF1000 an HF modeling role.
+requesting `[lf]` explicitly enables this final evaluation. LF1000 is never assigned
+an HF modeling role.
 All before/after results use the same fixed real context and target events. Rates
 and PR metrics use the target population after 64 context events are removed.
 
-This notebook isolates the NN change and does not fit a GP. Adding the same
-`fine_tuning` block to a full RESuM configuration makes its existing MFGP stage
-use the selected fine-tuned checkpoint. No change to the GP likelihood is implied.
+The notebook also fits the existing three-level MFGP in log space: selected
+fine-tuned LF means, selected fine-tuned HF means, and observed HF target fractions.
+N5000 zero-hit and nonzero folders supply 10 HF training voxels and the remaining
+HF validation voxels (`split.hf_train_count`). The CNP trains and selects only on
+LF1500. `normalization.fit_fidelities: [lf]` preserves LF-only normalization while
+applying the same transforms to HF. External test spatial exclusion includes HF
+locations as well as LF development locations.
+
+The notebook displays GP input scores, means, coverage, metrics and configured
+axis/plane projections. Removing `mfgp` restores the CNP-only runner. No change to
+the GP likelihood is implied; lognormal observation bands and projection bands
+(latent GP plus binomial counts) retain their existing different interpretations.
+Setting `RUN_TRAINING = False` displays the latest run with saved MFGP metrics;
+older CNP-only runs are not treated as completed GP runs.
 
 ## Assess the experiment
 

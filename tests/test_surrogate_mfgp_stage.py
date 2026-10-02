@@ -51,7 +51,28 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         validation_context_events=4,
         lf_validation=lf_validation,
     )
+    # Exercise the fine-tuned checkpoint through the complete GP boundary.
+    fine_tuned = transform == "log" and lf_validation
+    if fine_tuned:
+        from schemas.surrogates import LastLayerFineTuning
+        config.training.fine_tuning = LastLayerFineTuning(n_steps=2, eval_every=1)
     out = run_experiment(config)
+    if fine_tuned:
+        from core.surrogates.checkpoints import load_surrogate
+        from core.surrogates.pipeline import prepare_surrogate_datasets
+        from data.optical_pipeline import load_prepared_batch
+        lf = load_prepared_batch(root / "batches/train/lf.npz")
+        hf = load_prepared_batch(root / "batches/train/hf.npz")
+        def inputs(checkpoint):
+            return prepare_surrogate_datasets(
+                load_surrogate(out / "checkpoints" / checkpoint), lf, hf,
+                n_lf_context=4, n_hf_context=4, seed=config.mfgp.seed)
+        expected_inputs, old_inputs = inputs("best"), inputs("pretraining")
+        with np.load(out / "mfgp/training_arrays.npz") as arrays:
+            for key, expected_array in expected_inputs.items():
+                np.testing.assert_array_equal(arrays[key], expected_array)
+            assert not np.array_equal(arrays["Y_lf_cnp"], old_inputs["Y_lf_cnp"])
+
     meta = json.loads((out / "mfgp/model.json").read_text())
     expected = {"train/lf", "train/hf", "validation/hf"}
     if lf_validation:
