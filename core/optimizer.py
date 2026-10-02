@@ -38,10 +38,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Protocol
+from typing import Protocol
 
 import numpy as np
-import torch
 
 from core.surrogate_cnp import ConditionalNeuralProcess, split_context_target
 from core.surrogate_mfgp import MultiFidelityGP

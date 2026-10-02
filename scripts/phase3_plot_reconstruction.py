@@ -38,7 +38,7 @@ from core import (  # noqa: E402
     split_context_target,
     train_cnp,
 )
-from data.pseudo_generator import PseudoDataGenerator, for_scenario  # noqa: E402
+from data.pseudo_generator import for_scenario  # noqa: E402
 from schemas.config import (  # noqa: E402
     CNPConfig,
     EncoderConfig,
