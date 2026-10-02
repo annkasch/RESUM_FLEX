@@ -1,0 +1,19 @@
+schema_version: 1
+name: optical-binomial-gp-matched-targets
+hypothesis: Direct binomial GP estimates population fractions without an event denoiser.
+tags: [optical, count-gp]
+store: ../outputs/experiments
+dataset:
+  prepared: ../outputs/optical_fine_tuning/data
+  format: events
+pipeline:
+  kind: count_gp
+  backend: {kind: binomial_laplace, kernel: matern52, max_iters: 300, n_restarts: 2, seed: 42}
+  prediction_draws: 32768
+  prediction_seed: 42
+  projections: {grid_steps: 12, n_draws: 8192}
+evaluation:
+  context_events: 64
+  seed: 12345
+  partitions: [train/lf, validation/lf, validation/hf, test/lf]
+  plots: [means, residuals, coverage, projected_axes, projected_planes]

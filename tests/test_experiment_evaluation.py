@@ -54,3 +54,24 @@ def test_target_manifest_and_prediction_roundtrip(tmp_path):
     (tmp_path / "records/test.npz").write_bytes(b"changed")
     with pytest.raises(ValueError, match="modified"):
         score_record(tmp_path / "records", r)
+
+
+def test_aggregate_counts_do_not_claim_event_identity(tmp_path):
+    root = tmp_path / "counts"
+    root.mkdir()
+    np.savez(
+        root / "validation.npz",
+        theta=[[0.0, 1.0, 2.0]],
+        hits=[1],
+        trials=[100],
+        files=["run1"],
+        source_group=["hf"],
+    )
+    snapshot = snapshot_dataset(root, tmp_path / "store")
+    settings = EvaluationSpec(context_events=0, partitions=["validation/hf"])
+    manifest = build_manifest(snapshot, settings, tmp_path / "manifest")
+    assert manifest["partitions"]["validation/hf"]["event_identity"] == "aggregate_only"
+    with pytest.raises(ValueError, match="remove context"):
+        build_manifest(
+            snapshot, settings.model_copy(update={"context_events": 1}), tmp_path / "bad"
+        )

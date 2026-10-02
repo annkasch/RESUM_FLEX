@@ -1,0 +1,25 @@
+schema_version: 1
+name: optical-mfgp-from-saved-checkpoint
+hypothesis: Compare MFGP behavior with fixed data and alternative saved CNP checkpoints.
+tags: [optical, mfgp, checkpoint-comparison]
+store: ../outputs/experiments
+dataset:
+  prepared: ../outputs/optical_fine_tuning/data
+pipeline:
+  kind: event
+  fit: false
+  model:
+    kind: legacy_cnp
+    encoder: {type: mlp, latent_dim: 64, hidden_dims: [128, 128], dropout: 0}
+  initial_checkpoint: ../outputs/optical_fine_tuning/runs/20261002T010201_480996Z/checkpoints/pretraining
+  spatial_regression:
+    output_transform: log
+    kernel: rbf
+    n_restarts: 5
+    seed: 0
+    n_context: 64
+evaluation:
+  context_events: 64
+  seed: 12345
+  partitions: [validation/lf, validation/hf]
+  plots: [means, residuals, coverage]

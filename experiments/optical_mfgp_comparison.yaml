@@ -1,0 +1,10 @@
+schema_version: 1
+name: optical-mfgp-before-after-fine-tuning
+baseline: optical_mfgp_checkpoint.yaml
+seeds: [0, 1, 2]
+variants:
+  - name: before
+  - name: after
+    overrides:
+      pipeline:
+        initial_checkpoint: ../outputs/optical_fine_tuning/runs/20261002T010201_480996Z/checkpoints/best

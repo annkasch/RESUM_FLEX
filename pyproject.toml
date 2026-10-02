@@ -16,6 +16,9 @@ dependencies = [
     "scipy>=1.10",
 ]
 
+[project.scripts]
+resum-experiment = "core.experiments.__main__:main"
+
 [project.optional-dependencies]
 bdt = ["scikit-learn>=1.5,<2"]
 optical-data = ["h5py>=3.10"]

@@ -91,8 +91,10 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
         variance="Original-scale predictive variance; log mode uses lognormal moments",
         noise="Learned per-fidelity constant noise; CNP scale is not used as GP noise",
         log_likelihood=float(gp.model.log_likelihood()),
-        parameter_names=gp.model.parameter_names(),
+        parameter_names=gp.model.parameter_names_flat().tolist(),
         parameters=gp.model.param_array.tolist(),
+        optimization=[dict(status=str(r.status), function_evaluations=int(r.funct_eval))
+                      for r in gp.model.optimization_runs],
     )
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
     metrics = []

@@ -38,3 +38,16 @@ def test_lifecycle_rebuild_and_immutable_artifacts(tmp_path):
     failed = store.create({"name": "failed"})
     store.transition(failed, "failed", error="bad config")
     assert json.loads((failed / "run.json").read_text())["error"] == "bad config"
+
+
+def test_historical_import_preserves_unknown_provenance(tmp_path):
+    from core.experiments.migration import import_run
+
+    source = tmp_path / "old"
+    source.mkdir()
+    (source / "metrics.json").write_text('[{"mae": 0.1}]')
+    out = import_run(source, tmp_path / "store")
+    r = RunStore(tmp_path / "store").inspect(out.name)
+    assert r["kind"] == "imported" and not r["comparable"]
+    assert json.loads((out / "provenance.json").read_text())["git_commit"] is None
+    assert (source / "metrics.json").read_text() == (out / "legacy/metrics.json").read_text()
