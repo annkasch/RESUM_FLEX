@@ -233,9 +233,21 @@ changing its decoder or likelihood definitions. Set `training.loss` explicitly:
 - `practice-truth`: the original Gaussian NLL on the transformed mean and scale.
 
 Single-logit models keep `training.loss: bernoulli` (the default). Mismatched
-model/loss settings fail validation. Legacy losses currently require no extra
-weights and `focal_gamma: 0`. Natural sampling, class-aware mixup alone, and
-`objective.strategy: real_plus_mixup` are supported. For the combined objective,
+model/loss settings fail validation. Legacy losses require `focal_gamma: 0`.
+Natural sampling (optionally with explicit class weights), class-aware mixup
+alone, `objective.strategy: real_plus_mixup`, and real-target oversampling are
+supported. For oversampling, set
+
+```yaml
+sampling: {strategy: positive_quota, positive_fraction: 0.05}
+weighting: {strategy: sampling_correction}
+```
+
+Each event's legacy loss (theory-truth BCE or practice-truth Gaussian NLL) is
+multiplied by its per-voxel importance weight p/q or (1-p)/(1-q) before the
+event mean, so the expected loss matches uniform real targets. For theory-truth
+this is an unbiased estimate of the natural Bernoulli risk. Practice-truth is not
+a Bernoulli likelihood, so the weights only restore its natural-sampling objective. For the combined objective,
 **both** branches use the selected legacy loss and one optimizer update:
 `mean(real legacy loss) + mixup_loss_weight * mean(mixed legacy loss)`.
 

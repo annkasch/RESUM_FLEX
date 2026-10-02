@@ -143,7 +143,7 @@ def _fit_stage(
                 labels = torch.as_tensor(
                     labels, dtype=output.mu_logit.dtype, device=output.mu_logit.device
                 )
-                return cnp_loss(output, labels, objective=training.loss)
+                return cnp_loss(output, labels, objective=training.loss, weights=weights)
             return binary_focal_loss_with_logits(
                 output, labels, gamma=training.focal_gamma, weights=weights
             )
