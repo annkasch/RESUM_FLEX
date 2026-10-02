@@ -16,7 +16,6 @@ import torch
 
 from core import (
     build_cnp,
-    evaluate_mfgp_coverage,
     evaluate_mfgp_coverage_from_batch,
     fit_mfgp_three_fidelity,
     prepare_mfgp_datasets,
