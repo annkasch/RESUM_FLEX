@@ -4,6 +4,9 @@ source:
     lf:
       - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/nonzero
       - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1500/zero
+    hf:
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N5000/nonzero
+      - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N5000/zero
   exclude_files: []
 test_source:
   directories:
@@ -12,6 +15,7 @@ test_source:
       - /global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/N1000/zero
   exclude_files: []
 training_primaries: 1500
+hf_primaries: 5000
 test_primaries: 1000
 spatial_separation_mm: 5
 output_directory: outputs/optical_fine_tuning/data
@@ -27,6 +31,7 @@ phi:
 target:
   kind: any_channel
 split:
+  hf_train_count: 10
   train_fraction: 0.8
   validation_fraction: 0.2
   test_fraction: 0
@@ -35,3 +40,4 @@ split:
 normalization:
   method: standard
   fit_on: training
+  fit_fidelities: [lf]

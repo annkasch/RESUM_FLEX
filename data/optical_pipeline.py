@@ -45,7 +45,12 @@ def prepare_optical_data(
         raise ValueError("Selected detector ID never observed; cannot validate it without a roster")
     assignments, manifest = assign_splits(runs, config, update=update_manifest)
     features = {r.file: make_features(r, config) for r in runs}
-    training = [r for r in runs if assignments[r.file] == "train"]
+    training = [
+        r for r in runs
+        if assignments[r.file] == "train"
+        and (config.normalization.fit_fidelities is None
+             or r.fidelity in config.normalization.fit_fidelities)
+    ]
     if not training:
         raise ValueError("No training files; adjust split or provide more data")
     theta_fit = np.stack([features[r.file][0] for r in training])

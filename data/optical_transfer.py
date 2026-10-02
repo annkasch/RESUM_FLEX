@@ -22,7 +22,8 @@ def prepare_optical_transfer_data(config):
     development, _ = read_optical_runs(config.source)
     external, excluded = read_optical_runs(config.test_source)
     for runs, budget in (
-        (development, config.training_primaries),
+        ([r for r in development if r.fidelity == "lf"], config.training_primaries),
+        ([r for r in development if r.fidelity == "hf"], config.hf_primaries),
         (external, config.test_primaries),
     ):
         if any(r.n_events != budget or np.any(r.n_part != 1) for r in runs):
@@ -119,19 +120,20 @@ def prepare_optical_transfer_data(config):
     )
     rows = []
     for split in ("train", "validation", "test"):
-        b = prepared.batches[split]["lf"]
-        counts = b.labels.sum(1)
-        rows.append(
-            {
-                "split": split,
-                "primaries_per_voxel": b.n_events,
-                "voxels": b.batch_size,
-                "zero_hit_voxels": int((counts == 0).sum()),
-                "nonzero_hit_voxels": int((counts > 0).sum()),
-                "events": int(b.labels.size),
-                "positive_events": int(counts.sum()),
-            }
-        )
+        for fidelity, b in prepared.batches[split].items():
+            counts = b.labels.sum(1)
+            rows.append(
+                {
+                    "split": split,
+                    "fidelity": fidelity,
+                    "primaries_per_voxel": b.n_events,
+                    "voxels": b.batch_size,
+                    "zero_hit_voxels": int((counts == 0).sum()),
+                    "nonzero_hit_voxels": int((counts > 0).sum()),
+                    "events": int(b.labels.size),
+                    "positive_events": int(counts.sum()),
+                }
+            )
     with (output / "transfer_data_counts.csv").open("w") as file:
         writer = csv.DictWriter(file, fieldnames=list(rows[0]))
         writer.writeheader()
