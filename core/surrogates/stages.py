@@ -47,17 +47,26 @@ def fit_stages(model, train, stages, *, validation=None, checkpoints=None):
         # Retain the final state before _fit_stage restores its selected best state.
         # A temporary checkpoint directory supports final dependencies for in-memory fits.
         import tempfile
+
         with tempfile.TemporaryDirectory() as temporary:
             stage_folder = folder or Path(temporary)
             try:
-                result = _fit_stage(model, train, stage.training, validation=validation,
-                                    selection=stage.selection, checkpoints=stage_folder,
-                                    last_layer_only=frozen)
+                result = _fit_stage(
+                    model,
+                    train,
+                    stage.training,
+                    validation=validation,
+                    selection=stage.selection,
+                    checkpoints=stage_folder,
+                    last_layer_only=frozen,
+                )
                 from core.surrogates.checkpoints import load_surrogate
+
                 final = load_surrogate(stage_folder / "final")
                 states[stage.name + "/best"] = capture()
                 states[stage.name + "/final"] = (
-                    deepcopy(final.estimator) if stage.training.backend == "bdt"
+                    deepcopy(final.estimator)
+                    if stage.training.backend == "bdt"
                     else {k: v.detach().cpu().clone() for k, v in final.module.state_dict().items()}
                 )
             finally:
@@ -65,15 +74,22 @@ def fit_stages(model, train, stages, *, validation=None, checkpoints=None):
                     for name, param in model.module.named_parameters():
                         param.requires_grad_(flags[name])
                     model.module.eval()
-        steps = (stage.training.n_steps if stage.training.backend == "neural"
-                 else model.config.architecture.max_iter)
+        steps = (
+            stage.training.n_steps
+            if stage.training.backend == "neural"
+            else model.config.architecture.max_iter
+        )
         details[stage.name] = dict(
-            start_from=stage.start_from, trainable=stage.trainable,
-            trainable_parameters=names, selected_step=result.best_step,
+            start_from=stage.start_from,
+            trainable=stage.trainable,
+            trainable_parameters=names,
+            selected_step=result.best_step,
             settings=stage.training.model_dump(mode="json"),
         )
-        history.extend({**r, "stage": stage.name, "stage_step": r["step"],
-                        "step": offset + r["step"]} for r in result.history)
+        history.extend(
+            {**r, "stage": stage.name, "stage_step": r["step"], "step": offset + r["step"]}
+            for r in result.history
+        )
         audits[stage.name] = result.sampling_audit
         selected_step = offset + result.best_step
         offset += steps
@@ -81,11 +97,13 @@ def fit_stages(model, train, stages, *, validation=None, checkpoints=None):
             # Named selected checkpoints remain useful to old notebook consumers.
             model.save(destination / stage.name)
     audit = {"strategy": "ordered_stages", "stages": audits}
-    model.metadata.update(stage_details=details, sampling_audit=audit,
-                          step=selected_step, stage_step=result.best_step)
+    model.metadata.update(
+        stage_details=details, sampling_audit=audit, step=selected_step, stage_step=result.best_step
+    )
     if destination:
-        final.metadata.update(stage_details=details, sampling_audit=audit,
-                              step=offset, stage_step=steps)
+        final.metadata.update(
+            stage_details=details, sampling_audit=audit, step=offset, stage_step=steps
+        )
         final.save(destination / "final")
         model.save(destination / "best")
     return FitResult(selected_step, history, audit)

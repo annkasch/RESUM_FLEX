@@ -4,22 +4,24 @@ import hashlib
 import importlib.metadata
 import json
 import os
-from pathlib import Path
 import platform
 import shutil
 import sqlite3
 import subprocess
 import tempfile
-from datetime import datetime, timezone
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import uuid4
 
 
 def now():
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def digest(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def file_hash(path):
@@ -48,8 +50,11 @@ def snapshot_dataset(source, store):
     source, store = Path(source).resolve(), Path(store).resolve()
     if not source.is_dir():
         raise FileNotFoundError(source)
-    files = [p for p in sorted(source.rglob("*"))
-             if p.is_file() and p.suffix in {".npz", ".json", ".csv"}]
+    files = [
+        p
+        for p in sorted(source.rglob("*"))
+        if p.is_file() and p.suffix in {".npz", ".json", ".csv"}
+    ]
     if not any(p.suffix == ".npz" for p in files):
         raise ValueError("Dataset must contain prepared .npz arrays")
     hashes = {str(p.relative_to(source)): file_hash(p) for p in files}
@@ -97,6 +102,7 @@ def provenance(repo=None):
             ).decode()
         except (OSError, subprocess.CalledProcessError):
             return None
+
     packages = {}
     for name in ("resum-flex", "numpy", "scipy", "torch", "GPy", "emukit", "scikit-learn"):
         try:
@@ -112,13 +118,23 @@ def provenance(repo=None):
         if p.suffix == ".py":
             untracked_code[name] = p.read_text()
     import torch
-    return {"captured_at": now(), "git_commit": (git("rev-parse", "HEAD") or "").strip() or None,
-            "git_status": git("status", "--porcelain"), "code_patch": patch,
-            "untracked_code": untracked_code, "packages": packages,
-            "python": platform.python_version(), "platform": platform.platform(),
-            "torch_threads": torch.get_num_threads(), "cuda_version": torch.version.cuda,
-            "thread_environment": {k: os.environ.get(k) for k in
-                                   ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")}}
+
+    return {
+        "captured_at": now(),
+        "git_commit": (git("rev-parse", "HEAD") or "").strip() or None,
+        "git_status": git("status", "--porcelain"),
+        "code_patch": patch,
+        "untracked_code": untracked_code,
+        "packages": packages,
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+        "torch_threads": torch.get_num_threads(),
+        "cuda_version": torch.version.cuda,
+        "thread_environment": {
+            k: os.environ.get(k)
+            for k in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
+        },
+    }
 
 
 class RunStore:
@@ -127,14 +143,23 @@ class RunStore:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def create(self, config, *, parents=(), kind="experiment"):
-        identifier = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S") + "_" + uuid4().hex[:12]
+        identifier = datetime.now(UTC).strftime("%Y%m%dT%H%M%S") + "_" + uuid4().hex[:12]
         path = self.root / "runs" / identifier
         path.mkdir(parents=True)
-        manifest = {"schema_version": 1, "id": identifier, "kind": kind,
-                    "name": config.get("name", identifier), "hypothesis": config.get("hypothesis", ""),
-                    "tags": config.get("tags", []), "parents": list(parents),
-                    "status": "pending", "created_at": now(), "updated_at": now(),
-                    "config": config, "path": str(path)}
+        manifest = {
+            "schema_version": 1,
+            "id": identifier,
+            "kind": kind,
+            "name": config.get("name", identifier),
+            "hypothesis": config.get("hypothesis", ""),
+            "tags": config.get("tags", []),
+            "parents": list(parents),
+            "status": "pending",
+            "created_at": now(),
+            "updated_at": now(),
+            "config": config,
+            "path": str(path),
+        }
         write_json(path / "run.json", manifest)
         self.index(manifest)
         return path
@@ -159,22 +184,31 @@ class RunStore:
 
     def index(self, record):
         with self.connect() as con:
-            con.execute("INSERT OR REPLACE INTO runs VALUES (?, ?)",
-                        (record["id"], json.dumps(record)))
+            con.execute(
+                "INSERT OR REPLACE INTO runs VALUES (?, ?)", (record["id"], json.dumps(record))
+            )
 
     def rebuild(self):
-        records = [json.loads(p.read_text()) for p in sorted((self.root / "runs").glob("*/run.json"))]
+        records = [
+            json.loads(p.read_text()) for p in sorted((self.root / "runs").glob("*/run.json"))
+        ]
         with self.connect() as con:
             con.execute("DELETE FROM runs")
-            con.executemany("INSERT INTO runs VALUES (?, ?)",
-                            [(r["id"], json.dumps(r)) for r in records])
+            con.executemany(
+                "INSERT INTO runs VALUES (?, ?)", [(r["id"], json.dumps(r)) for r in records]
+            )
         return records
 
     def list(self, *, status=None, tag=None):
         with self.connect() as con:
-            records = [json.loads(row[0]) for row in con.execute("SELECT record FROM runs ORDER BY id")]
-        return [r for r in records if (status is None or r["status"] == status)
-                and (tag is None or tag in r["tags"])]
+            records = [
+                json.loads(row[0]) for row in con.execute("SELECT record FROM runs ORDER BY id")
+            ]
+        return [
+            r
+            for r in records
+            if (status is None or r["status"] == status) and (tag is None or tag in r["tags"])
+        ]
 
     def inspect(self, identifier, *, verify=True):
         path = self.root / "runs" / identifier
