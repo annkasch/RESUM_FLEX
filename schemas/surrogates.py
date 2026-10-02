@@ -157,10 +157,8 @@ class NeuralTraining(StrictConfigModel):
                 raise ValueError("real_plus_mixup requires class_aware_mixup sampling")
             if self.focal_gamma != 0 or self.weighting.strategy != "none":
                 raise ValueError("real_plus_mixup requires an unfocused loss without extra weights")
-        if self.loss != "bernoulli" and (
-            self.focal_gamma != 0 or self.weighting.strategy != "none"
-        ):
-            raise ValueError("Legacy losses require focal_gamma=0 and weighting=none")
+        if self.loss != "bernoulli" and self.focal_gamma != 0:
+            raise ValueError("Legacy losses require focal_gamma=0")
         quota = self.sampling.strategy == "positive_quota"
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:

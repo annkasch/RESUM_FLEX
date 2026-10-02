@@ -253,17 +253,20 @@ def cnp_loss(
     eps: float = 1e-6,
     objective: CnpObjective = "theory-truth",
     focal_gamma: float = 0.0,
+    weights: torch.Tensor | None = None,  # [B, N_t]
 ) -> torch.Tensor:
     """Dispatch to one of the two documented RESuM truth objectives.
 
     Both objectives are analytic and do not require Monte Carlo sampling.
+    Optional per-event importance weights (e.g. target-sampling corrections)
+    multiply the per-event loss before the ordinary event mean.
     """
     if objective == "theory-truth":
         from core.binary_losses import binary_focal_loss_with_logits
         return binary_focal_loss_with_logits(
-            resum_binary_logits(out), x_target, gamma=focal_gamma)
+            resum_binary_logits(out), x_target, gamma=focal_gamma, weights=weights)
     if objective == "practice-truth":
-        return practice_truth_loss(out, x_target)
+        return practice_truth_loss(out, x_target, weights=weights)
     raise ValueError(
         "objective must be 'theory-truth' or 'practice-truth'; "
         f"got {objective!r}"
@@ -290,7 +293,12 @@ def theory_truth_loss(
     return F.binary_cross_entropy_with_logits(resum_binary_logits(out), x_target)
 
 
-def practice_truth_loss(out: CnpOutput, x_target: torch.Tensor) -> torch.Tensor:
+def practice_truth_loss(
+    out: CnpOutput,
+    x_target: torch.Tensor,
+    *,
+    weights: torch.Tensor | None = None,  # [B, N_t]
+) -> torch.Tensor:
     """Literal negative log likelihood executed by the legacy RESuM code.
 
     The old implementation treats binary ``X`` as observations of a Normal
@@ -298,7 +306,10 @@ def practice_truth_loss(out: CnpOutput, x_target: torch.Tensor) -> torch.Tensor:
     retained for reproducibility even though it is not a Bernoulli likelihood.
     """
     mean, scale = resum_binary_moments(out)
-    return -torch.distributions.Normal(mean, scale).log_prob(x_target).mean()
+    loss = -torch.distributions.Normal(mean, scale).log_prob(x_target)
+    if weights is not None:
+        loss = loss * torch.as_tensor(weights, dtype=loss.dtype, device=loss.device)
+    return loss.mean()
 
 
 # ---------------------------------------------------------------------------

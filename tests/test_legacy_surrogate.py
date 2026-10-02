@@ -6,7 +6,13 @@ import torch
 from pydantic import ValidationError
 
 from core.mixup import ClassAwareMixupSource
-from core.surrogate_cnp import cnp_loss, resum_binary_moments, split_context_target
+from core.surrogate_cnp import (
+    CnpOutput,
+    cnp_loss,
+    resum_binary_logits,
+    resum_binary_moments,
+    split_context_target,
+)
 from core.surrogates import Episode, build_surrogate, evaluate_surrogate, load_surrogate
 from data.pseudo_generator import for_scenario
 from schemas.surrogates import NeuralTraining, SurrogateConfig
@@ -162,3 +168,59 @@ def test_legacy_full_runner(loss, tmp_path):
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
     assert manifest["model"]["kind"] == "legacy_cnp"
     assert manifest["metadata"]["training"]["loss"] == loss
+
+
+@pytest.mark.parametrize("loss", ["theory-truth", "practice-truth"])
+def test_legacy_loss_applies_importance_weights(loss):
+    torch.manual_seed(0)
+    out = CnpOutput(mu_logit=torch.randn(2, 6), log_sigma=torch.randn(2, 6))
+    labels = torch.tensor([[1, 0, 0, 1, 0, 0], [0, 0, 1, 0, 0, 0]], dtype=torch.float32)
+    weights = torch.rand(2, 6) + 0.5
+    if loss == "theory-truth":
+        per_event = torch.nn.functional.binary_cross_entropy_with_logits(
+            resum_binary_logits(out), labels, reduction="none"
+        )
+    else:
+        mean, scale = resum_binary_moments(out)
+        per_event = -torch.distributions.Normal(mean, scale).log_prob(labels)
+    weighted = cnp_loss(out, labels, objective=loss, weights=weights)
+    torch.testing.assert_close(weighted, (weights * per_event).mean())
+    torch.testing.assert_close(
+        cnp_loss(out, labels, objective=loss, weights=torch.ones(2, 6)),
+        cnp_loss(out, labels, objective=loss),
+    )
+
+
+@pytest.mark.parametrize("loss", ["theory-truth", "practice-truth"])
+def test_legacy_positive_quota_with_sampling_correction(loss, tmp_path):
+    src = for_scenario("S1", seed=0)
+    batch = src.generate(n_trials=3, n_events=40)
+    batch.labels[:] = 0
+    batch.labels[:, :3] = 1
+    ctx, tgt = split_context_target(batch, 4, seed=2)
+    training = NeuralTraining(
+        n_steps=3,
+        eval_every=1,
+        batch_size=2,
+        n_events=20,
+        n_context_min=4,
+        n_context_max=6,
+        loss=loss,
+        sampling={"strategy": "positive_quota", "positive_fraction": 0.25},
+        weighting={"strategy": "sampling_correction"},
+    )
+    model = build_surrogate(legacy_spec(), src.dim_theta, src.dim_phi)
+    result = model.fit(batch, training, validation=Episode(ctx, tgt), checkpoints=tmp_path)
+    audit = result.sampling_audit
+    assert audit["strategy"] == "positive_quota"
+    assert audit["requested_positive_fraction"] == 0.25
+    # Quota oversamples far above the natural 3/40 positive rate.
+    assert audit["positive_fraction"] > 0.2
+    assert all(np.isfinite(row["training_loss"]) for row in result.history)
+    restored = load_surrogate(tmp_path / "best")
+    assert restored.metadata["training"]["weighting"]["strategy"] == "sampling_correction"
+
+
+def test_legacy_loss_still_rejects_focal_gamma():
+    with pytest.raises(ValidationError):
+        NeuralTraining(loss="theory-truth", focal_gamma=2)
