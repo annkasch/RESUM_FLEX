@@ -8,7 +8,7 @@ import numpy as np
 from core.gp_metrics import mfgp_metrics
 
 
-def run_mfgp_stage(config, surrogate):
+def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
     # Keep optional GPy/Emukit dependencies out of the neural import path.
     from core.mfgp_pipeline import fit_mfgp_three_fidelity
     from core.surrogate_cnp import split_context_target
@@ -81,7 +81,7 @@ def run_mfgp_stage(config, surrogate):
     metadata = dict(
         config=cfg.model_dump(mode="json"),
         data=provenance,
-        surrogate_checkpoint=str(config.output_directory / "checkpoints/best"),
+        surrogate_checkpoint=str(checkpoint_path or config.output_directory / "checkpoints/best"),
         levels=["LF surrogate mean", "HF surrogate mean", "HF raw target fraction"],
         fit_split="train",
         evaluation_split="validation",

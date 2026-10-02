@@ -187,6 +187,22 @@ TrainingSpec = Annotated[NeuralTraining | TreeTraining, Field(discriminator="bac
 SelectionMetric = Literal["voxel_rate_mae", "average_precision", "bernoulli_log_loss"]
 
 
+class TrainingStage(StrictConfigModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
+    start_from: str = "initial"
+    trainable: Literal["all", "output_layer"] = "all"
+    training: TrainingSpec
+    selection: SelectionMetric = "voxel_rate_mae"
+
+    @model_validator(mode="after")
+    def no_nested_schedule(self):
+        if self.training.backend == "neural" and self.training.fine_tuning is not None:
+            raise ValueError("Use separate stages, not nested fine_tuning")
+        if self.training.backend == "bdt" and self.trainable != "all":
+            raise ValueError("BDT does not support output-layer fine-tuning")
+        return self
+
+
 class SurrogateConfig(StrictConfigModel):
     model: ModelSpec
     training: TrainingSpec
@@ -221,6 +237,9 @@ class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
     test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)
+    stages: list[TrainingStage] | None = Field(default=None, min_length=1)
+    initial_checkpoint: Path | None = None
+    mfgp_checkpoint: str = "best"
     mfgp: MFGPStageConfig | None = None
     data_directory: Path
     output_directory: Path
@@ -231,6 +250,26 @@ class SurrogateRunConfig(SurrogateConfig):
     def unique_tests(self):
         if len(set(self.test_fidelities)) != len(self.test_fidelities):
             raise ValueError("test_fidelities must be unique")
+        if self.stages:
+            if self.training.backend == "neural" and self.training.fine_tuning is not None:
+                raise ValueError("Specify stages or fine_tuning, not both")
+            seen = set()
+            for stage in self.stages:
+                if stage.name in seen or stage.name in {"best", "final", "initial"}:
+                    raise ValueError("Stage names must be unique and not reserved")
+                SurrogateConfig(model=self.model, training=stage.training, selection=stage.selection)
+                if stage.start_from != "initial":
+                    parts = stage.start_from.split("/")
+                    if len(parts) != 2 or parts[0] not in seen or parts[1] not in {"best", "final"}:
+                        raise ValueError("Stage start_from must reference an earlier stage/best or final")
+                if stage.training.backend == "bdt" and stage.start_from != "initial":
+                    raise ValueError("BDT continuation is not supported")
+                seen.add(stage.name)
+        choices = {"best", "final", "pretraining"}
+        choices.update(f"stages/{s.name}/{which}" for s in self.stages or []
+                       for which in ("best", "final"))
+        if self.mfgp_checkpoint not in choices:
+            raise ValueError("Unknown mfgp_checkpoint")
         return self
 
 
@@ -238,8 +277,8 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
     """Resolve data/output paths relative to the YAML file, not the caller's cwd."""
     path = Path(path).resolve()
     config = SurrogateRunConfig.model_validate(yaml.safe_load(path.read_text()))
-    for name in ("data_directory", "output_directory"):
+    for name in ("data_directory", "output_directory", "initial_checkpoint"):
         value = getattr(config, name)
-        if not value.is_absolute():
+        if value is not None and not value.is_absolute():
             setattr(config, name, (path.parent / value).resolve())
     return config
