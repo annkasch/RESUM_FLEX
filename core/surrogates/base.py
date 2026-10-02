@@ -57,6 +57,13 @@ class EventSurrogate(ABC):
         self.config, self.dim_theta, self.dim_phi = config, dim_theta, dim_phi
         self.metadata = {}
 
+    @property
+    def capabilities(self):
+        neural = self.config.kind != "bdt"
+        return {"event_predictions": True, "context": self.uses_context,
+                "output_layer_training": neural, "ordered_continuation": neural,
+                "predictive_distribution": False}
+
     def validate(self, target, context=None):
         for name, dimension in [("theta", self.dim_theta), ("phi", self.dim_phi)]:
             value = getattr(target, name)

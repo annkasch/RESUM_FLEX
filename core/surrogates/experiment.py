@@ -54,7 +54,10 @@ def run_experiment(config: SurrogateRunConfig):
         if config.training.backend == "neural"
         else config.model.architecture.seed
     )
-    model = build_surrogate(config.model, dt, dp, seed=seed)
+    model = (load_surrogate(config.initial_checkpoint) if config.initial_checkpoint
+             else build_surrogate(config.model, dt, dp, seed=seed))
+    if model.config != config.model or (model.dim_theta, model.dim_phi) != (dt, dp):
+        raise ValueError("Initial checkpoint architecture/features do not match experiment")
     metadata = dict(
         resolved_config=config.model_dump(mode="json"),
         data=provenance,
@@ -73,13 +76,16 @@ def run_experiment(config: SurrogateRunConfig):
     model.metadata = metadata
     output.mkdir(parents=True, exist_ok=True)
     (output / "experiment.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
-    result = model.fit(
-        train,
-        config.training,
-        validation=episodes.get(("validation", "lf")),
-        selection=config.selection,
-        checkpoints=output / "checkpoints",
-    )
+    if config.stages:
+        from core.surrogates.stages import fit_stages
+        result = fit_stages(model, train, config.stages,
+                            validation=episodes.get(("validation", "lf")),
+                            checkpoints=output / "checkpoints")
+    else:
+        result = model.fit(
+            train, config.training, validation=episodes.get(("validation", "lf")),
+            selection=config.selection, checkpoints=output / "checkpoints",
+        )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
     # Selection is complete. Never pass test episodes into either training stage.
@@ -119,6 +125,7 @@ def run_experiment(config: SurrogateRunConfig):
     checkpoints = ["best", "final"]
     if (output / "checkpoints/pretraining/model.json").exists():
         checkpoints.insert(0, "pretraining")
+    checkpoints.extend(s.name for s in config.stages or [] if s.name not in checkpoints)
     for checkpoint in checkpoints:
         saved = load_surrogate(output / "checkpoints" / checkpoint)
         for (split, fidelity), episode in episodes.items():
@@ -144,5 +151,6 @@ def run_experiment(config: SurrogateRunConfig):
     if config.mfgp is not None:
         from core.surrogates.mfgp_stage import run_mfgp_stage
 
-        run_mfgp_stage(config, load_surrogate(output / "checkpoints/best"))
+        checkpoint = output / "checkpoints" / config.mfgp_checkpoint
+        run_mfgp_stage(config, load_surrogate(checkpoint), checkpoint_path=checkpoint)
     return output
