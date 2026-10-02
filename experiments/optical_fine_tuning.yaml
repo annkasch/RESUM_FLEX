@@ -1,0 +1,67 @@
+schema_version: 1
+name: optical-mixup-then-natural-head
+hypothesis: Natural-event output-layer fitting reduces population bias after class-aware mixup.
+tags: [optical, cnp, fine-tuning]
+store: ../outputs/experiments
+dataset:
+  prepared: ../outputs/optical_fine_tuning/data
+  format: events
+pipeline:
+  kind: event
+  model:
+    kind: legacy_cnp
+    encoder: {type: mlp, latent_dim: 64, hidden_dims: [128, 128], dropout: 0}
+  stages:
+    - name: pretraining
+      start_from: initial
+      trainable: all
+      selection: voxel_rate_mae
+      training:
+        backend: neural
+        loss: theory-truth
+        n_steps: 12000
+        eval_every: 250
+        learning_rate: 0.001
+        batch_size: 16
+        n_events: 128
+        n_context_min: 16
+        n_context_max: 64
+        seed: 0
+        device: cpu
+        sampling:
+          strategy: class_aware_mixup
+          mixup: {alpha: 0.2, mix_context: true}
+        weighting: {strategy: none}
+    - name: fine_tuning
+      start_from: pretraining/best
+      trainable: output_layer
+      selection: voxel_rate_mae
+      training:
+        backend: neural
+        loss: theory-truth
+        n_steps: 2000
+        eval_every: 250
+        learning_rate: 0.0003
+        batch_size: 16
+        n_events: 512
+        n_context_min: 16
+        n_context_max: 64
+        seed: 1
+        device: cpu
+        sampling: {strategy: natural}
+        weighting: {strategy: none}
+  spatial_checkpoint: stages/fine_tuning/best
+  spatial_regression:
+    output_transform: log
+    raw_pseudocount: 0.5
+    cnp_log_floor: 1.0e-12
+    kernel: rbf
+    n_restarts: 5
+    seed: 0
+    n_context: 64
+    projections: {grid_steps: 12, n_draws: 8192}
+evaluation:
+  context_events: 64
+  seed: 12345
+  partitions: [train/lf, validation/lf, validation/hf, test/lf]
+  plots: [means, residuals, coverage, precision_recall, projected_axes, projected_planes]

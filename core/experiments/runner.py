@@ -405,6 +405,10 @@ def run(spec, *, snapshot=None, expected_targets=None):
             from core.experiments.reporting import render_report
 
             render_report(out, out / "report", spec.evaluation.plots)
+        if p.kind == "event" and p.initial_checkpoint:
+            dependency = json.loads((out / "checkpoint_dependency.json").read_text())
+            if tree_hashes(p.initial_checkpoint) != dependency["hashes"]:
+                raise ValueError("Source checkpoint changed during the experiment")
         write_json(
             out / "warnings.json",
             [{"category": w.category.__name__, "message": str(w.message)} for w in captured],
