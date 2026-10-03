@@ -262,3 +262,15 @@ def test_retired_or_unknown_config_fields_are_rejected() -> None:
         MFGPConfig(n_fidelities=2)
     with pytest.raises(ValidationError):
         CNPConfig(n_context_min=1, n_context_max=2, objective="unknown")
+
+
+def test_optical_configs_use_single_logit_cnp():
+    from pathlib import Path
+
+    from schemas.surrogates import load_surrogate_config
+
+    root = Path(__file__).resolve().parents[1]
+    for name in ("config.optical.resum.yaml", "config.optical.fine_tuning.yaml"):
+        config = load_surrogate_config(root / name)
+        assert config.model.kind == "cnp"
+        assert config.training.loss == "bernoulli"

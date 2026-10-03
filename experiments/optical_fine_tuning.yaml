@@ -9,7 +9,7 @@ dataset:
 pipeline:
   kind: event
   model:
-    kind: legacy_cnp
+    kind: cnp
     encoder: {type: mlp, latent_dim: 64, hidden_dims: [128, 128], dropout: 0}
   stages:
     - name: pretraining
@@ -18,7 +18,7 @@ pipeline:
       selection: voxel_rate_mae
       training:
         backend: neural
-        loss: theory-truth
+        loss: bernoulli
         n_steps: 12000
         eval_every: 250
         learning_rate: 0.001
@@ -38,7 +38,7 @@ pipeline:
       selection: voxel_rate_mae
       training:
         backend: neural
-        loss: theory-truth
+        loss: bernoulli
         n_steps: 2000
         eval_every: 250
         learning_rate: 0.0003
