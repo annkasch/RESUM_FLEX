@@ -29,7 +29,9 @@ No code was changed during the review. Tick items off here and record outcomes i
 - [ ] **2. In-sample LF CNP means (high).** `core/surrogates/mfgp_stage.py` builds `Y_lf_cnp` from
   the same train/LF voxels the CNP was trained on, so memorized `m/N` noise leaks into level 0.
   HF voxels are out-of-sample, so the levels are treated inconsistently.
-  *Fix:* K-fold cross-fitting of the CNP over LF voxels.
+  *Fix:* K-fold cross-fitting of the CNP over LF voxels. Alternative (2026-10-02): a
+  context-free event model evaluated with sampled φ at new θ has no labels to memorize there;
+  cross-fitting then serves to measure the overfitting gap (see PROGRESS Next steps).
 - [ ] **3. Constant GP noise vs heteroscedastic binomial noise (high in log mode).**
   `Var(m/N) = p(1−p)/N`; in log space it is about `(1−p)/(Np)` (log-sd ≈ 0.32 at Np = 10, ≈ 0.63 at
   Np = 2.5). One noise variance per level overstates the noise for bright voxels and understates
