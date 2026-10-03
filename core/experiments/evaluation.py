@@ -9,6 +9,7 @@ from scipy.special import expit
 from core.experiments.storage import digest, file_hash, write_json
 from core.gp_metrics import gp_metrics
 from core.precision_recall import precision_recall
+from schemas.data_models import valid_event_mask
 
 
 def build_manifest(snapshot, settings, output):
@@ -34,16 +35,23 @@ def build_manifest(snapshot, settings, output):
             with np.load(eventpath) as a:
                 labels = a["labels"]
                 nvox, nevents = labels.shape
-                if settings.context_events >= nevents:
+                counts = (
+                    a["event_counts"] if "event_counts" in a else np.full(nvox, nevents)
+                ).astype(np.int64)
+                if settings.context_events >= counts.min():
                     raise ValueError(f"{partition}: no target events left")
                 rng = np.random.default_rng(settings.seed)
-                permutations = np.stack([rng.permutation(nevents) for _ in range(nvox)])
-                ctx, tgt = (
-                    permutations[:, : settings.context_events],
-                    permutations[:, settings.context_events :],
-                )
+                # Unequal counts: permute each voxel's valid events; pad target slots.
+                nc, width = settings.context_events, nevents - settings.context_events
+                ctx = np.zeros((nvox, nc), dtype=np.int64)
+                tgt = np.zeros((nvox, width), dtype=np.int64)
+                for row, count in enumerate(counts):
+                    permutation = rng.permutation(int(count))
+                    ctx[row], tgt[row, : count - nc] = permutation[:nc], permutation[nc:]
+                target_counts = counts - nc
+                valid = np.arange(width)[None, :] < target_counts[:, None]
                 ids = a["event_ids"] if "event_ids" in a else np.tile(np.arange(nevents), (nvox, 1))
-                targets = np.take_along_axis(labels, tgt, axis=1)
+                targets = np.where(valid, np.take_along_axis(labels, tgt, axis=1), 0)
                 partition_meta = metadata.get(split, {}).get(fid, {})
                 files = partition_meta.get("files") or [f"{partition}/row{i}" for i in range(nvox)]
                 coordinates = partition_meta.get("nominal_centers")
@@ -57,12 +65,14 @@ def build_manifest(snapshot, settings, output):
                     context_indices=ctx,
                     target_indices=tgt,
                     context_event_ids=np.take_along_axis(ids, ctx, axis=1),
-                    target_event_ids=np.take_along_axis(ids, tgt, axis=1),
+                    target_event_ids=np.where(valid, np.take_along_axis(ids, tgt, axis=1), -1),
                     labels=targets,
                     hits=targets.sum(1).astype(np.int64),
-                    trials=np.full(nvox, tgt.shape[1], dtype=np.int64),
+                    trials=target_counts,
                     files=np.asarray(files),
                 )
+                if not valid.all():
+                    arrays["target_counts"] = target_counts
                 if coordinates is not None:
                     arrays["coordinates"] = np.asarray(coordinates)
                 id_quality = "source_event_ids" if "event_ids" in a else "prepared_row_indices"
@@ -160,6 +170,10 @@ def score_record(directory, record):
             labels, logits = a["labels"], a["logits"]
             if labels.shape != logits.shape or not np.isin(labels, [0, 1]).all():
                 raise ValueError("Event metrics require aligned real binary targets")
+            if "event_counts" in a:
+                # Drop padding of unequal per-voxel target counts.
+                mask = valid_event_mask(a["event_counts"], labels.shape)
+                labels, logits = labels[mask], logits[mask]
             curve = precision_recall(labels.ravel(), logits.ravel()) if labels.sum() else None
             result.update(
                 bernoulli_log_loss=float(

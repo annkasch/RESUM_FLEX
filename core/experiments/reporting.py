@@ -10,6 +10,7 @@ import numpy as np
 
 from core.experiments.evaluation import evaluate_records
 from core.experiments.storage import RunStore, write_json
+from schemas.data_models import valid_event_mask
 
 
 def render_report(run, output, plots):
@@ -87,14 +88,17 @@ def render_report(run, output, plots):
                         ylabel="Fraction of voxels",
                     )
                 else:
-                    curve = precision_recall(a["labels"].ravel(), a["logits"].ravel())
+                    valid = valid_event_mask(
+                        a["event_counts"] if "event_counts" in a else None, a["labels"].shape
+                    )
+                    curve = precision_recall(a["labels"][valid], a["logits"][valid])
                     ax.step(
                         curve["recall"],
                         curve["precision"],
                         where="pre",
                         label=f"AP={curve['average_precision']:.5g}",
                     )
-                    ax.axhline(a["labels"].mean(), ls="--", label="Prevalence")
+                    ax.axhline(a["labels"][valid].mean(), ls="--", label="Prevalence")
                     ax.set(xlabel="Recall", ylabel="Precision", xlim=(0, 1), ylim=(0, 1))
                 ax.set_title(f"{r['model']} — {r['partition']} — {kind}")
                 if ax.get_legend_handles_labels()[0]:

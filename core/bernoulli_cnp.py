@@ -33,6 +33,7 @@ class BernoulliCNP(ConditionalNeuralProcess):
 
 def evaluate_bernoulli(model, context, target):
     """Exact fixed-target mean diagnostics; no Gaussian uncertainty approximation."""
+    target.require_rectangular('evaluate_bernoulli (use core.surrogates.evaluate_surrogate)')
     was_training = model.training
     try:
         model.eval()

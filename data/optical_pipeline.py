@@ -25,6 +25,14 @@ class PreparedOpticalData:
         return FixedBatchSource(self.batches["train"][fidelity], replace_events=False)
 
 
+def _pad(rows, width, fill=0):
+    """Stack per-voxel event arrays, padding the event axis to ``width``."""
+    out = np.full((len(rows), width, *rows[0].shape[1:]), fill, dtype=rows[0].dtype)
+    for i, row in enumerate(rows):
+        out[i, : len(row)] = row
+    return out
+
+
 def load_prepared_batch(path: str | Path) -> StandardBatch:
     with np.load(path, allow_pickle=False) as arrays:
         return StandardBatch(
@@ -32,6 +40,7 @@ def load_prepared_batch(path: str | Path) -> StandardBatch:
             theta=arrays["theta"],
             labels=arrays["labels"],
             phi=arrays["phi"] if "phi" in arrays else None,
+            event_counts=arrays["event_counts"] if "event_counts" in arrays else None,
         )
 
 
@@ -75,19 +84,27 @@ def prepare_optical_data(
             if not selected:
                 metadata[split][fidelity] = {"files": [], "status": "empty"}
                 continue
-            if len({r.n_events for r in selected}) != 1:
-                raise ValueError(
-                    f"{split}/{fidelity}: unequal event counts; no padding or truncation"
-                )
+            # Unequal event counts are zero-padded to the largest voxel and
+            # recorded in event_counts; equal counts keep the rectangular format.
+            counts = np.array([r.n_events for r in selected], dtype=np.int64)
+            width = int(counts.max())
+            ragged = bool(np.any(counts != width))
             theta = theta_transform.transform(np.stack([features[r.file][0] for r in selected]))
             phi = (
-                phi_transform.transform(np.stack([features[r.file][1] for r in selected]))
+                _pad([phi_transform.transform(features[r.file][1]) for r in selected], width)
                 if has_phi
                 else None
             )
-            labels = np.stack([make_labels(r, config) for r in selected])
+            labels = _pad([make_labels(r, config) for r in selected], width)
+            event_ids = _pad([r.event_ids for r in selected], width, fill=-1)
             mode = InputMode.FULL if has_phi else InputMode.DESIGN_ONLY
-            batch = StandardBatch(mode=mode, theta=theta, phi=phi, labels=labels)
+            batch = StandardBatch(
+                mode=mode,
+                theta=theta,
+                phi=phi,
+                labels=labels,
+                event_counts=counts if ragged else None,
+            )
             batches[split][fidelity] = batch
             metadata[split][fidelity] = {
                 "files": [r.file for r in selected],
@@ -95,14 +112,17 @@ def prepare_optical_data(
                 "measured_centers": [r.measured_center.tolist() for r in selected],
                 "features": features[selected[0].file][2],
                 "shape": list(labels.shape),
+                "event_counts": counts.tolist() if ragged else None,
                 "mode": mode.value,
             }
             arrays = {
                 "theta": theta,
                 "labels": labels,
                 "mode": np.array(mode.value),
-                "event_ids": np.stack([r.event_ids for r in selected]),
+                "event_ids": event_ids,
             }
+            if ragged:
+                arrays["event_counts"] = counts
             if has_phi:
                 arrays["phi"] = phi
             arrays_to_save.append((split, fidelity, arrays))

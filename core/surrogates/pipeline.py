@@ -18,10 +18,12 @@ def prepare_surrogate_datasets(
     ]:
         if batch.theta is None:
             raise ValueError("MFGP requires design coordinates theta")
-        nc = batch.n_events // 2 if nc is None else nc
+        nc = int(batch.events_per_voxel.min()) // 2 if nc is None else nc
         context, target = split_context_target(batch, nc, seed=seed + offset)
         result[f"X_{fidelity}"] = batch.theta
         result[f"Y_{fidelity}_cnp"] = model.predict(target, context=context).mean[:, None]
         if fidelity == "hf":
-            result["Y_hf_raw"] = target.labels.mean(axis=1)[:, None]
+            result["Y_hf_raw"] = target.voxel_mean(target.labels)[:, None]
+            # Per-voxel target counts: raw fractions have voxel-dependent binomial noise.
+            result["hf_target_events"] = target.events_per_voxel[:, None]
     return result

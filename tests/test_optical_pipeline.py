@@ -247,8 +247,22 @@ def test_design_only_and_unequal_event_counts(tmp_path):
     assert result.batches["train"]["lf"].mode.value == "design_only"
     # A repeated run must share the voxel split, exposing ragged input.
     fixture_file(c.source.directory, "lf", 98, (0.0, 0.0, 0.2), n=9)
-    with pytest.raises(ValueError, match="unequal event counts"):
-        prepare_optical_data(c, update_manifest=True)
+    result = prepare_optical_data(c, update_manifest=True)
+    files = result.metadata["train"]["lf"]["files"]
+    batch = result.batches["train"]["lf"]
+    counts = batch.events_per_voxel
+    assert batch.is_ragged and batch.n_events == 9 and sorted(set(counts)) == [8, 9]
+    assert result.metadata["train"]["lf"]["event_counts"] == counts.tolist()
+    # Padding is zero and excluded; reloading preserves counts and padded event ids.
+    assert not batch.labels[~batch.event_mask].any()
+    path = c.output_directory / "batches/train/lf.npz"
+    reloaded = load_prepared_batch(path)
+    np.testing.assert_array_equal(reloaded.event_counts, counts)
+    with np.load(path) as arrays:
+        assert (arrays["event_ids"][~batch.event_mask] == -1).all()
+    row = next(i for i, f in enumerate(files) if f.startswith("lf/run098"))
+    run = read_run(c.source.directory / files[row], c.source.directory)
+    np.testing.assert_array_equal(batch.labels[row, : counts[row]], make_labels(run, c))
 
 
 def test_configs_and_integer_targets(tmp_path, legacy_config_path):

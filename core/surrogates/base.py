@@ -7,15 +7,20 @@ from pathlib import Path
 import numpy as np
 from scipy.special import expit
 
-from schemas.data_models import StandardBatch
+from schemas.data_models import StandardBatch, valid_event_mask
 
 
 @dataclass(frozen=True)
 class EventPrediction:
-    """Raw logits [voxel,event]; no inferred Gaussian/epistemic uncertainty."""
+    """Raw logits [voxel,event]; no inferred Gaussian/epistemic uncertainty.
+
+    ``event_counts`` mirrors ``StandardBatch.event_counts``: logits beyond a
+    voxel's count are padding and are excluded from ``mean``.
+    """
 
     logits: np.ndarray
     legacy_scale: np.ndarray | None = None
+    event_counts: np.ndarray | None = None
 
     def __post_init__(self):
         value = np.asarray(self.logits, dtype=float)
@@ -33,8 +38,14 @@ class EventPrediction:
         return expit(self.logits)
 
     @property
+    def mask(self):
+        return valid_event_mask(self.event_counts, self.logits.shape)
+
+    @property
     def mean(self):
-        return self.probabilities.mean(axis=1)
+        if self.event_counts is None:
+            return self.probabilities.mean(axis=1)
+        return np.where(self.mask, self.probabilities, 0.0).sum(axis=1) / self.event_counts
 
 
 @dataclass(frozen=True)

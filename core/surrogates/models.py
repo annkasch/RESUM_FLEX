@@ -15,6 +15,7 @@ def slice_batch(batch, start, stop):
             "theta": None if batch.theta is None else batch.theta[start:stop],
             "phi": None if batch.phi is None else batch.phi[start:stop],
             "labels": batch.labels[start:stop],
+            "event_counts": None if batch.event_counts is None else batch.event_counts[start:stop],
         }
     )
 
@@ -67,7 +68,9 @@ class NeuralSurrogate(EventSurrogate):
                         out = resum_binary_logits(out)
                     chunks.append(out.detach().cpu().numpy())
             return EventPrediction(
-                np.concatenate(chunks), np.concatenate(scales) if scales else None
+                np.concatenate(chunks),
+                np.concatenate(scales) if scales else None,
+                event_counts=target.event_counts,
             )
         finally:
             self.module.train(training)
@@ -90,7 +93,10 @@ class TreeSurrogate(EventSurrogate):
 
         self.validate(target, context)
         logits = self.estimator.decision_function(event_features(target))
-        return EventPrediction(np.asarray(logits).reshape(target.batch_size, target.n_events))
+        return EventPrediction(
+            np.asarray(logits).reshape(target.batch_size, target.n_events),
+            event_counts=target.event_counts,
+        )
 
 
 def build_surrogate(config, dim_theta, dim_phi, *, seed=0):

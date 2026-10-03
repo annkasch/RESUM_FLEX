@@ -16,6 +16,8 @@ class RealTargetSampler:
     their real labels and unit weights. Repeated targets are allowed when a
     class has too few distinct events; contexts and targets never overlap.
     Separate context/target RNGs match contexts across sampling strategies.
+    With unequal event counts, each voxel samples from its own valid events, so
+    every voxel has equal weight; episodes must fit the smallest voxel.
     """
 
     def __init__(self, batch, *, seed, batch_size, n_events, n_context_min,
@@ -24,7 +26,7 @@ class RealTargetSampler:
             raise ValueError('positive_fraction must be strictly between zero and one')
         if not 1 <= n_context_min <= n_context_max <= n_events - 2:
             raise ValueError('Context range must leave at least two target events')
-        if batch_size < 1 or n_events > batch.n_events:
+        if batch_size < 1 or n_events > int(batch.events_per_voxel.min()):
             raise ValueError('Invalid batch or episode size')
         self.batch, self.batch_size, self.n_events = batch, batch_size, n_events
         self.n_context_min, self.n_context_max = n_context_min, n_context_max
@@ -40,9 +42,11 @@ class RealTargetSampler:
         nt = self.n_events - nc
         contexts, targets, weights = [], [], []
         self.last_provenance = []
+        counts = b.events_per_voxel
         for trial in trials:
-            context = crng.choice(b.n_events, nc, replace=False)
-            mask = np.ones(b.n_events, dtype=bool)
+            n = int(counts[trial])
+            context = crng.choice(n, nc, replace=False)
+            mask = np.ones(n, dtype=bool)
             mask[context] = False
             pool = np.flatnonzero(mask)
             positive = pool[b.labels[trial, pool] == 1]

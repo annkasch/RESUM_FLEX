@@ -49,6 +49,7 @@ class ClassAwareMixupSource:
     needed to fill the requested output size.
     No once-per-epoch coverage guarantee is made. With equal seeds, switching
     mix_context leaves target batches and source splits identical.
+    With unequal event counts each voxel partitions only its own valid events.
     """
 
     def __init__(self, batch, *, alpha, seed, batch_size, n_events, n_context, mix_context=True):
@@ -56,7 +57,7 @@ class ClassAwareMixupSource:
             raise ValueError("Class-aware mixup requires positive finite alpha")
         if not 0 < n_context < n_events or batch_size < 1:
             raise ValueError("Invalid mixup episode dimensions")
-        if batch.n_events < 2 or batch.batch_size < 1:
+        if int(batch.events_per_voxel.min()) < 2 or batch.batch_size < 1:
             raise ValueError("Class-aware mixup requires at least two source events per voxel")
         self.batch, self.alpha = batch, alpha
         self.mix_context = mix_context
@@ -65,9 +66,6 @@ class ClassAwareMixupSource:
         self.real_target_rng = np.random.default_rng(np.random.SeedSequence([seed, 3]))
         self.batch_size = batch_size
         self.nc, self.nt = n_context, n_events - n_context
-        self.context_pool_size = min(
-            batch.n_events - 1, max(1, round(batch.n_events * n_context / n_events))
-        )
         self.last_provenance = []
 
     @staticmethod
@@ -84,11 +82,12 @@ class ClassAwareMixupSource:
         if not 0 < nc < n_events:
             raise ValueError("Context size must leave target events")
         nt = n_events - nc
-        pool_size = min(self.batch.n_events - 1, max(1, round(self.batch.n_events * nc / n_events)))
         trials = self.rng.integers(self.batch.batch_size, size=self.batch_size)
         pools = []
-        for _ in trials:
-            indices = self.rng.permutation(self.batch.n_events)
+        for voxel in trials:
+            n = int(self.batch.events_per_voxel[voxel])
+            pool_size = min(n - 1, max(1, round(n * nc / n_events)))
+            indices = self.rng.permutation(n)
             pools.append((indices[:pool_size], indices[pool_size:]))
 
         result = []

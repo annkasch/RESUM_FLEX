@@ -84,15 +84,20 @@ def event_config(spec, data, out):
     )
 
 
-def _gather(batch, indices):
-    from schemas.data_models import StandardBatch
+def _gather(batch, indices, counts=None):
+    """Select saved event indices; ``counts`` marks valid slots of padded targets."""
+    from schemas.data_models import StandardBatch, valid_event_mask
 
+    valid = valid_event_mask(counts, indices.shape)
     phi = None if batch.phi is None else np.take_along_axis(batch.phi, indices[:, :, None], axis=1)
+    if phi is not None:
+        phi[~valid] = 0
     return StandardBatch(
         mode=batch.mode,
         theta=batch.theta,
         phi=phi,
-        labels=np.take_along_axis(batch.labels, indices, axis=1),
+        labels=np.where(valid, np.take_along_axis(batch.labels, indices, axis=1), 0),
+        event_counts=counts,
     )
 
 
@@ -105,17 +110,20 @@ def record_events(spec, data, output, protocol, checkpoints):
         for partition, info in protocol["partitions"].items():
             batch = load_prepared_batch(data / "batches" / (partition + ".npz"))
             with np.load(output / "evaluation" / info["file"]) as ids:
-                target = _gather(batch, ids["target_indices"])
+                counts = ids["target_counts"] if "target_counts" in ids else None
+                target = _gather(batch, ids["target_indices"], counts)
                 context = _gather(batch, ids["context_indices"])
                 prediction = model.predict(target, context=context)
                 arrays = dict(
-                    observed=target.labels.mean(1),
+                    observed=target.voxel_mean(target.labels),
                     mean=prediction.mean,
                     logits=prediction.logits,
                     labels=target.labels,
                     hits=ids["hits"],
                     trials=ids["trials"],
                 )
+                if target.event_counts is not None:
+                    arrays["event_counts"] = target.event_counts
                 if "coordinates" in ids:
                     arrays["coordinates"] = ids["coordinates"]
             save_record(
@@ -276,7 +284,9 @@ def count_data(data, protocol, evaluation):
                     dict(
                         theta=coordinates,
                         hits=a["labels"].sum(1).astype(int),
-                        trials=np.full(len(coordinates), a["labels"].shape[1]),
+                        trials=a["event_counts"]
+                        if "event_counts" in a
+                        else np.full(len(coordinates), a["labels"].shape[1]),
                         files=np.asarray(files),
                         source_group=np.full(len(coordinates), fid),
                     )

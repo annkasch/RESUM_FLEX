@@ -122,6 +122,8 @@ def prepare_mfgp_datasets_from_batches(
 
     _reject_event_only(lf_batch, "lf_batch")
     _reject_event_only(hf_batch, "hf_batch")
+    lf_batch.require_rectangular("legacy two-output CNP MFGP datasets")
+    hf_batch.require_rectangular("legacy two-output CNP MFGP datasets")
 
     n_lf_ctx = n_lf_context if n_lf_context is not None else lf_batch.n_events // 2
     n_hf_ctx = n_hf_context if n_hf_context is not None else hf_batch.n_events // 2
@@ -192,6 +194,7 @@ def evaluate_mfgp_coverage_from_batch(
         ============  ============================  ===========================
     """
     _reject_event_only(holdout_hf_batch, "holdout_hf_batch")
+    holdout_hf_batch.require_rectangular("evaluate_mfgp_coverage_from_batch")
     del cnp  # signature kept for parity / future per-trial diagnostics
     n_ctx = n_context if n_context is not None else holdout_hf_batch.n_events // 2
 

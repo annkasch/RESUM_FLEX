@@ -104,7 +104,9 @@ def _fit_stage(
         from core.surrogate_bdt import event_features
 
         cfg = model.config.architecture
-        x, y = event_features(train), train.labels.ravel()
+        # Padded positions of ragged batches are not events; fit valid events only.
+        valid = train.event_mask.ravel()
+        x, y = event_features(train)[valid], train.labels.ravel()[valid]
         w = training.weighting
         weights = (
             np.where(y == 1, w.positive, w.negative) if w.strategy == "class_weights" else None
@@ -148,7 +150,7 @@ def _fit_stage(
                 output, labels, gamma=training.focal_gamma, weights=weights
             )
 
-        if training.n_events > train.n_events:
+        if training.n_events > int(train.events_per_voxel.min()):
             raise ValueError("n_events exceeds available training events per voxel")
         if training.device == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA requested but unavailable")

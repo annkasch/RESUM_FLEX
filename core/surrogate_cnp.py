@@ -368,43 +368,60 @@ def split_context_target(
     *,
     seed: int | None = None,
 ) -> tuple[StandardBatch, StandardBatch]:
-    """Per-trial random partition of ``N`` events into context and target.
+    """Per-trial random partition of each trial's events into context and target.
 
-    Each trial in the input batch has ``N`` events; this function permutes
-    them independently per trial and splits at ``n_context``. Both returned
-    batches share the same ``θ`` (it's a trial-level parameter) but disjoint
-    ``φ`` and ``labels`` slices.
+    Each trial's valid events are permuted independently and split at
+    ``n_context``. Both returned batches share the same ``θ`` (it's a
+    trial-level parameter) but disjoint ``φ`` and ``labels`` slices.
 
-    ``n_context`` must lie in ``[1, N - 1]`` so both sets are non-empty.
+    The context always has exactly ``n_context`` events per trial. With unequal
+    event counts (``batch.event_counts``) the target holds each trial's
+    remaining events, zero-padded, with its own ``event_counts``.
+
+    ``n_context`` must lie in ``[1, min_count - 1]`` so both sets are non-empty.
     """
     B, N = batch.batch_size, batch.n_events
-    if not 1 <= n_context <= N - 1:
+    counts = batch.events_per_voxel                      # [B]
+    if not 1 <= n_context <= int(counts.min()) - 1:
         raise ValueError(
-            f"n_context must be in [1, N-1] = [1, {N - 1}]; got {n_context}"
+            f"n_context must be in [1, N-1] = [1, {int(counts.min()) - 1}]; got {n_context}"
         )
 
     rng = np.random.default_rng(seed)
-    perm = np.stack([rng.permutation(N) for _ in range(B)], axis=0)  # [B, N]
-    ctx_idx = perm[:, :n_context]
-    tgt_idx = perm[:, n_context:]
+    perms = [rng.permutation(int(n)) for n in counts]
+    ctx_idx = np.stack([p[:n_context] for p in perms], axis=0)  # [B, n_context]
+    tgt_idx = np.zeros((B, N - n_context), dtype=np.int64)       # [B, N - n_context]
+    for b, p in enumerate(perms):
+        tgt_idx[b, : len(p) - n_context] = p[n_context:]
+    tgt_counts = counts - n_context
+    tgt_valid = np.arange(N - n_context)[None, :] < tgt_counts[:, None]
 
-    def _gather(arr: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    def _gather(arr: np.ndarray, idx: np.ndarray, valid=None) -> np.ndarray:
         # arr: [B, N] or [B, N, D]; idx: [B, k]
         if arr.ndim == 2:
-            return np.take_along_axis(arr, idx, axis=1)
-        if arr.ndim == 3:
-            return np.take_along_axis(arr, idx[..., None], axis=1)
-        raise ValueError(f"unexpected arr.ndim={arr.ndim}")
+            out = np.take_along_axis(arr, idx, axis=1)
+        elif arr.ndim == 3:
+            out = np.take_along_axis(arr, idx[..., None], axis=1)
+        else:
+            raise ValueError(f"unexpected arr.ndim={arr.ndim}")
+        if valid is not None:
+            out[~valid] = 0
+        return out
 
+    ragged = batch.is_ragged
     phi_ctx = _gather(batch.phi, ctx_idx) if batch.phi is not None else None
-    phi_tgt = _gather(batch.phi, tgt_idx) if batch.phi is not None else None
+    phi_tgt = _gather(batch.phi, tgt_idx, tgt_valid) if batch.phi is not None else None
     labels_ctx = _gather(batch.labels, ctx_idx)
-    labels_tgt = _gather(batch.labels, tgt_idx)
+    labels_tgt = _gather(batch.labels, tgt_idx, tgt_valid)
 
     ctx = StandardBatch(
         mode=batch.mode, theta=batch.theta, phi=phi_ctx, labels=labels_ctx
     )
     tgt = StandardBatch(
-        mode=batch.mode, theta=batch.theta, phi=phi_tgt, labels=labels_tgt
+        mode=batch.mode,
+        theta=batch.theta,
+        phi=phi_tgt,
+        labels=labels_tgt,
+        event_counts=tgt_counts if ragged else None,
     )
     return ctx, tgt
