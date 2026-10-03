@@ -226,6 +226,12 @@ using the settings above before running it.
 
 ## Legacy two-output CNP
 
+The optical configs use the single-logit `cnp` since 2026-10-02. Under
+`theory-truth` the two outputs only enter through one effective logit
+`mu_logit / d(sigma)`, so the second channel adds no representable predictions
+and is not identified by binary labels. `legacy_cnp` is kept to reproduce the
+original RESuM objective and older checkpoints.
+
 `model.kind: legacy_cnp` wraps the existing `build_cnp` architecture without
 changing its decoder or likelihood definitions. Set `training.loss` explicitly:
 
@@ -277,9 +283,9 @@ single-logit legacy importer does not silently convert those files.
 
 ## Full optical RESuM pipeline
 
-`config.optical.resum.yaml` trains the legacy two-output CNP on prepared LF
+`config.optical.resum.yaml` trains the single-logit CNP (`kind: cnp`) on prepared LF
 non-zero-hit voxels using standard class-aware mixup (`mix_context: true`),
-`theory-truth` Bernoulli NLL and the single-branch objective. It then fits the
+Bernoulli NLL and the single-branch objective. It then fits the
 existing three-level MFGP on training data only: LF CNP means, HF CNP means,
 and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
 56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
@@ -367,9 +373,9 @@ notebook. It calls the shared `run_experiment` API using
 Use the repository Python environment as the kernel. Run All trains from scratch
 by default, with a timestamped output directory. `RUN_TRAINING = False` loads
 `EXISTING_RUN` instead and displays that run's saved configuration. The default
-is a two-output CNP, theory-truth, standard class-aware mixup, mixed context,
-and the three-fidelity MFGP. `LOSS_OVERRIDE = "practice-truth"` selects Gaussian
-NLL for a new run. No real-plus-mixup auxiliary objective is enabled.
+is a single-logit CNP, Bernoulli NLL, standard class-aware mixup, mixed context,
+and the three-fidelity MFGP. `LEGACY_LOSS = "theory-truth"` or `"practice-truth"`
+selects the legacy two-output CNP for a new run. No real-plus-mixup auxiliary objective is enabled.
 
 The notebook prepares/checks non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
 shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
