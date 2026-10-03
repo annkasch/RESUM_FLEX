@@ -13,10 +13,13 @@ def evaluate_surrogate(model, target, *, context=None):
     logits = prediction.logits
     if logits.shape != labels.shape:
         raise ValueError("Predictions and labels must have identical shapes")
-    observed, predicted = labels.mean(1), prediction.mean
+    observed, predicted = target.voxel_mean(labels), prediction.mean
     residual = predicted - observed
+    # Event-level metrics use only valid events; padded positions are dropped.
+    mask = target.event_mask
+    event_labels, event_logits = labels[mask], logits[mask]
     curve = (
-        precision_recall(labels.ravel(), logits.ravel())
+        precision_recall(event_labels, event_logits)
         if labels.sum()
         else dict(
             average_precision=None,
@@ -29,8 +32,8 @@ def evaluate_surrogate(model, target, *, context=None):
     mean_observed = float(observed.mean())
     metrics = dict(
         voxels=len(observed),
-        events=labels.size,
-        positives=int(labels.sum()),
+        events=int(event_labels.size),
+        positives=int(event_labels.sum()),
         mean_observed=mean_observed,
         mean_predicted=float(predicted.mean()),
         mean_bias=float(residual.mean()),
@@ -41,9 +44,11 @@ def evaluate_surrogate(model, target, *, context=None):
         voxel_rate_mae=float(np.abs(residual).mean()),
         voxel_rate_rmse=float(np.sqrt(np.square(residual).mean())),
         bernoulli_log_loss=float(
-            np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits)).mean()
+            np.where(
+                event_labels == 1, np.logaddexp(0, -event_logits), np.logaddexp(0, event_logits)
+            ).mean()
         ),
-        brier_score=float(np.square(prediction.probabilities - labels).mean()),
+        brier_score=float(np.square(prediction.probabilities[mask] - event_labels).mean()),
         average_precision=curve["average_precision"],
         prevalence=curve["prevalence"],
     )
@@ -59,4 +64,6 @@ def evaluate_surrogate(model, target, *, context=None):
     )
     if prediction.legacy_scale is not None:
         arrays["legacy_scale"] = prediction.legacy_scale
+    if target.event_counts is not None:
+        arrays["event_counts"] = target.event_counts
     return metrics, arrays

@@ -132,6 +132,10 @@ class StandardBatch(BaseModel):
     labels : ``[B, N]``       (binary X — always present)
     beta   : ``[B, N]``       (CNP-reconstructed continuous score in [0, 1];
                                 populated in Phase 3, ``None`` before that)
+    event_counts : ``[B]``    (optional; valid events per voxel. Voxel ``b``
+                                uses positions ``[:event_counts[b]]``; the
+                                remaining positions are zero padding. ``None``
+                                means every voxel has all ``N`` events.)
 
     The ``mode`` field declares which modality this batch represents and is
     cross-checked against the presence of ``theta`` / ``phi`` so a malformed
@@ -145,6 +149,7 @@ class StandardBatch(BaseModel):
     theta: OptionalNDArray = None
     phi: OptionalNDArray = None
     beta: OptionalNDArray = None
+    event_counts: OptionalNDArray = None
 
     @property
     def mask_theta(self) -> bool:
@@ -160,7 +165,37 @@ class StandardBatch(BaseModel):
 
     @property
     def n_events(self) -> int:
+        """Padded event axis length; per-voxel counts are ``events_per_voxel``."""
         return int(self.labels.shape[1])
+
+    @property
+    def is_ragged(self) -> bool:
+        return self.event_counts is not None
+
+    @property
+    def events_per_voxel(self) -> np.ndarray:
+        """Valid events per voxel ``[B]``, also for rectangular batches."""
+        if self.event_counts is None:
+            return np.full(self.batch_size, self.n_events, dtype=np.int64)
+        return self.event_counts
+
+    @property
+    def event_mask(self) -> np.ndarray:
+        """Boolean ``[B, N]`` mask of valid (non-padding) events."""
+        return valid_event_mask(self.event_counts, self.labels.shape)
+
+    def voxel_mean(self, values: np.ndarray) -> np.ndarray:
+        """Mean of ``[B, N]`` per-event values over each voxel's valid events."""
+        values = np.asarray(values, dtype=float)
+        if values.shape != self.labels.shape:
+            raise ValueError(f"values shape {values.shape} must match labels {self.labels.shape}")
+        if self.event_counts is None:
+            return values.mean(axis=1)
+        return np.where(self.event_mask, values, 0.0).sum(axis=1) / self.event_counts
+
+    def require_rectangular(self, where: str) -> None:
+        if self.is_ragged:
+            raise ValueError(f"{where} requires equal event counts per voxel")
 
     @model_validator(mode="after")
     def _check_consistency(self) -> StandardBatch:
@@ -168,6 +203,7 @@ class StandardBatch(BaseModel):
             raise ValueError(f"labels must be [B, N], got shape {self.labels.shape}")
         B, N = self.labels.shape
         self._check_labels()
+        self._check_event_counts(B, N)
 
         # Modality / presence cross-check.
         if self.mode is InputMode.FULL:
@@ -212,6 +248,23 @@ class StandardBatch(BaseModel):
 
     def _check_labels(self) -> None:
         _check_binary(self.labels)
+
+    def _check_event_counts(self, B: int, N: int) -> None:
+        if self.event_counts is None:
+            return
+        counts = self.event_counts
+        if counts.shape != (B,) or not np.issubdtype(counts.dtype, np.integer):
+            raise ValueError(f"event_counts must be an integer [B={B}] array, got {counts.shape}")
+        if np.any(counts < 1) or np.any(counts > N):
+            raise ValueError(f"event_counts must lie in [1, N={N}]")
+        if np.all(counts == N):
+            # Canonical form: full voxels are stored without counts.
+            object.__setattr__(self, "event_counts", None)
+            return
+        object.__setattr__(self, "event_counts", counts.astype(np.int64))
+        padding = ~self.event_mask
+        if np.any(self.labels[padding] != 0):
+            raise ValueError("Padded events beyond event_counts must have zero labels")
 
     def _warn_on_scale_imbalance(self) -> None:
         """Emit :class:`ScaleImbalanceWarning` when per-feature ranges
@@ -287,6 +340,13 @@ class ModelPrediction(BaseModel):
         if np.any(self.variance < 0):
             raise ValueError("variance must be non-negative.")
         return self
+
+
+def valid_event_mask(counts: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray:
+    """``[B, N]`` mask of real events for padded per-voxel arrays (all True if ``None``)."""
+    if counts is None:
+        return np.ones(shape, dtype=bool)
+    return np.arange(shape[1])[None, :] < np.asarray(counts)[:, None]
 
 
 def _check_binary(labels: np.ndarray) -> None:

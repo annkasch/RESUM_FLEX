@@ -43,10 +43,10 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
         seed=cfg.seed,
     )
     np.savez_compressed(directory / "training_arrays.npz", **data)
-    fit_data = dict(data)
+    fit_data = {k: v for k, v in data.items() if k != "hf_target_events"}
     transform_details = {"output_transform": cfg.output_transform}
     if cfg.output_transform == "log":
-        n_target = batches["train", "hf"].n_events - cfg.n_context
+        n_target = data["hf_target_events"]  # [n_hf, 1]; per voxel when counts differ
         a = cfg.raw_pseudocount
         fit_data["Y_hf_raw"] = (data["Y_hf_raw"] * n_target + a) / (n_target + 2 * a)
         for key in ("Y_lf_cnp", "Y_hf_cnp"):
@@ -55,7 +55,9 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
             fit_data[key] = np.maximum(data[key], cfg.cnp_log_floor)
         transform_details.update(
             raw_smoothing="(m + a) / (N + 2a), applied only to HF training counts",
-            raw_pseudocount=a, hf_target_events=n_target,
+            raw_pseudocount=a,
+            hf_target_events=(int(n_target[0, 0]) if np.all(n_target == n_target[0, 0])
+                              else n_target.ravel().tolist()),
             cnp_log_floor=cfg.cnp_log_floor,
             floored_cnp_rows={key: int((data[key] < cfg.cnp_log_floor).sum())
                               for key in ("Y_lf_cnp", "Y_hf_cnp")},
@@ -105,7 +107,7 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
         context, target = split_context_target(
             batch, config.validation_context_events, seed=config.validation_seed
         )
-        observed = target.labels.mean(1)
+        observed = target.voxel_mean(target.labels)
         predicted = surrogate.predict(target, context=context).mean
         level = 0 if fid == "lf" else 2
         mean, variance = gp.predict(batch.theta, fidelity=level)
@@ -129,7 +131,8 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
             directory / f"{fid}_validation.npz",
             theta=batch.theta,
             observed=observed,
-            target_events=np.array(target.n_events),
+            target_events=(np.array(target.n_events) if not target.is_ragged
+                           else target.events_per_voxel),
             cnp_mean=predicted,
             mean=mean,
             sigma=sigma,

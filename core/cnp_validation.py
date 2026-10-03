@@ -36,6 +36,7 @@ def evaluate_cnp_validation(model, batch, *, n_context=64, n_mc_samples=200, see
     Uses RESUM_FLEX's existing approximate trial uncertainty, including sampling
     noise. Coverage is against observed target m/N, not unknown latent truth.
     """
+    batch.require_rectangular("evaluate_cnp_validation")
     if not 1 <= n_context < batch.n_events:
         raise ValueError("n_context must leave at least one target event")
     if n_mc_samples < 2:

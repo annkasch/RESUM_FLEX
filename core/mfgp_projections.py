@@ -50,7 +50,14 @@ def ensure_mfgp_projections(directory, settings):
     ]
     if settings.quantity == "observed_fraction" and settings.target_events is None:
         with np.load(directory / "hf_validation.npz") as validation:
-            n_target = int(validation["target_events"]) if "target_events" in validation else None
+            n_target = None
+            if "target_events" in validation:
+                budgets = np.unique(validation["target_events"])
+                if len(budgets) != 1:
+                    raise ValueError(
+                        "Unequal validation target counts: set projections.target_events explicitly"
+                    )
+                n_target = int(budgets[0])
         if n_target is None:
             # Older runs: recover N only from the exact prepared batch used in that run.
             model_meta = json.loads((directory / "model.json").read_text())

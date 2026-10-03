@@ -88,6 +88,8 @@ def train_cnp(
             f"n_events_per_trial={n_events} must exceed n_context_min."
         )
 
+    if getattr(generator, "batch", None) is not None:
+        generator.batch.require_rectangular("train_cnp (use core.surrogates for ragged data)")
     mixup_source = None
     if training_config.mixup_alpha > 0:
         from data.batch_source import FixedBatchSource
@@ -216,6 +218,7 @@ def cnp_trial_predictive(
     Returns a dict with keys ``y_cnp``, ``sigma_total``,
     ``sigma_epistemic``, ``sigma_aleatoric`` — all 1-D arrays of length B.
     """
+    target_batch.require_rectangular("cnp_trial_predictive")
     cnp.eval()
     with torch.no_grad():
         out = cnp(ctx_batch, target_batch)

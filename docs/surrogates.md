@@ -341,6 +341,35 @@ For physical Cartesian queries, normalize with the saved theta offset and scale
 before calling `gp.predict(theta_normalized, fidelity=2)`. Predictions remain in
 detection-fraction units. Keep normalization alongside the GP checkpoint.
 
+## Unequal event counts per voxel
+
+Voxels may contain different numbers of events. Data preparation pads every voxel
+of a split/fidelity group to the largest count and stores the true counts as
+`event_counts` (`[B]`) in the batch `.npz`, in `StandardBatch.event_counts` and in
+`metadata.json`. Padded positions have zero labels and features and event id `-1`.
+Groups with equal counts keep the previous rectangular format, so existing
+prepared datasets and checkpoints are unaffected.
+
+- **Training** weighs voxels equally: voxels are drawn uniformly and each episode
+  samples context and targets only from that voxel's own events. `n_events` must
+  fit the smallest training voxel. This holds for natural sampling, positive quota
+  (pool prevalence uses the voxel's own events) and class-aware mixup. BDT fits all
+  valid events and drops padding.
+- **Context/target splits** (`split_context_target`, evaluation manifests) use a
+  fixed context size; each voxel's target is its remaining events, so target
+  counts differ per voxel and are carried as `event_counts` / `target_counts`.
+- **Voxel means** (`EventPrediction.mean`, `StandardBatch.voxel_mean`, observed
+  `m/N`) divide by each voxel's own count. Event-level metrics (log loss, Brier,
+  AP) use valid events only.
+- **MFGP**: `training_arrays.npz` stores `hf_target_events` per HF voxel, and log
+  smoothing `(m + a)/(N + 2a)` uses each voxel's own N. The GP still has one
+  constant noise per level, so voxels with smaller N are noisier than the model
+  assumes (see `docs/stats_review.md`, finding 3). Observed-fraction projections
+  need an explicit `projections.target_events` when validation counts differ.
+- The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`,
+  `evaluate_cnp_validation`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
+  dataset helpers reject unequal counts with an error; use `core.surrogates`.
+
 ## Data preparation and repository layout
 
 The current workflow uses library components and the shared CLI. The temporary
@@ -403,8 +432,8 @@ the preparation YAML. Repeated references/symlinks to the same physical file
 are loaded once. Different files with the same fidelity and basename, and the
 same physical file assigned to both fidelities, are rejected as ambiguous.
 Splitting and training-only normalization happen after collecting all folders.
-LF event counts must still be homogeneous: this does not restore the retired
-LF500/750/1000/1500 pooling approach.
+Event counts may differ between voxels (see "Unequal event counts per voxel");
+mixing primary budgets within LF remains a separate, retired modeling choice.
 
 The earlier raw-data views remain available under
 `/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/`:
@@ -473,9 +502,9 @@ preparing a dataset. The default selects `N1500/nonzero` for LF and
 `N5000/nonzero` for HF, preserving the current data and split. To include zeros,
 list the matching `zero` folder too; notebook preparation automatically updates
 the prepared dataset and split manifest. The notebook reports zero counts without rejecting
-those voxels, and does not hard-code an LF event count. Preparation still requires
-consistent event counts within each fidelity; this layout does not reintroduce
-training pooled across different LF primary counts.
+those voxels, and does not hard-code an LF event count. Preparation accepts unequal
+event counts per voxel; this layout does not by itself reintroduce training pooled
+across different LF primary counts.
 
 ### Log-space MFGP
 

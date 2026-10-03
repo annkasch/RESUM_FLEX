@@ -30,6 +30,7 @@ def build_bdt(config):
 
 
 def score_bdt(model,batch):
+    batch.require_rectangular('score_bdt (use core.surrogates.evaluate_surrogate)')
     scores=np.asarray(model.decision_function(event_features(batch)),dtype=float)
     labels=batch.labels.ravel()
     if not np.isfinite(scores).all():raise ValueError('Nonfinite BDT scores')
