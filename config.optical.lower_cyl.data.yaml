@@ -1,0 +1,33 @@
+# Preliminary lower-cylinder dataset (2026-10-19). Voxel grid is not final; file format is.
+# lf/ = 1000 primaries per voxel, hf/ = 5000; LF and HF voxels are at different positions.
+# Folders contain zero-hit files; incomplete runs were removed upstream (removed_incomplete_*.txt).
+source:
+  directories:
+    lf:
+    - /global/cfs/projectdirs/m2676/users/aschuetz/data/lower_cyl/lf
+    hf:
+    - /global/cfs/projectdirs/m2676/users/aschuetz/data/lower_cyl/hf
+  exclude_files: []
+output_directory: outputs/optical_lower_cyl_v0
+theta:
+  coordinates: cartesian
+  center_source: filename
+phi:
+  vertex:
+    representation: offset
+    coordinates: cartesian
+  momentum:
+    representation: components
+target:
+  kind: any_channel
+  detector_id: null
+split:
+  lf_train_only: false
+  train_fraction: 0.7
+  validation_fraction: 0.15
+  test_fraction: 0.15
+  seed: 42
+  manifest: outputs/optical_lower_cyl_v0/splits/voxel_split.json
+normalization:
+  method: standard
+  fit_on: training

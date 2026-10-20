@@ -10,6 +10,7 @@ from core.gp_metrics import mfgp_metrics
 
 def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
     # Keep optional GPy/Emukit dependencies out of the neural import path.
+    from core.gp_subsample import subsample_voxels
     from core.mfgp_pipeline import fit_mfgp_three_fidelity
     from core.surrogate_cnp import split_context_target
     from core.surrogate_mfgp import load_mfgp, save_mfgp
@@ -34,10 +35,20 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
         provenance[f"{split}/{fid}"] = dict(
             path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
         )
+    # Subsets apply to GP fitting only; validation and the development map use all voxels.
+    subsets = {
+        fid: subsample_voxels(batches["train", fid].batch_size, limit, cfg.seed, stream)
+        for fid, limit, stream in (("lf", cfg.max_lf_voxels, 0), ("hf", cfg.max_hf_voxels, 1))
+    }
+    for fid, index in subsets.items():
+        provenance[f"train/{fid}"].update(
+            n_voxels=batches["train", fid].batch_size, n_gp_voxels=len(index)
+        )
+    np.savez_compressed(directory / "gp_voxel_subsets.npz", **subsets)
     data = prepare_surrogate_datasets(
         surrogate,
-        batches["train", "lf"],
-        batches["train", "hf"],
+        batches["train", "lf"].take(subsets["lf"]),
+        batches["train", "hf"].take(subsets["hf"]),
         n_lf_context=cfg.n_context,
         n_hf_context=cfg.n_context,
         seed=cfg.seed,

@@ -193,6 +193,24 @@ class StandardBatch(BaseModel):
             return values.mean(axis=1)
         return np.where(self.event_mask, values, 0.0).sum(axis=1) / self.event_counts
 
+    def take(self, index: np.ndarray) -> StandardBatch:
+        """Voxel subset ``[B']`` keeping each voxel's events, padding and counts."""
+        index = np.asarray(index)
+        if index.ndim != 1 or not np.issubdtype(index.dtype, np.integer):
+            raise ValueError("take expects a 1-D integer voxel index")
+
+        def pick(a):
+            return None if a is None else a[index]
+
+        return StandardBatch(
+            mode=self.mode,
+            labels=self.labels[index],
+            theta=pick(self.theta),
+            phi=pick(self.phi),
+            beta=pick(self.beta),
+            event_counts=pick(self.event_counts),
+        )
+
     def require_rectangular(self, where: str) -> None:
         if self.is_ragged:
             raise ValueError(f"{where} requires equal event counts per voxel")

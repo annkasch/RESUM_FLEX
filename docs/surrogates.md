@@ -311,6 +311,10 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 
 The optional `mfgp` run-config section enables this second stage. It requires the
 GP dependencies. `kernel`, `n_restarts`, `seed`, and `n_context` are explicit.
+Large datasets: `max_lf_voxels` / `max_hf_voxels` fit the exact GP on a seeded subset of the
+LF/HF training voxels (`gp_voxel_subsets.npz`, stream 0 = LF, 1 = HF under `seed`). Validation
+and the development map still use every voxel, and event-model training is not subsampled.
+The count GP has the same option as `backend.max_training_voxels` (`training_voxel_subset.npy`).
 Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
 validation MAE. The current optical test sets `lf_validation: false`: it uses
 the final CNP checkpoint after all configured steps, without selecting on HF.

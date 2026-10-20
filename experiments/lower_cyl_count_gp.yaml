@@ -1,0 +1,25 @@
+schema_version: 1
+name: lower-cyl-binomial-gp
+hypothesis: Direct binomial GP on the preliminary lower-cylinder grid (training-voxel subset).
+tags: [optical, lower_cyl, count-gp, preliminary]
+store: ../outputs/experiments
+dataset:
+  prepared: ../outputs/optical_lower_cyl_v0
+  format: events
+pipeline:
+  kind: count_gp
+  backend:
+    kind: binomial_laplace
+    kernel: matern52
+    max_iters: 300
+    n_restarts: 2
+    seed: 42
+    max_training_voxels: 2000
+  prediction_draws: 32768
+  prediction_seed: 42
+  projections: {grid_steps: 12, n_draws: 8192}
+evaluation:
+  context_events: 64
+  seed: 12345
+  partitions: [validation/lf, validation/hf]
+  plots: [means, residuals, coverage, projected_axes, projected_planes]
