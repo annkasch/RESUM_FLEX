@@ -9,6 +9,7 @@ from scipy.stats import binom
 
 from core.gp_backends import build_count_gp_backend
 from core.gp_metrics import gp_metrics
+from core.gp_subsample import subsample_voxels
 from data.optical_counts import prepare_optical_counts
 
 
@@ -24,8 +25,13 @@ def run_count_gp(config, prepared=None):
     # Snapshot arrays so later raw-data/config changes cannot alter a saved result.
     for split in ("train", "validation"):
         np.savez_compressed(out / f"{split}_counts.npz", **data[split])
-    train = data["train"]
     settings = config.backend
+    full_train = data["train"]
+    subset = subsample_voxels(
+        len(full_train["theta"]), settings.max_training_voxels, settings.seed, stream=0
+    )
+    train = {key: value[subset] for key, value in full_train.items()}
+    np.save(out / "training_voxel_subset.npy", subset)
     gp = build_count_gp_backend(settings).fit(
         train["theta"],
         train["hits"],

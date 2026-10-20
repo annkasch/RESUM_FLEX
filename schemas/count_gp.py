@@ -16,6 +16,8 @@ class CountGPBackendConfig(StrictModel):
     max_iters: int = Field(default=300, gt=0)
     n_restarts: int = Field(default=2, gt=0)
     seed: int = 42
+    # Seeded voxel subset of the training counts (exact Laplace GP scales as O(n^3)).
+    max_training_voxels: int | None = Field(default=None, gt=0)
 
 
 class CountGPConfig(StrictModel):

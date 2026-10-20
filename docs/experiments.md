@@ -51,6 +51,7 @@ failure leaves a failed run, traceback and any completed artifacts in the catalo
 - `pipeline.kind: count_gp` uses `backend`, prediction draw settings and
   `projections`. Its training data are full counts from the training partitions;
   LF/HF label the reporting groups, not different physical latent functions.
+  `backend.max_training_voxels` fits on a seeded subset of those voxels.
 - `evaluation` fixes partitions, context size, evaluation seed and plot selection.
   Weights are currently equal per voxel. Event metrics weight real events equally.
   Selection uses LF validation only, never a test partition.

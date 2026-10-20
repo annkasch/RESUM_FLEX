@@ -229,6 +229,10 @@ class MFGPStageConfig(StrictConfigModel):
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
     n_context: int = Field(default=64, gt=0)
+    # Seeded voxel subsets of the GP training partitions (exact GPs scale as O(n^3)).
+    # None uses all training voxels; event-model training is never subsampled.
+    max_lf_voxels: int | None = Field(default=None, gt=0)
+    max_hf_voxels: int | None = Field(default=None, gt=0)
 
 
 class SurrogateRunConfig(SurrogateConfig):
