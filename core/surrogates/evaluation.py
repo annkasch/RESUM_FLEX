@@ -1,12 +1,40 @@
 """One set of metrics and output arrays for all event models."""
 
+from contextlib import contextmanager
+
 import numpy as np
 
 from core.precision_recall import precision_recall
 
+_EVALUATION_THREADS = None
+
+
+@contextmanager
+def evaluation_threads(n: int):
+    """Run every evaluate_surrogate call inside the block with ``n`` torch CPU threads."""
+    global _EVALUATION_THREADS
+    previous, _EVALUATION_THREADS = _EVALUATION_THREADS, n
+    try:
+        yield
+    finally:
+        _EVALUATION_THREADS = previous
+
+
+def _predict(model, target, context):
+    if _EVALUATION_THREADS is None:
+        return model.predict(target, context=context)
+    import torch
+
+    training_threads = torch.get_num_threads()
+    torch.set_num_threads(_EVALUATION_THREADS)
+    try:
+        return model.predict(target, context=context)
+    finally:
+        torch.set_num_threads(training_threads)
+
 
 def evaluate_surrogate(model, target, *, context=None):
-    prediction = model.predict(target, context=context)
+    prediction = _predict(model, target, context)
     labels = np.asarray(target.labels)
     if not np.isin(labels, [0, 1]).all():
         raise ValueError("Evaluation requires real binary labels, not mixup targets")

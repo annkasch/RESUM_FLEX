@@ -5,12 +5,45 @@ import json
 
 import numpy as np
 
+from core.gp_subsample import subsample_voxels
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate
-from core.surrogates.evaluation import evaluate_surrogate
+from core.surrogates.evaluation import evaluate_surrogate, evaluation_threads
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import SurrogateRunConfig
+
+# Role-based prepared data (LF only) stores these splits under CNP role names.
+ROLE_PARTITIONS = {"train": "cnp_train", "validation": "cnp_validation", "test": "cnp_test"}
+
+
+def partition_path(root, split, fidelity):
+    """Prepared batch file for a split, in either the split or the role-based layout."""
+    if (root / "batches/cnp_train").is_dir():
+        split = ROLE_PARTITIONS[split]
+    return root / f"batches/{split}/{fidelity}.npz"
+
+
+def ensure_matching_data(data_config, data_directory):
+    """Regenerate prepared data whose stored settings or raw inputs differ from data_config."""
+    from data.optical_pipeline import ensure_prepared_optical_data
+    from schemas.optical import load_optical_config
+
+    preparation = load_optical_config(data_config)
+    if preparation.output_directory != data_directory.resolve():
+        raise ValueError(
+            f"data_config writes to {preparation.output_directory}, "
+            f"but data_directory is {data_directory}"
+        )
+    # config.json is written only by a full preparation.
+    saved = data_directory / "config.json"
+    before = saved.stat().st_mtime_ns if saved.exists() else None
+    ensure_prepared_optical_data(preparation)
+    regenerated = before != saved.stat().st_mtime_ns
+    print(f"Prepared data {'regenerated' if regenerated else 'up to date'}: {data_directory}",
+          flush=True)
+    return dict(path=str(data_config), regenerated=regenerated,
+                settings=preparation.model_dump(mode="json"))
 
 
 def run_experiment(config: SurrogateRunConfig):
@@ -26,6 +59,16 @@ def run_experiment(config: SurrogateRunConfig):
     root, output = config.data_directory, config.output_directory
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
+    data_check = None
+    if config.data_config is not None:
+        data_check = ensure_matching_data(config.data_config, root)
+    if (root / "batches/cnp_train").is_dir() and (
+        config.hf_validation or "hf" in config.test_fidelities or config.mfgp is not None
+    ):
+        raise ValueError(
+            "Role-based prepared data is LF only; set hf_validation: false, "
+            "no hf in test_fidelities and no mfgp stage"
+        )
     batches, provenance = {}, {}
     partitions = [("train", "lf")]
     if config.hf_validation:
@@ -33,7 +76,7 @@ def run_experiment(config: SurrogateRunConfig):
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
     for split, fidelity in partitions:
-        path = root / f"batches/{split}/{fidelity}.npz"
+        path = partition_path(root, split, fidelity)
         batches[split, fidelity] = load_prepared_batch(path)
         provenance[f"{split}/{fidelity}"] = dict(
             path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
@@ -47,6 +90,15 @@ def run_experiment(config: SurrogateRunConfig):
         for key, batch in batches.items()
     }
     train = batches["train", "lf"]
+    selection_episode, selection_voxels = episodes.get(("validation", "lf")), None
+    if selection_episode is not None:
+        n = selection_episode.target.batch_size
+        index = subsample_voxels(n, config.selection_max_voxels, config.validation_seed, 0)
+        selection_voxels = dict(available=n, used=len(index))
+        if len(index) < n:
+            selection_episode = Episode(
+                selection_episode.context.take(index), selection_episode.target.take(index)
+            )
     dt = None if train.theta is None else train.theta.shape[-1]
     dp = None if train.phi is None else train.phi.shape[-1]
     seed = (
@@ -62,8 +114,11 @@ def run_experiment(config: SurrogateRunConfig):
         resolved_config=config.model_dump(mode="json"),
         data=provenance,
         context_conditioning=model.uses_context,
+        data_config=data_check,
         test_data="Not loaded",
         selection_split="validation/lf" if config.lf_validation else None,
+        selection_voxels=selection_voxels,
+        evaluation_threads=config.evaluation_threads,
         checkpoint_policy="best LF validation" if config.lf_validation else "final training step",
         training_pr="In-sample",
         score_weights="Uniform natural events; no resampling during evaluation",
@@ -76,22 +131,22 @@ def run_experiment(config: SurrogateRunConfig):
     model.metadata = metadata
     output.mkdir(parents=True, exist_ok=True)
     (output / "experiment.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
-    if config.stages:
-        from core.surrogates.stages import fit_stages
-        result = fit_stages(model, train, config.stages,
-                            validation=episodes.get(("validation", "lf")),
-                            checkpoints=output / "checkpoints")
-    else:
-        result = model.fit(
-            train, config.training, validation=episodes.get(("validation", "lf")),
-            selection=config.selection, checkpoints=output / "checkpoints",
-        )
+    with evaluation_threads(config.evaluation_threads):
+        if config.stages:
+            from core.surrogates.stages import fit_stages
+            result = fit_stages(model, train, config.stages, validation=selection_episode,
+                                checkpoints=output / "checkpoints")
+        else:
+            result = model.fit(
+                train, config.training, validation=selection_episode,
+                selection=config.selection, checkpoints=output / "checkpoints",
+            )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
     # Selection is complete. Never pass test episodes into either training stage.
     test_provenance = {}
     for fidelity in config.test_fidelities:
-        path = root / f"batches/test/{fidelity}.npz"
+        path = partition_path(root, "test", fidelity)
         batch = load_prepared_batch(path)
         if (
             batch.theta is not None
@@ -129,7 +184,8 @@ def run_experiment(config: SurrogateRunConfig):
     for checkpoint in checkpoints:
         saved = load_surrogate(output / "checkpoints" / checkpoint)
         for (split, fidelity), episode in episodes.items():
-            summary, arrays = evaluate_surrogate(saved, episode.target, context=episode.context)
+            with evaluation_threads(config.evaluation_threads):
+                summary, arrays = evaluate_surrogate(saved, episode.target, context=episode.context)
             metrics.append(
                 dict(
                     checkpoint=checkpoint,

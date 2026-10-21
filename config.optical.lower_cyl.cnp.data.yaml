@@ -1,0 +1,25 @@
+# Lower-cylinder v0, LF only, for CNP-only work (2026-10-20). No HF, no GP voxels yet.
+source:
+  sources:
+  - path: /global/cfs/projectdirs/m2676/users/aschuetz/data/lower_cyl/lf
+    fractions: {cnp_train: 0.7, cnp_validation: 0.15, cnp_test: 0.15}
+  exclude_files: []
+output_directory: outputs/optical_lower_cyl_cnp_v0
+theta:
+  coordinates: cartesian
+  center_source: filename
+phi:
+  vertex:
+    representation: offset
+    coordinates: cartesian
+  momentum:
+    representation: components
+target:
+  kind: any_channel
+  detector_id: null
+split:
+  seed: 42
+  manifest: outputs/optical_lower_cyl_cnp_v0/splits/voxel_split.json
+normalization:
+  method: standard
+  fit_on: training

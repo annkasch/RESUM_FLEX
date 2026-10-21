@@ -1,7 +1,9 @@
 """LH5 input validation. Importing this module does not require h5py."""
 
 import hashlib
+import os
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,6 +32,7 @@ class OpticalRun:
     detector_ids: np.ndarray
     hit_time: np.ndarray
     hit_wavelength: np.ndarray
+    source: int | None = None  # index into SourceConfig.sources (role-based layout only)
 
     @property
     def n_events(self):
@@ -111,12 +114,22 @@ def read_run(path: Path, root: Path, *, fidelity: str | None = None) -> OpticalR
         raise ValueError(f"{path}: {exc}") from exc
 
 
-def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
+def list_source_files(config: SourceConfig) -> list[tuple[Path, Path, str | None]]:
+    """(file, root folder, explicit fidelity) for every configured input, without reading it."""
     inputs = []
     if config.directory is not None:
         root = config.directory.resolve()
         for fidelity in ("hf", "lf"):
             inputs.extend((p, root, None) for p in sorted((root / fidelity).glob("*.stp.lh5")))
+    elif config.sources:
+        for folder in (s.path for s in config.sources):
+            folder = folder.expanduser().resolve()
+            if not folder.is_dir():
+                raise FileNotFoundError(f"Optical input folder does not exist: {folder}")
+            paths = sorted(folder.glob("*.stp.lh5"))
+            if not paths:
+                raise ValueError(f"No simulation files found in {folder}")
+            inputs.extend((p, folder, "lf") for p in paths)
     else:
         for fidelity, folders in sorted(config.directories.items()):
             for folder in folders:
@@ -129,6 +142,39 @@ def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict
                 inputs.extend((p, folder, fidelity) for p in paths)
     if not inputs:
         raise ValueError("No simulation files found in configured folders")
+    return inputs
+
+
+def _file_identity(path: str) -> str:
+    info = os.stat(path)
+    return f"{os.path.basename(path)}:{info.st_size}:{info.st_mtime_ns}"
+
+
+def source_stamp(config: SourceConfig) -> list[list]:
+    """Cheap identity of the raw inputs without opening any file.
+
+    Per folder: file count and a hash over every file's name, size and modification time.
+    Adding, removing, renaming or rewriting a file changes it. Metadata is fetched in
+    parallel, because one-by-one stat calls are slow on network file systems.
+    """
+    if config.directory is not None:
+        folders = [config.directory / f for f in ("hf", "lf") if (config.directory / f).is_dir()]
+    elif config.sources:
+        folders = [s.path for s in config.sources]
+    else:
+        folders = [f for _, fs in sorted(config.directories.items()) for f in fs]
+    stamp = []
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        for folder in folders:
+            folder = folder.expanduser().resolve()
+            paths = sorted(e.path for e in os.scandir(folder) if e.name.endswith(".stp.lh5"))
+            identities = "\n".join(pool.map(_file_identity, paths))
+            stamp.append([str(folder), len(paths), hashlib.sha256(identities.encode()).hexdigest()])
+    return stamp
+
+
+def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
+    inputs = list_source_files(config)
     exclusions = set(config.exclude_files) | {ANOMALOUS_FILE}
     runs, excluded = [], []
     seen_paths, seen_names = {}, {}
@@ -151,7 +197,11 @@ def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict
                 }
             )
         else:
-            runs.append(read_run(path, root, fidelity=explicit_fidelity))
+            run = read_run(path, root, fidelity=explicit_fidelity)
+            if config.sources:
+                run.source = next(i for i, s in enumerate(config.sources)
+                                  if s.path.expanduser().resolve() == root)
+            runs.append(run)
     if not runs:
         raise ValueError("No included simulation files")
     return sorted(runs, key=lambda r: r.file), excluded

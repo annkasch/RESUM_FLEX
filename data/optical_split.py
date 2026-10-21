@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from data.optical_features import center
-from schemas.optical import OpticalDataConfig
+from schemas.optical import ROLES, OpticalDataConfig, RoleSource
 
 SPLITS = ("train", "validation", "test")
 FIDELITIES = ("lf", "hf")
@@ -52,8 +52,121 @@ def integer_targets(n, fractions):
     return targets
 
 
+def partition_names(config: OpticalDataConfig) -> tuple[str, ...]:
+    """Prepared partitions: LF roles for role sources, otherwise train/validation/test."""
+    return ROLES if config.source.sources else SPLITS
+
+
+def training_partition(config: OpticalDataConfig) -> str:
+    """The partition normalization is fitted on."""
+    return "cnp_train" if config.source.sources else "train"
+
+
+def role_targets(n: int, source: RoleSource) -> np.ndarray:
+    """Per-role file counts [len(ROLES)] for a folder holding n files."""
+    if source.fractions is not None:
+        return integer_targets(n, [source.fractions.get(role, 0.0) for role in ROLES])
+    fixed = {k: v for k, v in source.counts.items() if v != "rest"}
+    left = n - sum(fixed.values())
+    if left < 0 or (left and "rest" not in source.counts.values()):
+        raise ValueError(
+            f"{source.path}: counts {source.counts} do not match its {n} files"
+        )
+    return np.array([fixed.get(role, left if source.counts.get(role) == "rest" else 0)
+                     for role in ROLES])
+
+
+def assign_roles(runs, config: OpticalDataConfig, *, update=False):
+    """Split each role source's LF voxels by its own fractions or counts.
+
+    Voxel groups never cross roles. A group spanning two folders is rejected, because the
+    folders may prescribe different roles for it. Assignments of unchanged files are kept
+    while the split settings stay the same.
+    """
+    path = config.split.manifest
+    sources = config.source.sources
+    settings = {
+        "sources": [s.model_dump(mode="json", exclude_none=True) for s in sources],
+        "seed": config.split.seed,
+    }
+    previous = {}
+    if path.exists():
+        old = json.loads(path.read_text())
+        if old.get("version") != 1:
+            raise ValueError("Unsupported split manifest version")
+        current = {r.file: r for r in runs}
+        changed = old["settings"] != settings or {r["file"] for r in old["files"]} != set(
+            current
+        ) or any(
+            current[r["file"]].fingerprint != r["fingerprint"]
+            for r in old["files"] if r["file"] in current
+        )
+        if changed and not update:
+            raise ValueError("Sources or split settings changed; use explicit manifest update")
+        if old["settings"] == settings:
+            previous = {r["file"]: r["split"] for r in old["files"]}
+    groups = voxel_groups(runs, config)
+    assignments, records = {}, []
+    targets = np.zeros((len(sources), len(ROLES)), dtype=int)
+    counts = np.zeros_like(targets)
+    pending = {i: [] for i in range(len(sources))}
+    for group in groups:
+        origin = {r.source for r in group}
+        if len(origin) > 1:
+            names = ", ".join(sorted(r.file for r in group))
+            raise ValueError(f"Same voxel position in several source folders: {names}")
+        index = origin.pop()
+        locked = {previous[r.file] for r in group if r.file in previous}
+        if len(locked) > 1:
+            raise ValueError("Equivalent voxel inputs cross roles; use a new manifest")
+        if locked:
+            role = locked.pop()
+            counts[index, ROLES.index(role)] += len(group)
+            assignments.update({r.file: role for r in group})
+        else:
+            pending[index].append(group)
+    for index, source in enumerate(sources):
+        n = sum(r.source == index for r in runs)
+        targets[index] = role_targets(n, source)
+        stream = np.random.default_rng(np.random.SeedSequence([config.split.seed, index]))
+        for i in stream.permutation(len(pending[index])):
+            group = pending[index][i]
+            # Most underfilled role first; zero-target roles never receive files.
+            deficit = np.where(targets[index] > 0, targets[index] - counts[index], -np.inf)
+            k = int(np.argmax(deficit))
+            counts[index, k] += len(group)
+            assignments.update({r.file: ROLES[k] for r in group})
+    for group in groups:
+        identities = sorted(set(tuple(r.nominal_center.tolist()) for r in group))
+        group_id = hashlib.sha256(json.dumps(identities).encode()).hexdigest()[:16]
+        records.extend(
+            {
+                "file": r.file,
+                "fidelity": r.fidelity,
+                "source": str(sources[r.source].path),
+                "group_id": group_id,
+                "nominal_center": r.nominal_center.tolist(),
+                "fingerprint": r.fingerprint,
+                "split": assignments[r.file],
+            }
+            for r in group
+        )
+    payload = {
+        "version": 1,
+        "settings": settings,
+        "files": sorted(records, key=lambda r: r["file"]),
+        "targets": targets.tolist(),
+        "actual_counts": counts.tolist(),
+        "split_order": list(ROLES),
+        "overlapping_groups": 0,
+    }
+    return assignments, payload
+
+
 def assign_splits(runs, config: OpticalDataConfig, *, update=False):
     """Update preserves assignments of surviving files; conflicting groups fail."""
+    if config.source.sources:
+        return assign_roles(runs, config, update=update)
     path = config.split.manifest
     groups = voxel_groups(runs, config)
     settings = {"fractions": list(config.split.fractions), "seed": config.split.seed}

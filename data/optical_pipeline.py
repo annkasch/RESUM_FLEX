@@ -8,9 +8,15 @@ import numpy as np
 
 from data.batch_source import FixedBatchSource
 from data.optical_features import AffineTransform, make_features, make_labels
-from data.optical_reader import read_optical_runs
+from data.optical_reader import read_optical_runs, source_stamp
 from data.optical_reports import generate_reports
-from data.optical_split import FIDELITIES, SPLITS, assign_splits, save_manifest
+from data.optical_split import (
+    FIDELITIES,
+    assign_splits,
+    partition_names,
+    save_manifest,
+    training_partition,
+)
 from schemas.data_models import InputMode, StandardBatch
 from schemas.optical import OpticalDataConfig
 
@@ -22,7 +28,8 @@ class PreparedOpticalData:
     normalization: dict
 
     def training_source(self, fidelity="lf"):
-        return FixedBatchSource(self.batches["train"][fidelity], replace_events=False)
+        split = "cnp_train" if "cnp_train" in self.batches else "train"
+        return FixedBatchSource(self.batches[split][fidelity], replace_events=False)
 
 
 def _pad(rows, width, fill=0):
@@ -56,7 +63,7 @@ def prepare_optical_data(
     features = {r.file: make_features(r, config) for r in runs}
     training = [
         r for r in runs
-        if assignments[r.file] == "train"
+        if assignments[r.file] == training_partition(config)
         and (config.normalization.fit_fidelities is None
              or r.fidelity in config.normalization.fit_fidelities)
     ]
@@ -75,9 +82,10 @@ def prepare_optical_data(
         "fit_files": [r.file for r in training],
         "minmax_range": [0, 1],
     }
-    batches, metadata = {s: {} for s in SPLITS}, {}
+    splits = partition_names(config)
+    batches, metadata = {s: {} for s in splits}, {}
     arrays_to_save = []
-    for split in SPLITS:
+    for split in splits:
         metadata[split] = {}
         for fidelity in FIDELITIES:
             selected = [r for r in runs if assignments[r.file] == split and r.fidelity == fidelity]
@@ -134,12 +142,14 @@ def prepare_optical_data(
         directory.mkdir(parents=True, exist_ok=True)
         np.savez_compressed(directory / f"{fidelity}.npz", **arrays)
     # Remove stale batches when an updated manifest leaves a partition empty.
-    for split in SPLITS:
+    for split in splits:
         for fidelity in FIDELITIES:
             p = out / "batches" / split / f"{fidelity}.npz"
             if fidelity not in batches[split] and p.exists():
                 p.unlink()
+    # The stamp lets ensure_prepared_optical_data skip re-reading unchanged raw files.
     for name, payload in [
+        ("source_stamp", source_stamp(config.source)),
         ("metadata", metadata),
         ("normalization", normalization),
         ("config", config.model_dump(mode="json")),
@@ -157,20 +167,39 @@ def ensure_prepared_optical_data(config: OpticalDataConfig) -> Path:
     Source/configuration changes automatically update the manifest and rebuild
     arrays and normalization. Compatible existing split assignments are retained;
     explicit split policies take precedence. Invalid inputs still fail validation.
+    A matching configuration and raw-file stamp (name, size, mtime per file) reuses the data without
+    reading raw files; any mismatch regenerates it.
     """
     out = config.output_directory
-    runs, _ = read_optical_runs(config.source)
-    _, expected_manifest = assign_splits(runs, config, update=True)
-    required = [out / f"{name}.json" for name in ("config", "metadata", "normalization", "manifest_snapshot")]
-    required += [out / "batches" / split / f"{fid}.npz"
-                 for split, fid in sorted({(r["split"], r["fidelity"]) for r in expected_manifest["files"]})]
-    valid = all(p.is_file() for p in required) and config.split.manifest.is_file()
-    if valid:
-        try:
-            saved = OpticalDataConfig.model_validate(json.loads((out / "config.json").read_text()))
-            valid = saved == config and json.loads((out / "manifest_snapshot.json").read_text()) == expected_manifest
-        except (ValueError, OSError):
-            valid = False
-    if not valid:
-        prepare_optical_data(config, update_manifest=True)
+    stamp_path = out / "source_stamp.json"
+    saved_stamp = json.loads(stamp_path.read_text()) if stamp_path.is_file() else None
+    if (saved_stamp == source_stamp(config.source) and _matches_saved(config)
+            and config.split.manifest.is_file() and _batches_complete(out)):
+        return out
+    # Something differs: regenerate directly, reading every raw file only once.
+    prepare_optical_data(config, update_manifest=True)
     return out
+
+
+def _matches_saved(config: OpticalDataConfig) -> bool:
+    """True when the settings stored at the last preparation equal the current ones."""
+    try:
+        path = config.output_directory / "config.json"
+        return OpticalDataConfig.model_validate(json.loads(path.read_text())) == config
+    except (ValueError, OSError):
+        return False
+
+
+def _batches_complete(out: Path) -> bool:
+    """Every partition in the saved manifest has its prepared batch file."""
+    try:
+        manifest = json.loads((out / "manifest_snapshot.json").read_text())
+        metadata = json.loads((out / "metadata.json").read_text())
+    except (ValueError, OSError):
+        return False
+    pairs = {(r["split"], r["fidelity"]) for r in manifest["files"]}
+    return all((out / "batches" / s / f"{f}.npz").is_file() for s, f in pairs) and all(
+        len(metadata.get(s, {}).get(f, {}).get("files", []))
+        == sum((r["split"], r["fidelity"]) == (s, f) for r in manifest["files"])
+        for s, f in pairs
+    )
