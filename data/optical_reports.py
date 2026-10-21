@@ -7,7 +7,7 @@ from collections import Counter
 import numpy as np
 
 from data.optical_features import center, make_labels
-from data.optical_split import FIDELITIES, SPLITS
+from data.optical_split import FIDELITIES, partition_names
 
 
 def write_csv(path, rows, fields=None):
@@ -48,8 +48,9 @@ def generate_reports(runs, assignments, excluded, config, manifest):
         )
         + "\n"
     )
-    for split in SPLITS:
-        target = root / ("test" if split == "test" else f"development/{split}")
+    for split in partition_names(config):
+        held_out = split in ("test", "cnp_test")
+        target = root / (split if held_out else f"development/{split}")
         target.mkdir(parents=True, exist_ok=True)
         summaries = []
         for fidelity in FIDELITIES:

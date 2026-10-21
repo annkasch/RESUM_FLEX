@@ -244,9 +244,17 @@ class SurrogateRunConfig(SurrogateConfig):
     mfgp_checkpoint: str = "best"
     mfgp: MFGPStageConfig | None = None
     data_directory: Path
+    # Optional data-preparation YAML. When set, each run first compares it with the settings
+    # stored in data_directory and regenerates the prepared data if they differ.
+    data_config: Path | None = None
     output_directory: Path
     validation_context_events: int = Field(default=64, gt=0)
     validation_seed: int = 12345
+    # Checkpoint selection during training uses a seeded subset of LF validation voxels;
+    # None uses all. Full validation and test sets are evaluated once after training.
+    selection_max_voxels: int | None = Field(default=None, gt=0)
+    # CPU threads for evaluation passes only; training steps keep their own thread count.
+    evaluation_threads: int = Field(default=1, gt=0)
 
     @model_validator(mode="after")
     def unique_tests(self):
@@ -279,7 +287,7 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
     """Resolve data/output paths relative to the YAML file, not the caller's cwd."""
     path = Path(path).resolve()
     config = SurrogateRunConfig.model_validate(yaml.safe_load(path.read_text()))
-    for name in ("data_directory", "output_directory", "initial_checkpoint"):
+    for name in ("data_directory", "data_config", "output_directory", "initial_checkpoint"):
         value = getattr(config, name)
         if value is not None and not value.is_absolute():
             setattr(config, name, (path.parent / value).resolve())

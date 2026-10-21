@@ -6,24 +6,60 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ANOMALOUS_FILE = "lf/run067_x-0.088_y+0.484_z-1.462.stp.lh5"
+# Roles of LF voxels in the role-based layout; see RoleSource.
+ROLES = ("cnp_train", "cnp_validation", "cnp_test", "gp_train")
+Role = Literal["cnp_train", "cnp_validation", "cnp_test", "gp_train"]
 
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class RoleSource(StrictModel):
+    """One LF folder whose voxels are divided among ROLES by fraction or by file count.
+
+    Roles left out get no files. ``fractions`` must sum to 1 and are rounded per folder;
+    ``counts`` must add up to the folder's file count unless one role takes ``rest``.
+    An already split folder is e.g. ``fractions: {cnp_validation: 1.0}``.
+    """
+
+    path: Path
+    fractions: dict[Role, float] | None = None
+    counts: dict[Role, int | Literal["rest"]] | None = None
+
+    @model_validator(mode="after")
+    def check_split(self):
+        if (self.fractions is None) == (self.counts is None):
+            raise ValueError(f"{self.path}: give either fractions or counts")
+        if self.fractions is not None:
+            values = list(self.fractions.values())
+            if any(not 0 <= v <= 1 for v in values) or abs(sum(values) - 1) > 1e-9:
+                raise ValueError(f"{self.path}: fractions must lie in [0, 1] and sum to 1")
+        else:
+            values = list(self.counts.values())
+            if values.count("rest") > 1:
+                raise ValueError(f"{self.path}: only one role may take 'rest'")
+            if any(v != "rest" and v < 0 for v in values):
+                raise ValueError(f"{self.path}: counts must be nonnegative")
+        return self
+
+
 class SourceConfig(StrictModel):
     directory: Path | None = None
     directories: dict[Literal["lf", "hf"], list[Path]] = Field(default_factory=dict)
+    # Role-based LF layout: per-folder splits replace the global split fractions.
+    sources: list[RoleSource] = Field(default_factory=list)
     exclude_files: list[str] = Field(default_factory=lambda: [ANOMALOUS_FILE])
-
 
     @model_validator(mode="after")
     def check_sources(self):
-        if (self.directory is not None) == bool(self.directories):
-            raise ValueError("Provide either directory or per-fidelity directories")
+        if sum([self.directory is not None, bool(self.directories), bool(self.sources)]) != 1:
+            raise ValueError("Provide either directory, per-fidelity directories or role sources")
         if any(not paths for paths in self.directories.values()):
             raise ValueError("Each configured fidelity needs at least one folder")
+        paths = [s.path for s in self.sources]
+        if len(set(paths)) != len(paths):
+            raise ValueError("Each role source folder may appear only once")
         return self
 
 
@@ -98,6 +134,16 @@ class OpticalDataConfig(StrictModel):
     split: SplitConfig = Field(default_factory=SplitConfig)
     normalization: NormalizationConfig = Field(default_factory=NormalizationConfig)
 
+    @model_validator(mode="after")
+    def check_role_split(self):
+        per_source = {"seed", "manifest"}
+        default = SplitConfig().model_dump(exclude=per_source)
+        if self.source.sources and self.split.model_dump(exclude=per_source) != default:
+            raise ValueError(
+                "With role sources, set splits per source; only split.seed and split.manifest apply"
+            )
+        return self
+
 
 def load_optical_config(path: str | Path) -> OpticalDataConfig:
     """Load preparation settings with paths relative to the configuration file."""
@@ -116,6 +162,8 @@ def load_optical_config(path: str | Path) -> OpticalDataConfig:
         fidelity: [resolve(folder) for folder in folders]
         for fidelity, folders in config.source.directories.items()
     }
+    for source in config.source.sources:
+        source.path = resolve(source.path)
     config.output_directory = resolve(config.output_directory)
     config.split.manifest = resolve(config.split.manifest)
     return config

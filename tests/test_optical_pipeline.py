@@ -424,3 +424,217 @@ def test_automatic_preparation_updates_changed_sources_and_policy(tmp_path):
     before = path.stat().st_mtime_ns
     ensure_prepared_optical_data(c)
     assert path.stat().st_mtime_ns == before
+
+
+def role_config(tmp_path, sources, **updates):
+    return OpticalDataConfig.model_validate(
+        {
+            "source": {"sources": sources},
+            "output_directory": str(tmp_path / "output"),
+            "split": {"manifest": str(tmp_path / "manifest.json"), "seed": 3},
+            **updates,
+        }
+    )
+
+
+def role_folder(root, number, offset=0.0, first_run=0):
+    for i in range(number):
+        path = fixture_file(root, "x", first_run + i, center=(offset + 0.05 * i, 0.1, 0.2))
+        path.rename(root / path.name)
+    (root / "x").rmdir()
+    return root
+
+
+def test_role_sources_split_by_fraction_count_and_whole_folder(tmp_path):
+    from collections import Counter
+
+    shared = role_folder(tmp_path / "shared", 10)
+    counted = role_folder(tmp_path / "counted", 6, offset=1.0)
+    whole = role_folder(tmp_path / "whole", 3, offset=2.0)
+    c = role_config(tmp_path, [
+        {"path": str(shared), "fractions": {"cnp_train": 0.6, "cnp_validation": 0.1,
+                                           "cnp_test": 0.0, "gp_train": 0.3}},
+        {"path": str(counted), "counts": {"cnp_train": 2, "gp_train": "rest"}},
+        {"path": str(whole), "fractions": {"cnp_validation": 1.0}},
+    ])
+    runs, _ = read_optical_runs(c.source)
+    assert all(r.fidelity == "lf" for r in runs) and {r.source for r in runs} == {0, 1, 2}
+    assignments, payload = assign_splits(runs, c)
+    by_source = Counter((r.source, assignments[r.file]) for r in runs)
+    assert by_source == {(0, "cnp_train"): 6, (0, "cnp_validation"): 1, (0, "gp_train"): 3,
+                         (1, "cnp_train"): 2, (1, "gp_train"): 4, (2, "cnp_validation"): 3}
+    assert assign_splits(runs, c)[0] == assignments
+    result = prepare_optical_data(c)
+    assert set(result.normalization["fit_files"]) == {
+        f for f, role in assignments.items() if role == "cnp_train"}
+    for role, n in [("cnp_train", 8), ("cnp_validation", 4), ("gp_train", 7)]:
+        assert load_prepared_batch(c.output_directory / f"batches/{role}/lf.npz").batch_size == n
+    assert not (c.output_directory / "batches/cnp_test").exists()
+    assert (c.output_directory / "reports/development/gp_train/lf_voxels.csv").exists()
+    assert result.training_source().generate(1, 4, seed=0).labels.shape == (1, 4)
+    assert payload["split_order"][:3] == ["cnp_train", "cnp_validation", "cnp_test"]
+
+
+def test_role_sources_reject_invalid_splits(tmp_path):
+    from schemas.optical import RoleSource, SourceConfig
+
+    with pytest.raises(ValueError, match="sum to 1"):
+        RoleSource(path=tmp_path, fractions={"cnp_train": 0.5})
+    with pytest.raises(ValueError, match="either fractions or counts"):
+        RoleSource(path=tmp_path)
+    with pytest.raises(ValueError, match="only one role"):
+        RoleSource(path=tmp_path, counts={"cnp_train": "rest", "gp_train": "rest"})
+    with pytest.raises(ValueError, match="only once"):
+        SourceConfig(sources=[{"path": tmp_path, "fractions": {"cnp_train": 1}}] * 2)
+    with pytest.raises(ValueError, match="either directory"):
+        SourceConfig(directory=tmp_path, sources=[{"path": tmp_path, "fractions": {"gp_train": 1}}])
+    folder = role_folder(tmp_path / "a", 4)
+    with pytest.raises(ValueError, match="only split.seed"):
+        role_config(tmp_path, [{"path": str(folder), "fractions": {"cnp_train": 1}}],
+                    split={"train_fraction": 0.5, "validation_fraction": 0.5,
+                           "test_fraction": 0.0})
+    c = role_config(tmp_path, [{"path": str(folder), "counts": {"cnp_train": 3}}])
+    runs, _ = read_optical_runs(c.source)
+    with pytest.raises(ValueError, match="do not match its 4 files"):
+        assign_splits(runs, c)
+    # The same voxel position in two folders could get conflicting roles.
+    twin = role_folder(tmp_path / "b", 1, first_run=50)
+    c = role_config(tmp_path, [{"path": str(folder), "fractions": {"cnp_train": 1}},
+                               {"path": str(twin), "fractions": {"gp_train": 1}}])
+    runs, _ = read_optical_runs(c.source)
+    with pytest.raises(ValueError, match="several source folders"):
+        assign_splits(runs, c)
+
+
+def test_role_manifest_keeps_assignments_and_detects_changes(tmp_path):
+    from data.optical_pipeline import ensure_prepared_optical_data
+
+    folder = role_folder(tmp_path / "a", 8)
+    sources = [{"path": str(folder), "fractions": {"cnp_train": 0.5, "gp_train": 0.5}}]
+    c = role_config(tmp_path, sources)
+    ensure_prepared_optical_data(c)
+    first = json.loads(c.split.manifest.read_text())
+    runs, _ = read_optical_runs(c.source)
+    (folder / runs[0].file.split("/")[1]).unlink()
+    runs, _ = read_optical_runs(c.source)
+    with pytest.raises(ValueError, match="explicit manifest update"):
+        assign_splits(runs, c)
+    ensure_prepared_optical_data(c)
+    kept = {r["file"]: r["split"] for r in json.loads(c.split.manifest.read_text())["files"]}
+    assert kept == {r["file"]: r["split"] for r in first["files"] if r["file"] in kept}
+
+
+def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
+    from core.surrogates.experiment import partition_path, run_experiment
+    from schemas.surrogates import SurrogateRunConfig
+
+    folder = role_folder(tmp_path / "a", 6)
+    c = role_config(tmp_path, [{"path": str(folder), "fractions": {
+        "cnp_train": 0.5, "cnp_validation": 0.25, "cnp_test": 0.25}}])
+    prepare_optical_data(c)
+    root = c.output_directory
+    assert partition_path(root, "validation", "lf") == root / "batches/cnp_validation/lf.npz"
+    base = yaml_safe_config(root, tmp_path / "run")
+    with pytest.raises(ValueError, match="LF only"):
+        run_experiment(SurrogateRunConfig.model_validate({**base, "hf_validation": True}))
+
+
+def yaml_safe_config(data, output):
+    return {
+        "model": {"kind": "cnp", "encoder": {"type": "mlp", "latent_dim": 4,
+                                             "hidden_dims": [8]}},
+        "training": {"backend": "neural", "n_steps": 1, "eval_every": 1, "batch_size": 1,
+                     "n_events": 4, "n_context_min": 1, "n_context_max": 2},
+        "data_directory": str(data),
+        "output_directory": str(output),
+        "validation_context_events": 2,
+    }
+
+
+def test_fast_check_skips_reading_and_detects_config_and_file_changes(tmp_path, monkeypatch):
+    import data.optical_pipeline as pipeline
+
+    a = role_folder(tmp_path / "a", 6)
+    b = role_folder(tmp_path / "b", 4, offset=1.0, first_run=20)
+    sources = [{"path": str(a), "fractions": {"cnp_train": 0.5, "cnp_test": 0.5}}]
+    c = role_config(tmp_path, sources)
+    out = pipeline.ensure_prepared_optical_data(c)
+    assert (out / "source_stamp.json").is_file()
+    calls = []
+    real = pipeline.read_optical_runs
+    monkeypatch.setattr(pipeline, "read_optical_runs", lambda s: calls.append(1) or real(s))
+    pipeline.ensure_prepared_optical_data(c)
+    assert not calls  # unchanged settings and files: raw files are not read again
+    # Changed ratio, same everything else: data is regenerated with the new split.
+    c = role_config(tmp_path, [{**sources[0], "fractions": {"cnp_train": 1.0}}])
+    pipeline.ensure_prepared_optical_data(c)
+    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 6
+    assert not (out / "batches/cnp_test/lf.npz").exists()
+    # Changed input folder: regenerated from the new files.
+    c = role_config(tmp_path, [{"path": str(b), "fractions": {"cnp_train": 1.0}}])
+    pipeline.ensure_prepared_optical_data(c)
+    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 4
+    # A file added to the folder changes the stamp and is picked up.
+    role_folder(tmp_path / "b2", 1, offset=3.0, first_run=40)
+    new_file = next((tmp_path / "b2").iterdir())
+    new_file.rename(b / new_file.name)
+    pipeline.ensure_prepared_optical_data(c)
+    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 5
+
+
+def test_cnp_run_regenerates_stale_data_from_data_config(tmp_path):
+    import yaml
+
+    from core.surrogates.experiment import ensure_matching_data
+    from schemas.surrogates import load_surrogate_config
+
+    folder = role_folder(tmp_path / "a", 6)
+    data_yaml = tmp_path / "data.yaml"
+
+    def write_data(fractions):
+        data_yaml.write_text(yaml.safe_dump({
+            "source": {"sources": [{"path": str(folder), "fractions": fractions}]},
+            "output_directory": "prepared",
+            "split": {"manifest": "prepared/split.json"},
+        }))
+
+    write_data({"cnp_train": 0.5, "cnp_validation": 0.5})
+    run_yaml = tmp_path / "run.yaml"
+    run_yaml.write_text(yaml.safe_dump({**yaml_safe_config("prepared", "run"),
+                                        "data_config": "data.yaml"}))
+    run = load_surrogate_config(run_yaml)
+    assert run.data_config == data_yaml
+    assert ensure_matching_data(run.data_config, run.data_directory)["regenerated"]
+    assert not ensure_matching_data(run.data_config, run.data_directory)["regenerated"]
+    write_data({"cnp_train": 1.0})
+    assert ensure_matching_data(run.data_config, run.data_directory)["regenerated"]
+    assert load_prepared_batch(tmp_path / "prepared/batches/cnp_train/lf.npz").batch_size == 6
+    with pytest.raises(ValueError, match="but data_directory"):
+        ensure_matching_data(run.data_config, tmp_path / "elsewhere")
+
+
+def test_cnp_selection_subset_and_evaluation_threads(tmp_path):
+    import torch
+
+    from core.surrogates.evaluation import evaluation_threads
+    from core.surrogates.experiment import run_experiment
+    from schemas.surrogates import SurrogateRunConfig
+
+    folder = role_folder(tmp_path / "a", 12)
+    c = role_config(tmp_path, [{"path": str(folder), "fractions": {
+        "cnp_train": 0.5, "cnp_validation": 0.5}}])
+    prepare_optical_data(c)
+    torch.set_num_threads(1)
+    with evaluation_threads(3):
+        assert torch.get_num_threads() == 1  # only evaluation calls switch threads
+    config = SurrogateRunConfig.model_validate({
+        **yaml_safe_config(c.output_directory, tmp_path / "run"),
+        "hf_validation": False, "selection_max_voxels": 2, "evaluation_threads": 2,
+    })
+    output = run_experiment(config)
+    experiment = json.loads((output / "experiment.json").read_text())
+    assert experiment["selection_voxels"] == {"available": 6, "used": 2}
+    metrics = json.loads((output / "metrics.json").read_text())
+    # The final evaluation still covers every validation voxel.
+    assert {m["voxels"] for m in metrics if m["split"] == "validation"} == {6}
+    assert torch.get_num_threads() == 1

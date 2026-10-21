@@ -416,6 +416,50 @@ map, and leaves all checkpoints and prediction arrays in the run directory. It d
 not read test files, regenerate simulation data, or submit a Slurm job.
 
 
+## LF role sources (CNP-only data)
+
+For CNP work without HF, `source.sources` lists LF folders and how each folder's voxels are
+divided among four roles: `cnp_train`, `cnp_validation`, `cnp_test` and `gp_train`. Each folder
+gives either `fractions` (sum to 1, rounded per folder) or `counts` (file counts; one role may
+take `rest`). Roles left out get no files, so an already split folder is a single role at 1.0:
+
+```yaml
+source:
+  sources:
+  - path: /data/lower_cyl/lf
+    fractions: {cnp_train: 0.6, cnp_validation: 0.1, cnp_test: 0.0, gp_train: 0.3}
+  - path: /data/lf_batch2
+    counts: {cnp_train: 5000, cnp_validation: 1000, gp_train: rest}
+  - path: /data/lf_val_only
+    fractions: {cnp_validation: 1.0}
+split:
+  seed: 42
+  manifest: outputs/my_data/splits/voxel_split.json
+```
+
+Splitting keeps whole voxels together and is seeded per folder; the global split fractions
+are rejected in this layout. The same voxel position in two folders is an error.
+Normalization is fitted on `cnp_train`. Prepared batches are written to
+`batches/<role>/lf.npz`. `python -m core.surrogates train` reads `cnp_train`, `cnp_validation`
+(with `lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]`). Set
+`hf_validation: false` and leave out `mfgp`; the run stops before training otherwise.
+The experiment framework (`core.experiments`) does not read this layout yet.
+
+Two settings in the training config make large validation sets cheap.
+`selection_max_voxels: N` selects checkpoints during training on a seeded subset of at most N
+LF validation voxels (seed `validation_seed`); the full validation and test sets are still
+evaluated once after training. `evaluation_threads: N` runs evaluation passes with N torch CPU
+threads and restores the training thread count afterwards; results are identical. Measured:
+2.65 ms per 1000-event voxel on 1 thread, 0.9 ms on 16.
+
+Set `data_config: <data YAML>` in the training config to keep the prepared data in sync.
+Each `core.surrogates train` run then compares the data YAML with `config.json`, which only
+preparation writes, and the raw files with `source_stamp.json` (path, size and modification
+time of every file). If both match, the raw files are not read. Otherwise the run checks file
+contents and regenerates the prepared data if anything differs, before training starts.
+The data YAML's `output_directory` must be the training `data_directory`. Whether data was
+regenerated is recorded in the run's `experiment.json`.
+
 ## Multiple raw input folders
 
 `config.optical.data.yaml` controls preparation and accepts lists of folders per

@@ -1,0 +1,43 @@
+# Lower-cylinder v0, LF only: CNP training, LF validation for checkpoint selection, LF test.
+model:
+  kind: cnp
+  encoder:
+    type: mlp
+    latent_dim: 64
+    hidden_dims: [128, 128]
+    dropout: 0.0
+training:
+  backend: neural
+  loss: bernoulli
+  n_steps: 12000
+  eval_every: 250
+  learning_rate: 0.001
+  batch_size: 16
+  n_events: 128
+  n_context_min: 16
+  n_context_max: 64
+  seed: 0
+  device: cpu
+  focal_gamma: 0
+  objective:
+    strategy: single
+  sampling:
+    strategy: class_aware_mixup
+    mixup:
+      alpha: 0.2
+      mix_context: true
+  weighting:
+    strategy: none
+selection: voxel_rate_mae
+lf_validation: true
+hf_validation: false
+test_fidelities: [lf]
+data_directory: outputs/optical_lower_cyl_cnp_v0
+data_config: config.optical.lower_cyl.cnp.data.yaml
+output_directory: outputs/optical_resum/lower_cyl_cnp_v0/seed0
+validation_context_events: 64
+validation_seed: 12345
+# Checkpoint selection uses at most 5000 validation voxels (v0 has ~1440, so all of them);
+# full validation and test sets are evaluated once at the end.
+selection_max_voxels: 5000
+evaluation_threads: 16
