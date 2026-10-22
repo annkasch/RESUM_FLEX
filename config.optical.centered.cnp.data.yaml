@@ -1,0 +1,33 @@
+# Ian Wang's centered_425_375_375 box (x 0.365-0.485, y 0.315-0.435, z 0.2975-0.4525 m, 5 mm
+# voxels), LF only (1500 primaries/voxel), for CNP-only work (2026-10-22).
+# LF_sim -> training; Ian's separate validation/lf voxels -> 50/50 validation/test.
+# Voxels partly overlapping a Ge detector (smaller LAr fill volume) are kept as normal voxels.
+source:
+  sources:
+  - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/LF_sim/lf
+    fractions: {cnp_train: 1.0}
+  - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/validation/lf/lf
+    fractions: {cnp_validation: 0.5, cnp_test: 0.5}
+  # Crashed runs: N=1 with the single vertex at the origin.
+  exclude_files:
+  - lf/run00782_v00010738_x+0.4300_y+0.3650_z+0.3875.stp.lh5
+  - lf/run00150_v00009939_x+0.4250_y+0.3650_z+0.3925.stp.lh5
+output_directory: outputs/optical_centered_cnp_v0
+theta:
+  coordinates: cartesian
+  center_source: filename
+phi:
+  vertex:
+    representation: offset
+    coordinates: cartesian
+  momentum:
+    representation: components
+target:
+  kind: any_channel
+  detector_id: null
+split:
+  seed: 42
+  manifest: outputs/optical_centered_cnp_v0/splits/voxel_split.json
+normalization:
+  method: standard
+  fit_on: training
