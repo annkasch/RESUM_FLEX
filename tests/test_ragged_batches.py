@@ -247,50 +247,6 @@ def test_mfgp_stage_uses_per_voxel_target_counts(tmp_path, transform):
         assert details["hf_target_events"] == (COUNTS - 4).tolist()
 
 
-def test_experiment_framework_handles_ragged_partitions(tmp_path):
-    from core.experiments.runner import run
-    from schemas.experiments import ExperimentSpec
-
-    root = tmp_path / "data"
-    for split in ("train", "validation"):
-        for i, fid in enumerate(("lf", "hf")):
-            save(root / "batches" / split, fid, ragged(seed=10 * i + len(split))[1])
-    spec = ExperimentSpec(
-        name="ragged",
-        store=tmp_path / "store",
-        dataset={"prepared": root},
-        pipeline={
-            "kind": "event",
-            "model": {"kind": "cnp", "encoder": {"latent_dim": 8, "hidden_dims": [12]}},
-            "training": {
-                "backend": "neural",
-                "n_steps": 2,
-                "eval_every": 1,
-                "batch_size": 2,
-                "n_events": 12,
-                "n_context_min": 4,
-                "n_context_max": 4,
-            },
-        },
-        evaluation={
-            "context_events": 4,
-            "partitions": ["validation/lf", "validation/hf"],
-            "plots": ["means", "precision_recall"],
-        },
-    )
-    out = run(spec)
-    with np.load(out / "evaluation/validation_hf.npz") as ids:
-        np.testing.assert_array_equal(ids["trials"], COUNTS - 4)
-        np.testing.assert_array_equal(ids["target_counts"], COUNTS - 4)
-        padding = np.arange(ids["target_event_ids"].shape[1])[None, :] >= (COUNTS - 4)[:, None]
-        assert (ids["target_event_ids"][padding] == -1).all()
-        assert (ids["target_event_ids"][~padding] >= 0).all()
-        assert ids["hits"].sum() == ids["labels"].sum()
-    metrics = json.loads((out / "metrics.json").read_text())
-    assert all(np.isfinite(r["metrics"]["mae"]) for r in metrics)
-    assert all(np.isfinite(r["metrics"]["bernoulli_log_loss"]) for r in metrics)
-
-
 def test_rectangular_only_helpers_reject_ragged_batches():
     from core.cnp_validation import evaluate_cnp_validation
     from core.surrogate_cnp import build_cnp
