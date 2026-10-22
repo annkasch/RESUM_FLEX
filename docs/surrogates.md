@@ -443,7 +443,6 @@ Normalization is fitted on `cnp_train`. Prepared batches are written to
 `batches/<role>/lf.npz`. `python -m core.surrogates train` reads `cnp_train`, `cnp_validation`
 (with `lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]`). Set
 `hf_validation: false` and leave out `mfgp`; the run stops before training otherwise.
-The experiment framework (`core.experiments`) does not read this layout yet.
 
 Two settings in the training config make large validation sets cheap.
 `selection_max_voxels: N` selects checkpoints during training on a seeded subset of at most N
