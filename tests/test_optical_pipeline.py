@@ -91,6 +91,20 @@ def test_reader_preserves_event_pairs_and_collapses_hits(tmp_path):
     assert make_labels(zero, c).sum() == 0
 
 
+def test_reader_accepts_voxel_index_in_filename(tmp_path):
+    c = config(tmp_path)
+    src = fixture_file(c.source.directory, center=(0.385, 0.425, 0.3425))
+    p = src.with_name("run00001_v00003913_x+0.3850_y+0.4250_z+0.3425.stp.lh5")
+    src.rename(p)
+    r = read_run(p, c.source.directory)
+    assert r.file == f"lf/{p.name}"
+    assert np.allclose(r.nominal_center, [0.385, 0.425, 0.3425])
+    bad = p.with_name("run00002_vx_x+0.3850_y+0.4250_z+0.3425.stp.lh5")
+    p.rename(bad)
+    with pytest.raises(ValueError, match="filename must encode"):
+        read_run(bad, c.source.directory)
+
+
 @pytest.mark.parametrize(
     "corruption", ["missing", "units", "length", "nan", "duplicate", "unknown"]
 )

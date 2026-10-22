@@ -11,8 +11,10 @@ import numpy as np
 
 from schemas.optical import ANOMALOUS_FILE, SourceConfig
 
+# An optional `_v{voxel index}` segment (`run00001_v00003913_x+...`) is accepted and ignored.
 NAME = re.compile(
-    r"run\d+_x([+-]?\d+(?:\.\d+)?)_y([+-]?\d+(?:\.\d+)?)_z([+-]?\d+(?:\.\d+)?)\.stp\.lh5$"
+    r"run\d+(?:_v\d+)?_x([+-]?\d+(?:\.\d+)?)_y([+-]?\d+(?:\.\d+)?)"
+    r"_z([+-]?\d+(?:\.\d+)?)\.stp\.lh5$"
 )
 
 
