@@ -6,7 +6,7 @@ from typing import Literal
 import yaml
 from pydantic import Field, model_validator
 
-from schemas.optical import OpticalDataConfig, StrictModel
+from schemas.optical import OpticalDataConfig, StrictModel, resolve_cache_directory
 from schemas.projections import ProjectionConfig
 
 
@@ -47,6 +47,7 @@ def load_count_gp_config(path):
 
     cfg.output_directory = resolve(cfg.output_directory)
     cfg.data.output_directory = resolve(cfg.data.output_directory)
+    resolve_cache_directory(cfg.data, resolve)
     cfg.data.split.manifest = resolve(cfg.data.split.manifest)
     if cfg.data.source.directory is not None:
         cfg.data.source.directory = resolve(cfg.data.source.directory)

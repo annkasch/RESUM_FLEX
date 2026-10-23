@@ -7,13 +7,23 @@ import numpy as np
 import pytest
 
 from data.optical_features import AffineTransform, cylindrical, make_features, make_labels
-from data.optical_pipeline import load_prepared_batch, prepare_optical_data
+from data.optical_pipeline import load_partition, prepare_optical_data
 from data.optical_reader import read_optical_runs, read_run
 from data.optical_split import assign_splits, integer_targets, save_manifest
 from schemas.config import load_config
 from schemas.optical import ANOMALOUS_FILE, OpticalDataConfig
 
 h5py = pytest.importorskip("h5py")
+
+
+def load(out, partition, fidelity="lf"):
+    return load_partition(out, partition, fidelity)[0]
+
+
+def has(out, partition, fidelity="lf"):
+    from data.optical_view import OpticalView
+
+    return (partition, fidelity) in OpticalView(out).available()
 
 
 def fixture_file(
@@ -230,7 +240,9 @@ def test_normalization_constant_and_serialization(method):
 def test_prepare_roundtrip_training_only_and_reports(tmp_path):
     c = dataset(tmp_path)
     result = prepare_optical_data(c)
-    assert sum(b.batch_size for fs in result.batches.values() for b in fs.values()) == 20
+    assert sum(
+        result.batch(p, f).batch_size for p in result.partitions for f in result.available(p)
+    ) == 20
     train_files = {name for meta in result.metadata["train"].values() for name in meta["files"]}
     assert train_files == set(result.normalization["fit_files"])
     runs, _ = read_optical_runs(c.source)
@@ -239,9 +251,17 @@ def test_prepare_roundtrip_training_only_and_reports(tmp_path):
     expected_phi = np.concatenate(
         [make_features(r, c)[1] for r in runs if r.file in train_files]
     ).mean(0)
-    np.testing.assert_allclose(result.normalization["phi"]["offset"], expected_phi)
-    loaded = load_prepared_batch(c.output_directory / "batches/train/lf.npz")
-    np.testing.assert_array_equal(loaded.phi, result.batches["train"]["lf"].phi)
+    # Events are cached in float32 (offsets of ~1e-9 m remain).
+    np.testing.assert_allclose(result.normalization["phi"]["offset"], expected_phi, atol=1e-8)
+    loaded = load(c.output_directory, "train")
+    np.testing.assert_array_equal(loaded.phi, result.batch("train", "lf").phi)
+    # The view gives the features of the original per-file path, in float32.
+    train_runs = [r for r in runs if r.file in result.metadata["train"]["lf"]["files"]]
+    expected = AffineTransform(**result.normalization["phi"]).transform(
+        np.stack([make_features(r, c)[1] for r in train_runs])
+    )
+    np.testing.assert_allclose(loaded.phi, expected, atol=1e-4)
+    np.testing.assert_array_equal(loaded.labels, [make_labels(r, c) for r in train_runs])
     source = result.training_source()
     probe = source.generate(2, 8, seed=1)
     assert all(len(np.unique(trial, axis=0)) == 8 for trial in probe.phi)
@@ -257,23 +277,19 @@ def test_design_only_and_unequal_event_counts(tmp_path):
     c = dataset(tmp_path)
     c.phi.vertex.representation = c.phi.momentum.representation = "omit"
     result = prepare_optical_data(c)
-    assert result.batches["train"]["lf"].phi is None
-    assert result.batches["train"]["lf"].mode.value == "design_only"
+    assert result.batch("train", "lf").phi is None
+    assert result.batch("train", "lf").mode.value == "design_only"
     # A repeated run must share the voxel split, exposing ragged input.
     fixture_file(c.source.directory, "lf", 98, (0.0, 0.0, 0.2), n=9)
     result = prepare_optical_data(c, update_manifest=True)
     files = result.metadata["train"]["lf"]["files"]
-    batch = result.batches["train"]["lf"]
+    batch = result.batch("train", "lf")
     counts = batch.events_per_voxel
     assert batch.is_ragged and batch.n_events == 9 and sorted(set(counts)) == [8, 9]
     assert result.metadata["train"]["lf"]["event_counts"] == counts.tolist()
-    # Padding is zero and excluded; reloading preserves counts and padded event ids.
+    # Padding is zero and excluded; reloading preserves counts.
     assert not batch.labels[~batch.event_mask].any()
-    path = c.output_directory / "batches/train/lf.npz"
-    reloaded = load_prepared_batch(path)
-    np.testing.assert_array_equal(reloaded.event_counts, counts)
-    with np.load(path) as arrays:
-        assert (arrays["event_ids"][~batch.event_mask] == -1).all()
+    np.testing.assert_array_equal(load(c.output_directory, "train").event_counts, counts)
     row = next(i for i, f in enumerate(files) if f.startswith("lf/run098"))
     run = read_run(c.source.directory / files[row], c.source.directory)
     np.testing.assert_array_equal(batch.labels[row, : counts[row]], make_labels(run, c))
@@ -386,8 +402,8 @@ def test_automatic_preparation_recovers_batches_and_keeps_split(tmp_path):
     manifest = json.loads(c.split.manifest.read_text())
     assert all(r['split'] == 'train' for r in manifest['files'] if r['fidelity'] == 'lf')
     assert sum(r['split'] == 'train' and r['fidelity'] == 'hf' for r in manifest['files']) == 2
-    assert not (out / 'batches/validation/lf.npz').exists()
-    path = out / 'batches/train/lf.npz'
+    assert not has(out, 'validation')
+    path = out / 'view.json'
     before = path.stat().st_mtime_ns
     ensure_prepared_optical_data(c)
     assert path.stat().st_mtime_ns == before
@@ -419,22 +435,22 @@ def test_automatic_preparation_updates_changed_sources_and_policy(tmp_path):
     new = json.loads(c.split.manifest.read_text())
     assert len(new["files"]) == len(old["files"]) - 1
     assert {r["file"]: r["split"] for r in new["files"] if r["fidelity"] == "hf"} == old_hf
-    assert load_prepared_batch(out / "batches/train/lf.npz").batch_size == 3
+    assert load(out, "train").batch_size == 3
     assert len(json.loads((out / "normalization.json").read_text())["fit_files"]) == 5
     # Changed file contents also trigger rebuilding, not just changed membership.
     with h5py.File(lf[0], "r+") as h:
         h["stp/optical/evtid"][:] = [2, 2, 2]
     ensure_prepared_optical_data(c)
-    assert load_prepared_batch(out / "batches/train/lf.npz").labels.sum() == 5
+    assert load(out, "train").labels.sum() == 5
     fixture_file(c.source.directory, "lf", 9, center=(9., 0., 0.))
     c.split.hf_train_count = 3
     ensure_prepared_optical_data(c)
-    assert load_prepared_batch(out / "batches/train/lf.npz").batch_size == 4
-    assert load_prepared_batch(out / "batches/train/hf.npz").batch_size == 3
-    assert load_prepared_batch(out / "batches/validation/hf.npz").batch_size == 2
+    assert load(out, "train").batch_size == 4
+    assert load(out, "train", "hf").batch_size == 3
+    assert load(out, "validation", "hf").batch_size == 2
     manifest = json.loads(c.split.manifest.read_text())
     assert json.loads((out / "manifest_snapshot.json").read_text()) == manifest
-    path = out / "batches/train/lf.npz"
+    path = out / "view.json"
     before = path.stat().st_mtime_ns
     ensure_prepared_optical_data(c)
     assert path.stat().st_mtime_ns == before
@@ -482,8 +498,8 @@ def test_role_sources_split_by_fraction_count_and_whole_folder(tmp_path):
     assert set(result.normalization["fit_files"]) == {
         f for f, role in assignments.items() if role == "cnp_train"}
     for role, n in [("cnp_train", 8), ("cnp_validation", 4), ("gp_train", 7)]:
-        assert load_prepared_batch(c.output_directory / f"batches/{role}/lf.npz").batch_size == n
-    assert not (c.output_directory / "batches/cnp_test").exists()
+        assert load(c.output_directory, role).batch_size == n
+    assert not has(c.output_directory, "cnp_test")
     assert (c.output_directory / "reports/development/gp_train/lf_voxels.csv").exists()
     assert result.training_source().generate(1, 4, seed=0).labels.shape == (1, 4)
     assert payload["split_order"][:3] == ["cnp_train", "cnp_validation", "cnp_test"]
@@ -539,7 +555,7 @@ def test_role_manifest_keeps_assignments_and_detects_changes(tmp_path):
 
 
 def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
-    from core.surrogates.experiment import partition_path, run_experiment
+    from core.surrogates.experiment import partition_name, run_experiment
     from schemas.surrogates import SurrogateRunConfig
 
     folder = role_folder(tmp_path / "a", 6)
@@ -547,7 +563,7 @@ def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
         "cnp_train": 0.5, "cnp_validation": 0.25, "cnp_test": 0.25}}])
     prepare_optical_data(c)
     root = c.output_directory
-    assert partition_path(root, "validation", "lf") == root / "batches/cnp_validation/lf.npz"
+    assert partition_name(root, "validation") == "cnp_validation"
     base = yaml_safe_config(root, tmp_path / "run")
     with pytest.raises(ValueError, match="LF only"):
         run_experiment(SurrogateRunConfig.model_validate({**base, "hf_validation": True}))
@@ -575,25 +591,25 @@ def test_fast_check_skips_reading_and_detects_config_and_file_changes(tmp_path, 
     out = pipeline.ensure_prepared_optical_data(c)
     assert (out / "source_stamp.json").is_file()
     calls = []
-    real = pipeline.read_optical_runs
-    monkeypatch.setattr(pipeline, "read_optical_runs", lambda s: calls.append(1) or real(s))
+    real = pipeline.cached_runs
+    monkeypatch.setattr(pipeline, "cached_runs", lambda *a, **k: calls.append(1) or real(*a, **k))
     pipeline.ensure_prepared_optical_data(c)
-    assert not calls  # unchanged settings and files: raw files are not read again
+    assert not calls  # unchanged settings and files: neither raw files nor cache are read
     # Changed ratio, same everything else: data is regenerated with the new split.
     c = role_config(tmp_path, [{**sources[0], "fractions": {"cnp_train": 1.0}}])
     pipeline.ensure_prepared_optical_data(c)
-    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 6
-    assert not (out / "batches/cnp_test/lf.npz").exists()
+    assert load(out, "cnp_train").batch_size == 6
+    assert not has(out, "cnp_test")
     # Changed input folder: regenerated from the new files.
     c = role_config(tmp_path, [{"path": str(b), "fractions": {"cnp_train": 1.0}}])
     pipeline.ensure_prepared_optical_data(c)
-    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 4
+    assert load(out, "cnp_train").batch_size == 4
     # A file added to the folder changes the stamp and is picked up.
     role_folder(tmp_path / "b2", 1, offset=3.0, first_run=40)
     new_file = next((tmp_path / "b2").iterdir())
     new_file.rename(b / new_file.name)
     pipeline.ensure_prepared_optical_data(c)
-    assert load_prepared_batch(out / "batches/cnp_train/lf.npz").batch_size == 5
+    assert load(out, "cnp_train").batch_size == 5
 
 
 def test_cnp_run_regenerates_stale_data_from_data_config(tmp_path):
@@ -622,7 +638,7 @@ def test_cnp_run_regenerates_stale_data_from_data_config(tmp_path):
     assert not ensure_matching_data(run.data_config, run.data_directory)["regenerated"]
     write_data({"cnp_train": 1.0})
     assert ensure_matching_data(run.data_config, run.data_directory)["regenerated"]
-    assert load_prepared_batch(tmp_path / "prepared/batches/cnp_train/lf.npz").batch_size == 6
+    assert load(tmp_path / "prepared", "cnp_train").batch_size == 6
     with pytest.raises(ValueError, match="but data_directory"):
         ensure_matching_data(run.data_config, tmp_path / "elsewhere")
 

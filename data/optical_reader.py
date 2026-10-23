@@ -41,76 +41,99 @@ class OpticalRun:
         return len(self.event_ids)
 
 
+def nominal_center(name: str) -> np.ndarray:
+    """Voxel center encoded in a simulation filename."""
+    match = NAME.fullmatch(name)
+    if not match:
+        raise ValueError("filename must encode nominal x/y/z coordinates")
+    return np.array(match.groups(), dtype=float)
+
+
+def read_arrays(h) -> dict:
+    """Validated vertex and optical-hit arrays of one open LH5 file (h5py.File)."""
+
+    def array(key, unit=None, integer=False):
+        d = h[key]
+        a = d[:]
+        if a.ndim != 1 or not np.isfinite(a).all():
+            raise ValueError(f"{key}: expected finite 1-D array")
+        if integer and not np.issubdtype(a.dtype, np.integer):
+            raise ValueError(f"{key}: expected integer values")
+        if unit and d.attrs.get("units") not in (unit, unit.encode()):
+            raise ValueError(f"{key}: expected units {unit}")
+        return a
+
+    n_raw = h["number_of_simulated_events"][()]
+    if np.ndim(n_raw) != 0 or not np.isfinite(n_raw) or n_raw <= 0:
+        raise ValueError("invalid simulated event count")
+    n = int(n_raw)
+    if n != n_raw:
+        raise ValueError("non-integral simulated event count")
+    ev = array("vtx/evtid", integer=True)
+    if len(ev) != n or len(np.unique(ev)) != n:
+        raise ValueError("vertex IDs must be unique and match simulated event count")
+    pos = [array("vtx/" + a + "loc", "m") for a in "xyz"]
+    mom = [array("vtx/p" + a, "MeV") for a in "xyz"]
+    time = array("vtx/time", "ns")
+    n_part = array("vtx/n_part", integer=True)
+    if any(len(a) != n for a in [*pos, *mom, time, n_part]):
+        raise ValueError("vertex array length mismatch")
+    if np.any(n_part < 1):
+        raise ValueError("n_part must be positive")
+    hit_ev = array("stp/optical/evtid", integer=True)
+    det = array("stp/optical/det_uid", integer=True)
+    ht = array("stp/optical/time", "ns")
+    wave = array("stp/optical/wavelength", "nm")
+    if any(len(a) != len(hit_ev) for a in [det, ht, wave]):
+        raise ValueError("optical hit array length mismatch")
+    if not np.isin(hit_ev, ev).all():
+        raise ValueError("hit references unknown vertex event ID")
+    return dict(
+        event_ids=ev,
+        positions=np.column_stack(pos),
+        momenta=np.column_stack(mom),
+        vertex_time=time,
+        n_part=n_part,
+        hit_event_ids=hit_ev,
+        detector_ids=det,
+        hit_time=ht,
+        hit_wavelength=wave,
+    )
+
+
 def read_run(path: Path, root: Path, *, fidelity: str | None = None) -> OpticalRun:
     try:
         import h5py
     except ImportError as exc:
         raise ImportError("Install resum-flex[optical-data] to read LH5 files") from exc
     try:
-        relative = path.relative_to(root).as_posix() if fidelity is None else f"{fidelity}/{path.name}"
+        relative = (
+            path.relative_to(root).as_posix() if fidelity is None else f"{fidelity}/{path.name}"
+        )
         fidelity = path.relative_to(root).parts[0] if fidelity is None else fidelity
         if fidelity not in ("hf", "lf"):
             raise ValueError("file must be inside hf/ or lf/")
-        match = NAME.fullmatch(path.name)
-        if not match:
-            raise ValueError("filename must encode nominal x/y/z coordinates")
+        center = nominal_center(path.name)
         with h5py.File(path, "r") as h:
-
-            def array(key, unit=None, integer=False):
-                d = h[key]
-                a = d[:]
-                if a.ndim != 1 or not np.isfinite(a).all():
-                    raise ValueError(f"{key}: expected finite 1-D array")
-                if integer and not np.issubdtype(a.dtype, np.integer):
-                    raise ValueError(f"{key}: expected integer values")
-                if unit and d.attrs.get("units") not in (unit, unit.encode()):
-                    raise ValueError(f"{key}: expected units {unit}")
-                return a
-
-            n_raw = h["number_of_simulated_events"][()]
-            if np.ndim(n_raw) != 0 or not np.isfinite(n_raw) or n_raw <= 0:
-                raise ValueError("invalid simulated event count")
-            n = int(n_raw)
-            if n != n_raw:
-                raise ValueError("non-integral simulated event count")
-            ev = array("vtx/evtid", integer=True)
-            if len(ev) != n or len(np.unique(ev)) != n:
-                raise ValueError("vertex IDs must be unique and match simulated event count")
-            pos = [array("vtx/" + a + "loc", "m") for a in "xyz"]
-            mom = [array("vtx/p" + a, "MeV") for a in "xyz"]
-            time = array("vtx/time", "ns")
-            n_part = array("vtx/n_part", integer=True)
-            if any(len(a) != n for a in [*pos, *mom, time, n_part]):
-                raise ValueError("vertex array length mismatch")
-            if np.any(n_part < 1):
-                raise ValueError("n_part must be positive")
-            hit_ev = array("stp/optical/evtid", integer=True)
-            det = array("stp/optical/det_uid", integer=True)
-            ht = array("stp/optical/time", "ns")
-            wave = array("stp/optical/wavelength", "nm")
-            if any(len(a) != len(hit_ev) for a in [det, ht, wave]):
-                raise ValueError("optical hit array length mismatch")
-            if not np.isin(hit_ev, ev).all():
-                raise ValueError("hit references unknown vertex event ID")
-            positions = np.column_stack(pos).astype(float)
-            momenta = np.column_stack(mom).astype(float)
+            a = read_arrays(h)
+        positions, momenta = a["positions"].astype(float), a["momenta"].astype(float)
         with path.open("rb") as f:
             fingerprint = hashlib.file_digest(f, "sha256").hexdigest()
         return OpticalRun(
             relative,
             fidelity,
             fingerprint,
-            np.array(match.groups(), dtype=float),
+            center,
             (positions.min(0) + positions.max(0)) / 2,
-            ev,
+            a["event_ids"],
             positions,
             momenta,
-            time,
-            n_part,
-            hit_ev,
-            det,
-            ht,
-            wave,
+            a["vertex_time"],
+            a["n_part"],
+            a["hit_event_ids"],
+            a["detector_ids"],
+            a["hit_time"],
+            a["hit_wavelength"],
         )
     except (KeyError, ValueError, OSError, TypeError) as exc:
         raise ValueError(f"{path}: {exc}") from exc
@@ -175,13 +198,22 @@ def source_stamp(config: SourceConfig) -> list[list]:
     return stamp
 
 
-def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
+def select_inputs(config: SourceConfig) -> tuple[list[tuple], list[dict]]:
+    """Included inputs as (path, root, explicit fidelity, name, source index), plus exclusions.
+
+    ``name`` is ``fidelity/filename``; duplicates through aliases are dropped, conflicting
+    duplicates fail. Nothing is opened.
+    """
     inputs = list_source_files(config)
     exclusions = set(config.exclude_files) | {ANOMALOUS_FILE}
-    runs, excluded = [], []
+    included, excluded = [], []
     seen_paths, seen_names = {}, {}
     for path, root, explicit_fidelity in inputs:
-        name = path.relative_to(root).as_posix() if explicit_fidelity is None else f"{explicit_fidelity}/{path.name}"
+        name = (
+            path.relative_to(root).as_posix()
+            if explicit_fidelity is None
+            else f"{explicit_fidelity}/{path.name}"
+        )
         fidelity = name.split("/", 1)[0]
         resolved = path.resolve()
         if resolved in seen_paths:
@@ -198,12 +230,22 @@ def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict
                     "reason": "known anomaly" if name == ANOMALOUS_FILE else "configured exclusion",
                 }
             )
-        else:
-            run = read_run(path, root, fidelity=explicit_fidelity)
-            if config.sources:
-                run.source = next(i for i, s in enumerate(config.sources)
-                                  if s.path.expanduser().resolve() == root)
-            runs.append(run)
-    if not runs:
+            continue
+        source = None
+        if config.sources:
+            source = next(i for i, s in enumerate(config.sources)
+                          if s.path.expanduser().resolve() == root)
+        included.append((path, root, explicit_fidelity, name, source))
+    if not included:
         raise ValueError("No included simulation files")
+    return included, excluded
+
+
+def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
+    included, excluded = select_inputs(config)
+    runs = []
+    for path, root, explicit_fidelity, _, source in included:
+        run = read_run(path, root, fidelity=explicit_fidelity)
+        run.source = source
+        runs.append(run)
     return sorted(runs, key=lambda r: r.file), excluded

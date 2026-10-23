@@ -6,10 +6,8 @@ import json
 import numpy as np
 from scipy.spatial import cKDTree
 
-from data.optical_features import AffineTransform, make_features, make_labels
+from data.event_cache import EventCache, cached_runs
 from data.optical_pipeline import prepare_optical_data
-from data.optical_reader import read_optical_runs
-from schemas.data_models import InputMode, StandardBatch
 from schemas.optical import OpticalDataConfig
 
 
@@ -19,14 +17,15 @@ def prepare_optical_transfer_data(config):
     All normalization is fitted on the training split by prepare_optical_data.
     The test-source budget and geometry do not affect training assignments.
     """
-    development, _ = read_optical_runs(config.source)
-    external, excluded = read_optical_runs(config.test_source)
+    cache = EventCache(config.event_cache)
+    development, _ = cached_runs(config.source, cache)
+    external, excluded = cached_runs(config.test_source, cache)
     for runs, budget in (
         ([r for r in development if r.fidelity == "lf"], config.training_primaries),
         ([r for r in development if r.fidelity == "hf"], config.hf_primaries),
         (external, config.test_primaries),
     ):
-        if any(r.n_events != budget or np.any(r.n_part != 1) for r in runs):
+        if any(r.n_events != budget or r.max_n_part != 1 for r in runs):
             raise ValueError(f"Every included run must have {budget} single-primary events")
     # Test the geometry before writing prepared artifacts. Comparisons use physical
     # filename centers, not fitted normalization or observed labels.
@@ -54,47 +53,14 @@ def prepare_optical_transfer_data(config):
     base = OpticalDataConfig.model_validate(
         {name: getattr(config, name) for name in OpticalDataConfig.model_fields}
     )
-    prepared = prepare_optical_data(base, update_manifest=True)
-    if any("lf" not in prepared.batches[split] for split in ("train", "validation")):
+    # Normalization is fitted on the training split only; test files just join the view.
+    prepared = prepare_optical_data(
+        base, update_manifest=True, extra=[("test", r) for r in retained]
+    )
+    if any("lf" not in prepared.available(split) for split in ("train", "validation")):
         raise ValueError("Both training and validation require at least one LF1500 voxel group")
-    transforms = prepared.normalization
-    theta_transform = AffineTransform(**transforms["theta"])
-    phi_transform = None if transforms["phi"] is None else AffineTransform(**transforms["phi"])
-    features = [make_features(r, base) for r in retained]
-    theta = theta_transform.transform(np.stack([f[0] for f in features]))
-    phi = (
-        None
-        if phi_transform is None
-        else phi_transform.transform(np.stack([f[1] for f in features]))
-    )
-    labels = np.stack([make_labels(r, base) for r in retained])
-    batch = StandardBatch(
-        mode=InputMode.DESIGN_ONLY if phi is None else InputMode.FULL,
-        theta=theta,
-        phi=phi,
-        labels=labels,
-    )
-    prepared.batches["test"]["lf"] = batch
-    prepared.metadata["test"]["lf"] = {
-        "files": [r.file for r in retained],
-        "nominal_centers": [r.nominal_center.tolist() for r in retained],
-        "shape": list(labels.shape),
-        "mode": batch.mode.value,
-        "features": features[0][2],
-        "primary_budget": config.test_primaries,
-    }
+    prepared.metadata["test"]["lf"]["primary_budget"] = config.test_primaries
     output = config.output_directory
-    arrays = {
-        "theta": theta,
-        "labels": labels,
-        "mode": np.array(batch.mode.value),
-        "event_ids": np.stack([r.event_ids for r in retained]),
-    }
-    if phi is not None:
-        arrays["phi"] = phi
-    folder = output / "batches/test"
-    folder.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(folder / "lf.npz", **arrays)
     (output / "metadata.json").write_text(json.dumps(prepared.metadata, indent=2))
     (output / "transfer_config.json").write_text(config.model_dump_json(indent=2))
     (output / "test_source_manifest.json").write_text(
@@ -120,7 +86,8 @@ def prepare_optical_transfer_data(config):
     )
     rows = []
     for split in ("train", "validation", "test"):
-        for fidelity, b in prepared.batches[split].items():
+        for fidelity in prepared.available(split):
+            b = prepared.batch(split, fidelity)
             counts = b.labels.sum(1)
             rows.append(
                 {

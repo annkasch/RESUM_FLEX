@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 from pydantic import Field, model_validator
 
-from schemas.optical import OpticalDataConfig, SourceConfig
+from schemas.optical import OpticalDataConfig, SourceConfig, resolve_cache_directory
 
 
 class OpticalTransferDataConfig(OpticalDataConfig):
@@ -44,5 +44,6 @@ def load_optical_transfer_config(path):
             for fid, folders in source.directories.items()
         }
     config.output_directory = resolve(config.output_directory)
+    resolve_cache_directory(config, resolve)
     config.split.manifest = resolve(config.split.manifest)
     return config

@@ -128,6 +128,9 @@ class NormalizationConfig(StrictModel):
 class OpticalDataConfig(StrictModel):
     source: SourceConfig
     output_directory: Path = Path("outputs/optical_data")
+    # Shared float32 copy of the raw files (data/event_cache.py); by default next to
+    # output_directory, so data configs writing to the same parent folder share it.
+    cache_directory: Path | None = None
     theta: ThetaConfig = Field(default_factory=ThetaConfig)
     phi: PhiConfig = Field(default_factory=PhiConfig)
     target: TargetConfig = Field(default_factory=TargetConfig)
@@ -143,6 +146,16 @@ class OpticalDataConfig(StrictModel):
                 "With role sources, set splits per source; only split.seed and split.manifest apply"
             )
         return self
+
+    @property
+    def event_cache(self) -> Path:
+        """Directory of the shared event cache."""
+        return self.cache_directory or self.output_directory.parent / "event_cache"
+
+
+def resolve_cache_directory(config: OpticalDataConfig, resolve) -> None:
+    if config.cache_directory is not None:
+        config.cache_directory = resolve(config.cache_directory)
 
 
 def load_optical_config(path: str | Path) -> OpticalDataConfig:
@@ -165,5 +178,6 @@ def load_optical_config(path: str | Path) -> OpticalDataConfig:
     for source in config.source.sources:
         source.path = resolve(source.path)
     config.output_directory = resolve(config.output_directory)
+    resolve_cache_directory(config, resolve)
     config.split.manifest = resolve(config.split.manifest)
     return config

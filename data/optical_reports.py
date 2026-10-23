@@ -2,7 +2,6 @@
 
 import csv
 import json
-from collections import Counter
 
 import numpy as np
 
@@ -20,6 +19,17 @@ def write_csv(path, rows, fields=None):
         writer.writerows(rows)
 
 
+def _run_stats(run, config) -> dict:
+    """Hits per detector, events with hits and target positives of one run."""
+    detectors, hits = np.unique(run.detector_ids, return_counts=True)
+    return {
+        "detectors": detectors,
+        "hits": hits,
+        "events_with_hits": len(np.unique(run.hit_event_ids)),
+        "positive": int(make_labels(run, config).sum()),
+    }
+
+
 def generate_reports(runs, assignments, excluded, config, manifest):
     import matplotlib
 
@@ -27,7 +37,10 @@ def generate_reports(runs, assignments, excluded, config, manifest):
     import matplotlib.pyplot as plt
 
     root = config.output_directory / "reports"
-    vocabulary = sorted({int(d) for r in runs for d in r.detector_ids})
+    stats = {r.file: _run_stats(r, config) for r in runs}
+    vocabulary = np.unique(
+        np.concatenate([s["detectors"] for s in stats.values()] + [np.zeros(0, int)])
+    ).astype(int)
     root.mkdir(parents=True, exist_ok=True)
     (root / "integrity.json").write_text(
         json.dumps(
@@ -36,7 +49,7 @@ def generate_reports(runs, assignments, excluded, config, manifest):
                 "validated_files": len(runs),
                 "excluded": excluded,
                 "split_overlap_groups": manifest["overlapping_groups"],
-                "channel_vocabulary": vocabulary,
+                "channel_vocabulary": vocabulary.tolist(),
                 "channel_vocabulary_note": (
                     "Observed IDs across included files; not a full channel roster."
                 ),
@@ -55,11 +68,10 @@ def generate_reports(runs, assignments, excluded, config, manifest):
         summaries = []
         for fidelity in FIDELITIES:
             selected = [r for r in runs if assignments[r.file] == split and r.fidelity == fidelity]
-            per_file, channels = [], []
+            per_file = []
             for r in selected:
-                counts = Counter(map(int, r.detector_ids))
+                s = stats[r.file]
                 c = center(r, config)
-                positive = int(make_labels(r, config).sum())
                 per_file.append(
                     {
                         "file": r.file,
@@ -69,33 +81,36 @@ def generate_reports(runs, assignments, excluded, config, manifest):
                         "z_m": c[2],
                         "radius_m": np.hypot(c[0], c[1]),
                         "events": r.n_events,
-                        "hits": len(r.detector_ids),
-                        "events_with_hits": len(np.unique(r.hit_event_ids)),
-                        "channels_hit": len(counts),
-                        **{
-                            f"channels_{k}_hits": sum(v == k for v in counts.values())
-                            for k in (1, 2, 3, 4)
-                        },
-                        "channels_ge5_hits": sum(v >= 5 for v in counts.values()),
-                        "target_positive": positive,
-                        "target_negative": r.n_events - positive,
+                        "hits": int(s["hits"].sum()),
+                        "events_with_hits": s["events_with_hits"],
+                        "channels_hit": len(s["hits"]),
+                        **{f"channels_{k}_hits": int(np.sum(s["hits"] == k)) for k in (1, 2, 3, 4)},
+                        "channels_ge5_hits": int(np.sum(s["hits"] >= 5)),
+                        "target_positive": s["positive"],
+                        "target_negative": r.n_events - s["positive"],
                     }
                 )
-            for detector in vocabulary:
-                hits = sum(int(np.sum(r.detector_ids == detector)) for r in selected)
-                contributing = sum(bool(np.any(r.detector_ids == detector)) for r in selected)
-                channels.append(
-                    {
-                        "detector_id": detector,
-                        "hits": hits,
-                        "contributing_voxels": contributing,
-                        "support": "none"
-                        if contributing == 0
-                        else "few (<3 voxels)"
-                        if contributing < 3
-                        else ">=3 voxels",
-                    }
-                )
+            # Per detector: hits and number of contributing voxels, summed over the files.
+            detectors = np.concatenate(
+                [stats[r.file]["detectors"] for r in selected] + [np.zeros(0, int)]
+            )
+            hits = np.concatenate([stats[r.file]["hits"] for r in selected] + [np.zeros(0, int)])
+            slot = np.searchsorted(vocabulary, detectors)
+            total = np.bincount(slot, weights=hits, minlength=len(vocabulary)).astype(int)
+            voxels = np.bincount(slot, minlength=len(vocabulary))
+            channels = [
+                {
+                    "detector_id": int(detector),
+                    "hits": int(total[i]),
+                    "contributing_voxels": int(voxels[i]),
+                    "support": "none"
+                    if voxels[i] == 0
+                    else "few (<3 voxels)"
+                    if voxels[i] < 3
+                    else ">=3 voxels",
+                }
+                for i, detector in enumerate(vocabulary)
+            ]
             write_csv(
                 target / f"{fidelity}_voxels.csv",
                 per_file,
@@ -111,9 +126,9 @@ def generate_reports(runs, assignments, excluded, config, manifest):
                     "fidelity": fidelity,
                     "files": len(selected),
                     "events": sum(r.n_events for r in selected),
-                    "hits": sum(len(r.detector_ids) for r in selected),
-                    "events_with_hits": sum(len(np.unique(r.hit_event_ids)) for r in selected),
-                    "zero_hit_voxels": sum(len(r.detector_ids) == 0 for r in selected),
+                    "hits": sum(r["hits"] for r in per_file),
+                    "events_with_hits": sum(r["events_with_hits"] for r in per_file),
+                    "zero_hit_voxels": sum(r["hits"] == 0 for r in per_file),
                     "target_positive": sum(r["target_positive"] for r in per_file),
                     "target_negative": sum(r["target_negative"] for r in per_file),
                 }
