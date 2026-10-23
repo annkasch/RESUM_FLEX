@@ -349,8 +349,8 @@ detection-fraction units. Keep normalization alongside the GP checkpoint.
 
 Voxels may contain different numbers of events. Data preparation pads every voxel
 of a split/fidelity group to the largest count and stores the true counts as
-`event_counts` (`[B]`) in the batch `.npz`, in `StandardBatch.event_counts` and in
-`metadata.json`. Padded positions have zero labels and features and event id `-1`.
+`event_counts` (`[B]`) in `StandardBatch.event_counts` and in
+`metadata.json`. Padded positions have zero labels and features.
 Groups with equal counts keep the previous rectangular format, so existing
 prepared datasets and checkpoints are unaffected.
 
@@ -392,8 +392,8 @@ config = load_optical_config("config.optical.data.yaml")
 prepared = prepare_optical_data(config)
 ```
 
-This reads original LH5 files and saves normalized batches and split metadata;
-it does not run model training. To use an existing prepared dataset, point a
+This caches new or changed LH5 files (see "Shared event cache"), assigns the split, fits
+normalization and saves a small view plus split metadata; it does not run model training. To use an existing prepared dataset, point a
 `config.surrogate.*.yaml` file or `config.optical.resum.yaml` at its directory.
 Choose a new output directory for each training run.
 
@@ -439,8 +439,7 @@ split:
 
 Splitting keeps whole voxels together and is seeded per folder; the global split fractions
 are rejected in this layout. The same voxel position in two folders is an error.
-Normalization is fitted on `cnp_train`. Prepared batches are written to
-`batches/<role>/lf.npz`. `python -m core.surrogates train` reads `cnp_train`, `cnp_validation`
+Normalization is fitted on `cnp_train`. The view lists each role's files. `python -m core.surrogates train` reads `cnp_train`, `cnp_validation`
 (with `lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]`). Set
 `hf_validation: false` and leave out `mfgp`; the run stops before training otherwise.
 
@@ -458,6 +457,34 @@ time of every file). If both match, the raw files are not read. Otherwise the ru
 contents and regenerates the prepared data if anything differs, before training starts.
 The data YAML's `output_directory` must be the training `data_directory`. Whether data was
 regenerated is recorded in the run's `experiment.json`.
+
+## Shared event cache
+
+Raw LH5 files are read once into a cache shared by all data configs: by default
+`<output_directory parent>/event_cache`, or `cache_directory` in the data YAML. Per file it
+keeps a float32 copy of each event's vertex and momentum (`[n, 6]`), the any-channel label,
+and one hit-list row per (event, detector) with the number of hits. Coordinates and other
+features are computed when a partition is loaded (about 0.2 µs per event), so changing feature
+settings never rewrites the cache.
+
+- `index.npy` has one row per file: folder, name, size, mtime, sha256, voxel centers, event
+  and hit counts, and the largest `n_part`. `cache.json` lists the folders and shards.
+- Each update reads only new or changed files (by size and mtime). Worker processes, one per
+  available CPU, each read a share of the files and write one shard. A changed file goes into
+  a new shard and its old row is marked invalid.
+- `python -m data.event_cache update DATA.yaml [--workers N]` fills the cache without preparing
+  (run it on a compute node for large inputs). `python -m data.event_cache compact CACHE_DIR`
+  merges the shards of many small updates and drops invalid rows.
+- One writer at a time: updates take a `.lock` directory. If a writer crashed, remove the lock
+  by hand.
+
+A prepared dataset is a view on the cache: `view.npy` lists each file's partition, fidelity,
+path and sha256, and `view.json` stores the cache directory, data config and normalization.
+`load_partition(directory, partition, fidelity)` (in `data.optical_pipeline`) builds the
+normalized `StandardBatch` (phi in float32) and returns its provenance: a sha256 over the
+selected files' contents and `view.json`. Loading checks that the cache still holds the same
+file contents. Normalization is fitted with streaming moments over the training files, so
+the training events never need to be in memory at once.
 
 ## Multiple raw input folders
 
@@ -505,8 +532,8 @@ No data preparation or training is triggered merely by editing either YAML.
 Before showing data counts, the notebook loads `config.optical.data.yaml` and
 calls `ensure_prepared_optical_data`. Its output directory must equal the
 training config's `data_directory`. The helper checks raw-file fingerprints,
-configuration, manifest, and required artifacts; missing or outdated prepared
-arrays and normalization are rebuilt. Unchanged valid inputs are reused. Changes
+configuration, manifest, and the view; a missing or outdated view and normalization
+are rebuilt, reading only files missing from the event cache. Unchanged valid inputs are reused. Changes
 in source membership, file contents, or configuration automatically update the
 manifest. Compatible existing assignments are retained; explicit split policies
 take precedence. Invalid inputs and conflicting voxel groups still raise errors.

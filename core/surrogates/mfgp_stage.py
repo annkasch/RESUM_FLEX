@@ -1,6 +1,5 @@
 """Optional three-fidelity GP stage following event-surrogate training."""
 
-import hashlib
 import json
 
 import numpy as np
@@ -15,7 +14,7 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
     from core.surrogate_cnp import split_context_target
     from core.surrogate_mfgp import load_mfgp, save_mfgp
     from core.surrogates.pipeline import prepare_surrogate_datasets
-    from data.optical_pipeline import load_prepared_batch
+    from data.optical_pipeline import load_partition
 
     cfg = config.mfgp
     directory = config.output_directory / "mfgp"
@@ -30,10 +29,8 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
     for split, fid in partitions:
         if (split, fid) == ("validation", "lf") and not config.lf_validation:
             continue
-        path = config.data_directory / "batches" / split / f"{fid}.npz"
-        batches[split, fid] = load_prepared_batch(path)
-        provenance[f"{split}/{fid}"] = dict(
-            path=str(path), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        batches[split, fid], provenance[f"{split}/{fid}"] = load_partition(
+            config.data_directory, split, fid
         )
     # Subsets apply to GP fitting only; validation and the development map use all voxels.
     subsets = {

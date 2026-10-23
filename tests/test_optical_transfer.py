@@ -5,7 +5,7 @@ import json
 import numpy as np
 import pytest
 
-from data.optical_pipeline import load_prepared_batch
+from data.optical_pipeline import load_partition
 from data.optical_transfer import prepare_optical_transfer_data
 from schemas.optical_transfer import OpticalTransferDataConfig
 from tests.test_optical_pipeline import fixture_file
@@ -41,7 +41,7 @@ def test_transfer_keeps_zeros_and_excludes_nearby_voxels(tmp_path):
         },
     )
     prepared = prepare_optical_transfer_data(cfg)
-    train, val, test = [prepared.batches[s]["lf"] for s in ("train", "validation", "test")]
+    train, val, test = [prepared.batch(s, "lf") for s in ("train", "validation", "test")]
     assert (train.batch_size, val.batch_size, test.batch_size) == (8, 2, 2)
     assert test.n_events == 12 and (test.labels.sum(1) == 0).any()
     fit_files = prepared.normalization["fit_files"]
@@ -52,7 +52,7 @@ def test_transfer_keeps_zeros_and_excludes_nearby_voxels(tmp_path):
     np.testing.assert_allclose(
         test.theta[:, 0], (np.array([2, 3]) - theta["offset"][0]) / theta["scale"][0]
     )
-    loaded = load_prepared_batch(cfg.output_directory / "batches/test/lf.npz")
+    loaded = load_partition(cfg.output_directory, "test", "lf")[0]
     np.testing.assert_array_equal(test.labels, loaded.labels)
     manifest = json.loads((cfg.output_directory / "test_source_manifest.json").read_text())
     assert len(manifest["excluded"]) == 1
@@ -98,12 +98,12 @@ def test_transfer_adds_hf_without_changing_lf_normalization(tmp_path):
     cfg.split.hf_train_count = 2
     after = prepare_optical_transfer_data(cfg)
     assert after.normalization == before.normalization
-    assert after.batches["train"]["hf"].batch_size == 2
-    assert after.batches["validation"]["hf"].batch_size == 2
-    assert after.batches["train"]["hf"].labels.sum() == 0
-    assert after.batches["test"]["lf"].batch_size == 1
-    np.testing.assert_array_equal(before.batches["train"]["lf"].theta,
-                                  after.batches["train"]["lf"].theta)
+    assert after.batch("train", "hf").batch_size == 2
+    assert after.batch("validation", "hf").batch_size == 2
+    assert after.batch("train", "hf").labels.sum() == 0
+    assert after.batch("test", "lf").batch_size == 1
+    np.testing.assert_array_equal(before.batch("train", "lf").theta,
+                                  after.batch("train", "lf").theta)
     cfg.hf_primaries = 21
     with pytest.raises(ValueError, match="21 single-primary events"):
         prepare_optical_transfer_data(cfg)

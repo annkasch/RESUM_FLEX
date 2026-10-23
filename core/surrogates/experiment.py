@@ -1,6 +1,5 @@
 """One prepared-data experiment workflow, independent of notebooks/scripts."""
 
-import hashlib
 import json
 
 import numpy as np
@@ -17,11 +16,23 @@ from schemas.surrogates import SurrogateRunConfig
 ROLE_PARTITIONS = {"train": "cnp_train", "validation": "cnp_validation", "test": "cnp_test"}
 
 
-def partition_path(root, split, fidelity):
-    """Prepared batch file for a split, in either the split or the role-based layout."""
-    if (root / "batches/cnp_train").is_dir():
-        split = ROLE_PARTITIONS[split]
-    return root / f"batches/{split}/{fidelity}.npz"
+def role_based(root) -> bool:
+    """Prepared data uses the CNP role names (LF only) instead of train/validation/test."""
+    from data.optical_pipeline import prepared_partitions
+
+    return "cnp_train" in prepared_partitions(root)
+
+
+def partition_name(root, split):
+    """Prepared partition holding a split, in either the split or the role-based layout."""
+    return ROLE_PARTITIONS[split] if role_based(root) else split
+
+
+def load_split(root, split, fidelity):
+    """(batch, provenance) of a split; optical_pipeline is looked up at call time."""
+    from data import optical_pipeline
+
+    return optical_pipeline.load_partition(root, partition_name(root, split), fidelity)
 
 
 def ensure_matching_data(data_config, data_directory):
@@ -53,8 +64,6 @@ def run_experiment(config: SurrogateRunConfig):
     are opened only after fitting and checkpoint selection have completed.
     Output must be empty, preventing accidental overwriting of prior runs.
     """
-    from data.optical_pipeline import load_prepared_batch
-
     config = SurrogateRunConfig.model_validate(config)
     root, output = config.data_directory, config.output_directory
     if output.exists() and any(output.iterdir()):
@@ -62,7 +71,7 @@ def run_experiment(config: SurrogateRunConfig):
     data_check = None
     if config.data_config is not None:
         data_check = ensure_matching_data(config.data_config, root)
-    if (root / "batches/cnp_train").is_dir() and (
+    if role_based(root) and (
         config.hf_validation or "hf" in config.test_fidelities or config.mfgp is not None
     ):
         raise ValueError(
@@ -76,10 +85,8 @@ def run_experiment(config: SurrogateRunConfig):
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
     for split, fidelity in partitions:
-        path = partition_path(root, split, fidelity)
-        batches[split, fidelity] = load_prepared_batch(path)
-        provenance[f"{split}/{fidelity}"] = dict(
-            path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
+        batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(
+            root, split, fidelity
         )
     episodes = {
         key: Episode(
@@ -146,8 +153,7 @@ def run_experiment(config: SurrogateRunConfig):
     # Selection is complete. Never pass test episodes into either training stage.
     test_provenance = {}
     for fidelity in config.test_fidelities:
-        path = partition_path(root, "test", fidelity)
-        batch = load_prepared_batch(path)
+        batch, test_provenance[fidelity] = load_split(root, "test", fidelity)
         if (
             batch.theta is not None
             and train.theta is not None
@@ -160,9 +166,6 @@ def run_experiment(config: SurrogateRunConfig):
                 config.validation_context_events,
                 seed=config.validation_seed,
             )
-        )
-        test_provenance[fidelity] = dict(
-            path=str(path.resolve()), sha256=hashlib.sha256(path.read_bytes()).hexdigest()
         )
     if test_provenance:
         (output / "test_evaluation.json").write_text(

@@ -8,19 +8,19 @@ import json
 
 import numpy as np
 
+from data.event_cache import EventCache, cached_runs
 from data.optical_features import center, make_labels
-from data.optical_reader import read_optical_runs
 from data.optical_split import assign_splits, save_manifest
 
 
 def prepare_optical_counts(config):
     if config.theta.coordinates != "cartesian":
         raise ValueError("Optical count-GP workflow currently uses Cartesian voxel centers")
-    runs, excluded = read_optical_runs(config.source)
+    runs, excluded = cached_runs(config.source, EventCache(config.event_cache))
     assignments, manifest = assign_splits(runs, config, update=True)
     rows = []
     for run in runs:
-        if not np.all(run.n_part == 1):
+        if run.max_n_part != 1:
             raise ValueError(f"{run.file}: count-GP requires one primary per event")
         rows.append(
             dict(
