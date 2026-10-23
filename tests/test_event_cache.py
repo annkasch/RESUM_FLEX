@@ -147,3 +147,21 @@ def test_view_batches_are_chunk_independent(tmp_path, monkeypatch):
     single = build_batch(view.cache, rows, c, view.meta["normalization"])
     assert single.labels.sum() == len(rows)  # one event hits detector 11 in every file
     assert view.provenance("train", "hf") != view.provenance("train", "lf")
+
+
+def test_real_paths_match_resolve(tmp_path):
+    from data.optical_reader import real_paths
+
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data/a.stp.lh5").touch()
+    (tmp_path / "linked").symlink_to(tmp_path / "data")  # linked folder
+    (tmp_path / "view").mkdir()
+    (tmp_path / "view/b.stp.lh5").symlink_to("../linked/a.stp.lh5")  # relative, chained
+    (tmp_path / "view/c.stp.lh5").symlink_to(tmp_path / "view/b.stp.lh5")
+    paths = [
+        tmp_path / "data/a.stp.lh5",
+        tmp_path / "linked/a.stp.lh5",
+        tmp_path / "view/b.stp.lh5",
+        tmp_path / "view/c.stp.lh5",
+    ]
+    assert real_paths(paths) == [p.resolve() for p in paths]

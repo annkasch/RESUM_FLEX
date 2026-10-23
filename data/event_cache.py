@@ -436,7 +436,7 @@ class CachedRun:
 def cached_runs(source: SourceConfig, cache: EventCache, *, workers: int | None = None):
     """Runs of the configured inputs, sorted by name, after caching new or changed files."""
     included, excluded = select_inputs(source)
-    paths = [path.resolve() for path, *_ in included]
+    paths = [resolved for *_, resolved in included]
     read = cache.update(paths, workers=workers)
     print(
         f"Event cache {cache.directory}: {read} files read, {len(paths) - read} reused", flush=True
@@ -444,7 +444,7 @@ def cached_runs(source: SourceConfig, cache: EventCache, *, workers: int | None 
     rows = cache.locate(paths)
     runs = [
         CachedRun(cache, int(row), name, name.split("/", 1)[0], source_index)
-        for row, (_, _, _, name, source_index) in zip(rows, included, strict=True)
+        for row, (_, _, _, name, source_index, _) in zip(rows, included, strict=True)
     ]
     return sorted(runs, key=lambda r: r.file), excluded
 
