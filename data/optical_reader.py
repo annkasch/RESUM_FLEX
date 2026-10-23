@@ -1,5 +1,6 @@
 """LH5 input validation. Importing this module does not require h5py."""
 
+import errno
 import hashlib
 import os
 import re
@@ -198,24 +199,57 @@ def source_stamp(config: SourceConfig) -> list[list]:
     return stamp
 
 
+def real_paths(paths) -> list[Path]:
+    """Paths with every symlink followed, like ``Path.resolve``, for many files at once.
+
+    ``Path.resolve`` checks every path component (~20 metadata calls per file, slow on CFS).
+    Here each file costs one ``readlink`` per link, run in parallel, and every folder is
+    resolved only once.
+    """
+    folders = {}
+
+    def folder(path: str) -> str:
+        if path not in folders:
+            folders[path] = os.path.realpath(path)
+        return folders[path]
+
+    def one(path) -> Path:
+        path = os.path.join(folder(os.path.dirname(os.path.abspath(path))), os.path.basename(path))
+        for _ in range(40):
+            try:
+                target = os.readlink(path)
+            except OSError as exc:
+                if exc.errno != errno.EINVAL:  # EINVAL: not a link
+                    raise
+                return Path(path)
+            target = os.path.join(os.path.dirname(path), target)
+            path = os.path.join(folder(os.path.dirname(target)), os.path.basename(target))
+        raise OSError(f"Too many levels of symbolic links: {path}")
+
+    with ThreadPoolExecutor(max_workers=32) as pool:
+        return list(pool.map(one, paths, chunksize=256))
+
+
 def select_inputs(config: SourceConfig) -> tuple[list[tuple], list[dict]]:
-    """Included inputs as (path, root, explicit fidelity, name, source index), plus exclusions.
+    """Included inputs as (path, root, explicit fidelity, name, source index, resolved path),
+    plus exclusions.
 
     ``name`` is ``fidelity/filename``; duplicates through aliases are dropped, conflicting
     duplicates fail. Nothing is opened.
     """
     inputs = list_source_files(config)
+    resolved_paths = real_paths([path for path, *_ in inputs])
+    sources = {s.path.expanduser().resolve(): i for i, s in enumerate(config.sources or [])}
     exclusions = set(config.exclude_files) | {ANOMALOUS_FILE}
     included, excluded = [], []
     seen_paths, seen_names = {}, {}
-    for path, root, explicit_fidelity in inputs:
+    for (path, root, explicit_fidelity), resolved in zip(inputs, resolved_paths, strict=True):
         name = (
             path.relative_to(root).as_posix()
             if explicit_fidelity is None
             else f"{explicit_fidelity}/{path.name}"
         )
         fidelity = name.split("/", 1)[0]
-        resolved = path.resolve()
         if resolved in seen_paths:
             if seen_paths[resolved] != fidelity:
                 raise ValueError(f"Same source file assigned to LF and HF: {path}")
@@ -231,11 +265,8 @@ def select_inputs(config: SourceConfig) -> tuple[list[tuple], list[dict]]:
                 }
             )
             continue
-        source = None
-        if config.sources:
-            source = next(i for i, s in enumerate(config.sources)
-                          if s.path.expanduser().resolve() == root)
-        included.append((path, root, explicit_fidelity, name, source))
+        source = sources[root] if config.sources else None
+        included.append((path, root, explicit_fidelity, name, source, resolved))
     if not included:
         raise ValueError("No included simulation files")
     return included, excluded
@@ -244,7 +275,7 @@ def select_inputs(config: SourceConfig) -> tuple[list[tuple], list[dict]]:
 def read_optical_runs(config: SourceConfig) -> tuple[list[OpticalRun], list[dict]]:
     included, excluded = select_inputs(config)
     runs = []
-    for path, root, explicit_fidelity, _, source in included:
+    for path, root, explicit_fidelity, _, source, _ in included:
         run = read_run(path, root, fidelity=explicit_fidelity)
         run.source = source
         runs.append(run)
