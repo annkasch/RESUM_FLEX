@@ -161,6 +161,7 @@ def _fit_stage(
         parameters = [p for p in model.module.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(parameters, lr=training.learning_rate)
         mixup = training.sampling.strategy == "class_aware_mixup"
+        n_context_min, n_context_max = training.context_range()
         sampler_args = dict(
             seed=training.seed,
             batch_size=training.batch_size,
@@ -172,7 +173,7 @@ def _fit_stage(
             sampler = ClassAwareMixupSource(
                 train,
                 **sampler_args,
-                n_context=training.n_context_min,
+                n_context=n_context_min,
                 alpha=training.sampling.mixup.alpha,
                 mix_context=training.sampling.mixup.mix_context,
             )
@@ -181,9 +182,10 @@ def _fit_stage(
             sampler = RealTargetSampler(
                 train,
                 **sampler_args,
-                n_context_min=training.n_context_min,
-                n_context_max=training.n_context_max,
+                n_context_min=n_context_min,
+                n_context_max=n_context_max,
                 positive_fraction=training.sampling.positive_fraction,
+                joint=training.targets == "joint",
             )
         combined = training.objective.strategy == "real_plus_mixup"
         real_events, real_positives = 0, 0
@@ -192,7 +194,7 @@ def _fit_stage(
         label_mass, soft_events = 0.0, 0
         for step in range(1, training.n_steps + 1):
             if mixup:
-                nc = int(size_rng.integers(training.n_context_min, training.n_context_max + 1))
+                nc = int(size_rng.integers(n_context_min, n_context_max + 1))
                 if combined:
                     context, target, real_target = sampler.next(
                         n_context=nc, real_target_ratio=training.objective.real_target_ratio
@@ -271,6 +273,7 @@ def _fit_stage(
                 mixup_loss_weight=training.objective.mixup_loss_weight,
                 real_target_ratio=training.objective.real_target_ratio,
             )
+        audit.update(targets=training.targets, context_range=[n_context_min, n_context_max])
     model.metadata["sampling_audit"] = audit
     if destination:
         model.save(destination / "final", metadata={"step": last_step})

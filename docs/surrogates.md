@@ -162,12 +162,42 @@ training:
 
 Run `python -m core.surrogates train config.optical.resum.yaml`.
 Change the model kind for MLP or transformer. Only CNP uses context observations;
-other neural models use the same mixed targets. Context size is randomly chosen
-within `n_context_min` / `n_context_max` each batch. Mixup defaults to real context.
+other neural models use the same mixed targets. The context size follows `training.context`
+(see "Episode building" below). Mixup defaults to real context.
 Stable BCE (`focal_gamma: 0`) accepts soft target labels. BDT does not support
 this sampler. Sampling correction and class weights are rejected with mixup;
 no probability-bias correction is implied. Positive quotas cannot be combined
 with it. Permutation mixup remains a standalone utility.
+
+### Episode building
+
+Each optimizer step draws `batch_size` voxels (with replacement) and `n_events`
+events from each voxel. These events are split into context and targets:
+
+```yaml
+training:
+  batch_size: 16        # voxels per step
+  n_events: 750         # events per voxel per step
+  targets: disjoint     # or joint
+  context:
+    size: random        # one size per step, uniform in [n_min, cap], shared by all voxels
+    n_min: 16
+    max_fraction: 0.5   # cap = floor(0.5 * n_events) = 375; null = no cap
+# fixed size instead:
+#  context: {size: fixed, n: 250}
+```
+
+- `targets: disjoint` (default) scores only the non-context events. `joint` also
+  scores the context events, as in Garnelo et al. (2018); it is limited to
+  natural sampling. With the same seed both modes draw the same events. Joint
+  puts loss weight on labels the model has already seen in its context, so it
+  can over-trust the context; evaluation is always disjoint.
+- Without a cap, the context may use up to `n_events - 2` (disjoint) or
+  `n_events - 1` (joint) events.
+- Old configs with `n_context_min` / `n_context_max` still load. They become a
+  random context with an absolute cap `context.n_max`, so their range does not
+  change with `n_events` (e.g. in fine-tuning).
+- The sampling audit records `targets` and the resolved `context_range`.
 
 Validation and reported train/validation metrics use real binary events. The
 sampling audit records soft-label mass, mean target label, and soft-label event

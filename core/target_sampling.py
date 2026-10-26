@@ -18,19 +18,24 @@ class RealTargetSampler:
     Separate context/target RNGs match contexts across sampling strategies.
     With unequal event counts, each voxel samples from its own valid events, so
     every voxel has equal weight; episodes must fit the smallest voxel.
+    With joint=True (natural sampling only) the targets are the context followed
+    by the same non-context draws, so both modes see identical events per seed.
     """
 
     def __init__(self, batch, *, seed, batch_size, n_events, n_context_min,
-                 n_context_max, positive_fraction=None):
+                 n_context_max, positive_fraction=None, joint=False):
         if positive_fraction is not None and not 0 < positive_fraction < 1:
             raise ValueError('positive_fraction must be strictly between zero and one')
-        if not 1 <= n_context_min <= n_context_max <= n_events - 2:
-            raise ValueError('Context range must leave at least two target events')
+        if joint and positive_fraction is not None:
+            raise ValueError('Joint targets require natural sampling')
+        if not 1 <= n_context_min <= n_context_max <= n_events - (1 if joint else 2):
+            raise ValueError('Context range must leave enough target events')
         if batch_size < 1 or n_events > int(batch.events_per_voxel.min()):
             raise ValueError('Invalid batch or episode size')
         self.batch, self.batch_size, self.n_events = batch, batch_size, n_events
         self.n_context_min, self.n_context_max = n_context_min, n_context_max
         self.positive_fraction = positive_fraction
+        self.joint = joint
         self.context_rng = np.random.default_rng(np.random.SeedSequence([seed, 0]))
         self.target_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
         self.last_provenance = []
@@ -54,7 +59,9 @@ class RealTargetSampler:
             p = len(positive) / len(pool)
             if self.positive_fraction is None or not len(positive) or not len(negative):
                 target = trng.choice(pool, nt, replace=False)
-                weight = np.ones(nt)
+                if self.joint:
+                    target = np.concatenate([context, target])
+                weight = np.ones(len(target))
             else:
                 npos = min(nt - 1, max(1, round(nt * self.positive_fraction)))
                 nneg = nt - npos

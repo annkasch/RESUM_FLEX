@@ -127,15 +127,50 @@ class LastLayerFineTuning(StrictConfigModel):
     n_events: int | None = Field(default=None, ge=3)
 
 
+class RandomContext(StrictConfigModel):
+    """Context size drawn uniformly from [n_min, cap] once per step.
+
+    The cap is floor(max_fraction * n_events); max_fraction=null removes it (up to
+    n_events - 2 for disjoint targets, n_events - 1 for joint). n_max is an absolute cap
+    kept for old n_context_min/n_context_max configs; it replaces max_fraction.
+    """
+
+    size: Literal["random"] = "random"
+    n_min: int = Field(default=16, gt=0)
+    max_fraction: float | None = Field(default=0.5, gt=0, le=1, allow_inf_nan=False)
+    n_max: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def absolute_cap(cls, data):
+        if isinstance(data, dict) and data.get("n_max") is not None:
+            if data.get("max_fraction") is not None:
+                raise ValueError("Set either context.max_fraction or context.n_max, not both")
+            data = {**data, "max_fraction": None}
+        return data
+
+
+class FixedContext(StrictConfigModel):
+    """The same context size n in every step."""
+
+    size: Literal["fixed"] = "fixed"
+    n: int = Field(gt=0)
+
+
+ContextSpec = Annotated[RandomContext | FixedContext, Field(discriminator="size")]
+
+
 class NeuralTraining(StrictConfigModel):
     backend: Literal["neural"] = "neural"
     n_steps: int = Field(default=10000, gt=0)
     eval_every: int = Field(default=250, gt=0)
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
-    batch_size: int = Field(default=16, gt=0)
-    n_events: int = Field(default=128, ge=3)
-    n_context_min: int = Field(default=16, gt=0)
-    n_context_max: int = Field(default=64, gt=0)
+    batch_size: int = Field(default=16, gt=0)  # voxels per step
+    n_events: int = Field(default=128, ge=3)  # events drawn per voxel per step
+    # disjoint: targets are the non-context events; joint: targets also include the
+    # context events (Garnelo et al. 2018). Evaluation is always disjoint.
+    targets: Literal["disjoint", "joint"] = "disjoint"
+    context: ContextSpec = Field(default_factory=RandomContext)
     seed: int = 0
     device: Literal["cpu", "cuda"] = "cpu"
     grad_clip: float | None = Field(default=1.0, gt=0, allow_inf_nan=False)
@@ -146,10 +181,51 @@ class NeuralTraining(StrictConfigModel):
     weighting: WeightingConfig = Field(default_factory=WeightingConfig)
     fine_tuning: LastLayerFineTuning | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_context(cls, data):
+        """Map old n_context_min/n_context_max (absolute, defaults 16/64) to context.
+
+        A context block without size means size=random.
+        """
+        if isinstance(data, dict) and isinstance(data.get("context"), dict):
+            data = {**data, "context": {"size": "random", **data["context"]}}
+        if isinstance(data, dict) and {"n_context_min", "n_context_max"} & data.keys():
+            if "context" in data:
+                raise ValueError("Use context or n_context_min/n_context_max, not both")
+            data = dict(data)
+            n_min, n_max = data.pop("n_context_min", 16), data.pop("n_context_max", 64)
+            data["context"] = {"size": "random", "n_min": n_min, "n_max": n_max}
+        return data
+
+    def context_range(self, n_events: int | None = None) -> tuple[int, int]:
+        """Smallest and largest context size for episodes of n_events per voxel."""
+        n = self.n_events if n_events is None else n_events
+        limit = n - 1 if self.targets == "joint" else n - 2
+        context = self.context
+        if context.size == "fixed":
+            low = high = context.n
+        else:
+            low = context.n_min
+            if context.n_max is not None:
+                high = context.n_max
+            elif context.max_fraction is not None:
+                high = int(context.max_fraction * n + 1e-9)  # floor, robust to rounding
+            else:
+                high = limit
+        if not 1 <= low <= high <= limit:
+            need = "one non-context target" if self.targets == "joint" else "two target events"
+            raise ValueError(
+                f"Context sizes [{low}, {high}] must satisfy 1 <= min <= max <= {limit} "
+                f"for n_events={n} (at least {need})"
+            )
+        return low, high
+
     @model_validator(mode="after")
     def compatible(self):
-        if not self.n_context_min <= self.n_context_max <= self.n_events - 2:
-            raise ValueError("Context range must leave at least two target events")
+        self.context_range()
+        if self.targets == "joint" and self.sampling.strategy != "natural":
+            raise ValueError("targets=joint currently requires natural sampling")
         if self.sampling.strategy == "class_aware_mixup" and self.weighting.strategy != "none":
             raise ValueError("class_aware_mixup currently requires weighting=none")
         if self.objective.strategy == "real_plus_mixup":
@@ -164,9 +240,10 @@ class NeuralTraining(StrictConfigModel):
         if quota != corrected:
             raise ValueError("positive_quota and sampling_correction must be used together")
         if self.fine_tuning is not None:
-            ne = self.fine_tuning.n_events or self.n_events
-            if ne < self.n_context_max + 2:
-                raise ValueError("Fine-tuning events must leave at least two targets")
+            try:
+                self.context_range(self.fine_tuning.n_events or self.n_events)
+            except ValueError as error:
+                raise ValueError(f"Fine-tuning events: {error}") from None
         return self
 
 
