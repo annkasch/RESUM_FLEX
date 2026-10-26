@@ -6,6 +6,7 @@ from pydantic import ValidationError
 
 from core.surrogate_cnp import split_context_target
 from core.surrogates import Episode, build_surrogate, load_surrogate
+from core.surrogates.fine_tuning import fine_tuning_stages
 from core.target_sampling import RealTargetSampler
 from data.pseudo_generator import for_scenario
 from schemas.data_models import InputMode, StandardBatch
@@ -167,3 +168,50 @@ def test_training_records_targets_and_context_range(targets, tmp_path):
     restored = load_surrogate(tmp_path / "run/best")
     assert restored.metadata["training"]["targets"] == targets
     assert restored.metadata["training"]["context"]["max_fraction"] == 0.25
+
+
+def test_n_passes_resolve_to_steps():
+    events = 1999 * 1500
+    disjoint = NeuralTraining(n_passes=10, n_events=750)  # context 16-375: 554.5 targets/voxel
+    assert disjoint.n_steps is None
+    assert disjoint.target_events_per_step() == 16 * 554.5
+    assert disjoint.resolve_n_steps(events) == 3380
+    joint = NeuralTraining(n_passes=10, n_events=750, targets="joint")
+    assert joint.resolve_n_steps(events) == 2499  # ceil(10 * 2998500 / 12000)
+    fixed = NeuralTraining(n_passes=1, n_events=750, context={"size": "fixed", "n": 250})
+    assert fixed.resolve_n_steps(8000) == 1  # 8000 events, 16 * 500 targets per step
+    assert NeuralTraining().resolve_n_steps(events) == 10000
+    assert NeuralTraining(n_steps=7).resolve_n_steps(events) == 7
+
+
+def test_n_steps_and_n_passes_are_exclusive():
+    with pytest.raises(ValidationError, match="either n_steps or n_passes"):
+        NeuralTraining(n_steps=100, n_passes=2)
+    with pytest.raises(ValidationError):
+        NeuralTraining(n_passes=0)
+
+
+def test_training_with_n_passes_and_fine_tuning_stage(tmp_path):
+    source = for_scenario("S1", seed=0)
+    train = source.generate(n_trials=5, n_events=24)  # 120 events
+    val = source.generate(n_trials=3, n_events=24, seed=3)
+    context, target = split_context_target(val, 4, seed=7)
+    settings = NeuralTraining(
+        n_passes=2,
+        eval_every=2,
+        batch_size=3,
+        n_events=20,
+        context={"size": "fixed", "n": 5},
+    )  # 45 targets per step -> ceil(2 * 120 / 45) = 6 steps
+    spec = {"kind": "cnp", "encoder": {"type": "mlp", "latent_dim": 8, "hidden_dims": [12]}}
+    model = build_surrogate(spec, source.dim_theta, source.dim_phi)
+    report = model.fit(
+        train, settings, validation=Episode(context, target), checkpoints=tmp_path / "run"
+    )
+    audit = report.sampling_audit
+    assert audit["n_steps"] == 6 and report.history[-1]["step"] == 6
+    assert audit["requested_passes"] == 2
+    assert audit["target_passes"] == pytest.approx(6 * 45 / 120)
+    staged = NeuralTraining.model_validate({**settings.model_dump(), "fine_tuning": {"n_steps": 3}})
+    _, fine = fine_tuning_stages(staged, "cnp")
+    assert fine.training.n_steps == 3 and fine.training.n_passes is None

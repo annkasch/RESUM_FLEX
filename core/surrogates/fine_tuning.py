@@ -14,6 +14,7 @@ def fine_tuning_stages(training, kind):
         {
             **base.model_dump(),
             "n_steps": fine.n_steps,
+            "n_passes": None,
             "eval_every": fine.eval_every,
             "learning_rate": fine.learning_rate,
             "n_events": fine.n_events or base.n_events,

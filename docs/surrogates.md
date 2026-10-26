@@ -197,7 +197,15 @@ training:
 - Old configs with `n_context_min` / `n_context_max` still load. They become a
   random context with an absolute cap `context.n_max`, so their range does not
   change with `n_events` (e.g. in fine-tuning).
-- The sampling audit records `targets` and the resolved `context_range`.
+- Run length: `n_steps`, or `n_passes` (not both; default 10000 steps). One pass
+  means as many scored target events as there are training events. The steps are
+  `ceil(n_passes * training_events / targets_per_step)`, with
+  `targets_per_step = batch_size * (n_events - mean context size)` for disjoint and
+  `batch_size * n_events` for joint targets; the mean context size of a random
+  context is `(n_min + cap) / 2`. Example: 1999 voxels x 1500 events, 16 x 750,
+  context 16-375, `n_passes: 10` -> 3380 steps.
+- The sampling audit records `targets`, the resolved `context_range`, `n_steps`,
+  `requested_passes` and the realized `target_passes`.
 
 Validation and reported train/validation metrics use real binary events. The
 sampling audit records soft-label mass, mean target label, and soft-label event

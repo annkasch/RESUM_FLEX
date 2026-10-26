@@ -9,7 +9,7 @@ model:
 training:
   backend: neural
   loss: bernoulli
-  n_steps: 12000
+  n_passes: 10          # passes over the training events; steps computed at run time
   eval_every: 250
   learning_rate: 0.001
   batch_size: 16        # voxels per step

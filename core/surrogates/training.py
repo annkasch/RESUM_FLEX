@@ -50,6 +50,7 @@ def _fit_stage(
 ):
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
+    training_events = int(train.events_per_voxel.sum())
     # Training batches must be real, normalized inputs with binary labels.
     model.validate(train, train if model.uses_context else None)
     if not np.isin(train.labels, [0, 1]).all():
@@ -192,7 +193,8 @@ def _fit_stage(
         real_losses, mixup_losses = [], []
         positives, events, losses = 0, 0, []
         label_mass, soft_events = 0.0, 0
-        for step in range(1, training.n_steps + 1):
+        n_steps = training.resolve_n_steps(training_events)
+        for step in range(1, n_steps + 1):
             if mixup:
                 nc = int(size_rng.integers(n_context_min, n_context_max + 1))
                 if combined:
@@ -230,7 +232,7 @@ def _fit_stage(
                 torch.nn.utils.clip_grad_norm_(model.module.parameters(), training.grad_clip)
             optimizer.step()
             losses.append(float(loss.detach()))
-            if step % training.eval_every == 0 or step == training.n_steps:
+            if step % training.eval_every == 0 or step == n_steps:
                 components = None
                 if combined:
                     suffix = "nll" if training.loss == "practice-truth" else "bce"
@@ -242,7 +244,7 @@ def _fit_stage(
                     mixup_losses.clear()
                 observe(step, float(np.mean(losses)), components)
                 losses.clear()
-        last_step = training.n_steps
+        last_step = n_steps
         audit = dict(
             strategy=training.sampling.strategy,
             events=events,
@@ -273,7 +275,14 @@ def _fit_stage(
                 mixup_loss_weight=training.objective.mixup_loss_weight,
                 real_target_ratio=training.objective.real_target_ratio,
             )
-        audit.update(targets=training.targets, context_range=[n_context_min, n_context_max])
+        audit.update(
+            targets=training.targets,
+            context_range=[n_context_min, n_context_max],
+            n_steps=n_steps,
+            requested_passes=training.n_passes,
+            # Scored target slots per training event; mixup slots are synthetic events.
+            target_passes=events / training_events,
+        )
     model.metadata["sampling_audit"] = audit
     if destination:
         model.save(destination / "final", metadata={"step": last_step})

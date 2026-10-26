@@ -4,6 +4,7 @@ The historical Gaussian CNP pipeline keeps its existing Config. This schema
 covers the single-logit models and BDT without silently reinterpreting settings.
 """
 
+import math
 from pathlib import Path
 from typing import Annotated, Literal
 
@@ -162,7 +163,10 @@ ContextSpec = Annotated[RandomContext | FixedContext, Field(discriminator="size"
 
 class NeuralTraining(StrictConfigModel):
     backend: Literal["neural"] = "neural"
-    n_steps: int = Field(default=10000, gt=0)
+    # Run length: either n_steps, or n_passes over the training events (one pass = as
+    # many target events as there are training events). Default: 10000 steps.
+    n_steps: int | None = Field(default=None, gt=0)
+    n_passes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     eval_every: int = Field(default=250, gt=0)
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
     batch_size: int = Field(default=16, gt=0)  # voxels per step
@@ -180,6 +184,13 @@ class NeuralTraining(StrictConfigModel):
     sampling: SamplingConfig = Field(default_factory=SamplingConfig)
     weighting: WeightingConfig = Field(default_factory=WeightingConfig)
     fine_tuning: LastLayerFineTuning | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def run_length(cls, data):
+        if isinstance(data, dict) and data.get("n_passes") is None and data.get("n_steps") is None:
+            data = {**data, "n_steps": 10000}
+        return data
 
     @model_validator(mode="before")
     @classmethod
@@ -221,8 +232,23 @@ class NeuralTraining(StrictConfigModel):
             )
         return low, high
 
+    def target_events_per_step(self) -> float:
+        """Expected number of scored target events in one step."""
+        if self.targets == "joint":
+            return float(self.batch_size * self.n_events)
+        low, high = self.context_range()
+        return self.batch_size * (self.n_events - (low + high) / 2)
+
+    def resolve_n_steps(self, training_events: int) -> int:
+        """n_steps, or the steps needed for n_passes over training_events target events."""
+        if self.n_steps is not None:
+            return self.n_steps
+        return max(1, math.ceil(self.n_passes * training_events / self.target_events_per_step()))
+
     @model_validator(mode="after")
     def compatible(self):
+        if self.n_steps is not None and self.n_passes is not None:
+            raise ValueError("Set either n_steps or n_passes, not both")
         self.context_range()
         if self.targets == "joint" and self.sampling.strategy != "natural":
             raise ValueError("targets=joint currently requires natural sampling")

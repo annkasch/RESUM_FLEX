@@ -75,7 +75,7 @@ def fit_stages(model, train, stages, *, validation=None, checkpoints=None):
                         param.requires_grad_(flags[name])
                     model.module.eval()
         steps = (
-            stage.training.n_steps
+            stage.training.resolve_n_steps(int(train.events_per_voxel.sum()))
             if stage.training.backend == "neural"
             else model.config.architecture.max_iter
         )
