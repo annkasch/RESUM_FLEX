@@ -176,7 +176,7 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
 
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
-    for split, fidelity, seed in [("train", "lf", 1), ("validation", "lf", 2)]:
+    for split, fidelity, seed in [("train", "lf", 1), ("validation", "lf", 2), ("test", "lf", 3)]:
         batch = source.generate(n_trials=4, n_events=24, seed=seed)
         batch.labels[:, 0], batch.labels[:, 1] = 1, 0
         folder = root / "batches" / split
@@ -200,6 +200,7 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
         },
         selection="bernoulli_log_loss",
         hf_validation=False,
+        test_fidelities=["lf"],
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
@@ -213,8 +214,10 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
     assert all(r["voxel_z2_mean"] is not None for r in rows)
     sweep = json.loads((output / "context_sweep.json").read_text())
     assert {r["n_context"] for r in sweep} == {2, 4, 8}
-    assert len(sweep) == 2 * 4  # best + final, three sizes + zeroed
+    assert len(sweep) == 2 * 2 * 4  # best + final, validation + test, three sizes + zeroed
     history = json.loads((output / "history.json").read_text())
     assert all("log_loss_skill" in r for r in history if "bernoulli_log_loss" in r)
     assert (output / "lf_calibration.png").exists()
+    assert (output / "lf_means.png").exists()
+    assert (output / "lf_test_means.png").exists()
     assert (output / "context_sweep.png").exists()

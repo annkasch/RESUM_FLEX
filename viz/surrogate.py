@@ -28,8 +28,10 @@ def plot_surrogate_run(directory):
             ax.plot([r["step"] for r in history], [r.get(key) for r in history])
             ax.set(xlabel="Training step / tree count", ylabel=key)
             ax.grid(alpha=0.2)
-            boundary = next((r["step"] - r["stage_step"] for r in history
-                             if r.get("stage") == "fine_tuning"), None)
+            boundary = next(
+                (r["step"] - r["stage_step"] for r in history if r.get("stage") == "fine_tuning"),
+                None,
+            )
             if boundary is not None:
                 ax.axvline(boundary, color="gray", ls="--", label="Start last-layer fitting")
                 ax.legend(fontsize=8)
@@ -42,21 +44,27 @@ def plot_surrogate_run(directory):
         ax.set(xlabel="Training step", ylabel="Training loss")
         save(fig, "training_history")
     for fidelity in ("lf", "hf"):
-        if (directory / f"{fidelity}_validation_best.npz").exists():
+        # Per-voxel predicted vs observed fraction; validation keeps its old file name.
+        for split, name in (
+            ("validation", f"{fidelity}_means"),
+            ("test", f"{fidelity}_test_means"),
+        ):
+            if not (directory / f"{fidelity}_{split}_best.npz").exists():
+                continue
             fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True, layout="constrained")
             for checkpoint in ("best", "final"):
-                with np.load(directory / f"{fidelity}_validation_{checkpoint}.npz") as arrays:
+                with np.load(directory / f"{fidelity}_{split}_{checkpoint}.npz") as arrays:
                     observed, predicted = arrays["observed"], arrays["predicted"]
                 axes[0].plot(predicted, "o-", label=checkpoint)
                 axes[1].plot(predicted - observed, "o-", label=checkpoint)
             axes[0].plot(observed, "ko-", label="Observed target fraction")
-            axes[0].set(ylabel="Detection fraction", title=f"{fidelity.upper()} validation")
+            axes[0].set(ylabel="Detection fraction", title=f"{fidelity.upper()} {split}")
             axes[1].axhline(0, color="black", ls="--")
-            axes[1].set(xlabel="Validation voxel index", ylabel="Predicted − observed")
+            axes[1].set(xlabel=f"{split.capitalize()} voxel index", ylabel="Predicted − observed")
             for ax in axes:
                 ax.legend()
                 ax.grid(alpha=0.2)
-            save(fig, f"{fidelity}_means")
+            save(fig, name)
         for logscale in (False, True):
             fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
             for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
@@ -119,12 +127,24 @@ def plot_calibration(directory, fidelity, save):
             predicted = arrays["calibration_predicted"] / events
             observed = arrays["calibration_hits"] / events
             low, high = _wilson(arrays["calibration_hits"], events)
-        ax.errorbar(predicted, observed, yerr=[observed - low, high - observed], fmt="o-",
-                    ms=3, capsize=2, label=f"{split}, {checkpoint}")
+        ax.errorbar(
+            predicted,
+            observed,
+            yerr=[observed - low, high - observed],
+            fmt="o-",
+            ms=3,
+            capsize=2,
+            label=f"{split}, {checkpoint}",
+        )
     limits = ax.get_xlim()
     ax.plot(limits, limits, "k--", lw=1, label="calibrated")
-    ax.set(xscale="log", yscale="log", xlabel="Mean predicted p (bin)",
-           ylabel="Observed hit fraction (bin)", title=f"{fidelity.upper()} calibration")
+    ax.set(
+        xscale="log",
+        yscale="log",
+        xlabel="Mean predicted p (bin)",
+        ylabel="Observed hit fraction (bin)",
+        title=f"{fidelity.upper()} calibration",
+    )
     ax.legend(fontsize=8)
     ax.grid(alpha=0.2)
     save(fig, f"{fidelity}_calibration")
@@ -140,8 +160,12 @@ def plot_context_sweep(directory, save):
         for group in groups:
             selected = [r for r in rows if (r["fidelity"], r["split"], r["checkpoint"]) == group]
             observed = [r for r in selected if r["context_labels"] == "observed"]
-            line = ax.plot([r["n_context"] for r in observed], [r[key] for r in observed],
-                           "o-", label=", ".join(group))[0]
+            line = ax.plot(
+                [r["n_context"] for r in observed],
+                [r[key] for r in observed],
+                "o-",
+                label=", ".join(group),
+            )[0]
             for r in selected:
                 if r["context_labels"] == "zeroed":
                     ax.plot(r["n_context"], r[key], "x", ms=9, color=line.get_color())
@@ -162,17 +186,17 @@ def plot_fine_tuning_comparison(directory):
             if not np.array_equal(before["labels"], after["labels"]):
                 raise ValueError("Fine-tuning comparison requires identical target events")
             x = np.arange(len(before["observed"]))
-            fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True,
-                                     layout="constrained")
+            fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True, layout="constrained")
             axes[0].plot(x, before["observed"], "ko", label="Observed target fraction")
             for arrays, label in ((before, "Before fine-tuning"), (after, "After fine-tuning")):
                 axes[0].plot(x, arrays["predicted"], "o-", label=label)
                 axes[1].plot(x, arrays["residual"], "o-", label=label)
-            axes[0].set(title=f"{fidelity.upper()} {split} — last-layer fitting",
-                        ylabel="Detection fraction")
+            axes[0].set(
+                title=f"{fidelity.upper()} {split} — last-layer fitting",
+                ylabel="Detection fraction",
+            )
             axes[1].axhline(0, color="black", ls="--")
-            axes[1].set(xlabel=f"{split.capitalize()} voxel index",
-                        ylabel="Predicted − observed")
+            axes[1].set(xlabel=f"{split.capitalize()} voxel index", ylabel="Predicted − observed")
             for ax in axes:
                 ax.grid(alpha=0.2)
                 ax.legend()
@@ -180,17 +204,33 @@ def plot_fine_tuning_comparison(directory):
                 fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_means.{suffix}", dpi=150)
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(7, 5), layout="constrained")
-            for arrays, checkpoint, label in ((before, "pretraining", "Before fine-tuning"),
-                                               (after, "best", "After fine-tuning")):
-                metric = next(r for r in records if r["split"] == split
-                              and r["fidelity"] == fidelity and r["checkpoint"] == checkpoint)
+            for arrays, checkpoint, label in (
+                (before, "pretraining", "Before fine-tuning"),
+                (after, "best", "After fine-tuning"),
+            ):
+                metric = next(
+                    r
+                    for r in records
+                    if r["split"] == split
+                    and r["fidelity"] == fidelity
+                    and r["checkpoint"] == checkpoint
+                )
                 ap = metric["average_precision"]
                 ap_label = "undefined" if ap is None else f"{ap:.4g}"
-                ax.step(arrays["recall"], arrays["precision"], where="pre",
-                        label=f"{label}, AP={ap_label}")
+                ax.step(
+                    arrays["recall"],
+                    arrays["precision"],
+                    where="pre",
+                    label=f"{label}, AP={ap_label}",
+                )
             ax.axhline(metric["prevalence"], ls="--", color="gray", label="Positive fraction")
-            ax.set(xlabel="Recall", ylabel="Precision", xlim=(0, 1), ylim=(0, 1.05),
-                   title=f"{fidelity.upper()} {split} — precision–recall")
+            ax.set(
+                xlabel="Recall",
+                ylabel="Precision",
+                xlim=(0, 1),
+                ylim=(0, 1.05),
+                title=f"{fidelity.upper()} {split} — precision–recall",
+            )
             ax.legend()
             ax.grid(alpha=0.2)
             for suffix in ("png", "pdf"):
@@ -207,22 +247,28 @@ def plot_mfgp_training_inputs(directory):
         raw = arrays["Y_hf_raw"].reshape(-1)
     fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=True, layout="constrained")
     for ax, fid, values, level in zip(axes, ("LF", "HF"), (lf, hf), (0, 1), strict=True):
-        ax.scatter(np.arange(len(values)), values, s=18,
-                   label=f"CNP mean → GP level {level}")
-        ax.set(title=f"{fid}: {len(values)} GP training voxels",
-               xlabel=f"{fid} training voxel index (saved row order)",
-               ylabel="Detection fraction")
+        ax.scatter(np.arange(len(values)), values, s=18, label=f"CNP mean → GP level {level}")
+        ax.set(
+            title=f"{fid}: {len(values)} GP training voxels",
+            xlabel=f"{fid} training voxel index (saved row order)",
+            ylabel="Detection fraction",
+        )
         ax.grid(alpha=0.2)
-    axes[1].scatter(np.arange(len(raw)), raw, marker="x", color="black",
-                    label="Raw HF target fraction")
+    axes[1].scatter(
+        np.arange(len(raw)), raw, marker="x", color="black", label="Raw HF target fraction"
+    )
     for ax in axes:
         ax.legend(fontsize=9)
     if (directory / "transform.json").exists():
         transform = json.loads((directory / "transform.json").read_text())
         if transform["output_transform"] == "log":
             with np.load(directory / "fit_arrays.npz") as adjusted:
-                axes[1].scatter(np.arange(len(raw)), adjusted["Y_hf_raw"].ravel(),
-                                marker="+", label="Smoothed HF target before log")
+                axes[1].scatter(
+                    np.arange(len(raw)),
+                    adjusted["Y_hf_raw"].ravel(),
+                    marker="+",
+                    label="Smoothed HF target before log",
+                )
             axes[1].legend(fontsize=9)
     fig.suptitle("CNP predictions supplied to the MFGP (original units)")
     for suffix in ("png", "pdf"):
@@ -241,8 +287,12 @@ def plot_mfgp_run(directory):
         with np.load(directory / f"{fid}_validation.npz") as a:
             obs, mean, sigma = a["observed"], a["mean"], a["sigma"]
             cnp = a["cnp_mean"]
-            intervals = {k: (a[f"lower_{k}"], a[f"upper_{k}"]) if f"lower_{k}" in a
-                         else (mean - k * sigma, mean + k * sigma) for k in (1, 2, 3)}
+            intervals = {
+                k: (a[f"lower_{k}"], a[f"upper_{k}"])
+                if f"lower_{k}" in a
+                else (mean - k * sigma, mean + k * sigma)
+                for k in (1, 2, 3)
+            }
             is_log = "output_transform" in a and str(a["output_transform"]) == "log"
         band_label = "95.45% lognormal interval" if is_log else "MFGP ±2σ (observation)"
         x = np.arange(len(obs))
