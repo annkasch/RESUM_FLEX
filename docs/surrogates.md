@@ -544,6 +544,24 @@ contents and regenerates the prepared data if anything differs, before training 
 The data YAML's `output_directory` must be the training `data_directory`. Whether data was
 regenerated is recorded in the run's `experiment.json`.
 
+## Unlabeled inputs and context-free inference
+
+Simulations without optical output (vertex and momentum only, e.g. `LF_primaries`) go into
+the role `gp_unlabeled`. The event cache stores them with `labeled = False`; reading their
+labels or hits raises, and preparation fails if such a file lands in a labeled role. Their
+partition loads only through `OpticalView(dir).load_inputs(partition, fidelity)`, whose
+labels are a zero placeholder for the `StandardBatch` contract and must never be scored.
+
+```bash
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled --threads 8
+```
+
+writes `RUN/inference/best/gp_unlabeled_lf.{npz,json}`: per voxel the file, nominal
+center, normalized theta, event count and `mean_probability` (mean predicted p over the
+voxel's events), plus provenance. Only context-free models (mlp, transformer, bdt) are
+accepted, and the view normalization must equal the checkpoint's. Results are never
+overwritten. Use voxels the model was not trained on, so no labels can be memorized.
+
 ## Shared event cache
 
 Raw LH5 files are read once into a cache shared by all data configs: by default
