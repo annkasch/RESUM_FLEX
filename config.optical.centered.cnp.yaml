@@ -10,7 +10,7 @@ training:
   backend: neural
   loss: bernoulli
   n_passes: 10          # passes over the training events; steps computed at run time
-  eval_every: 250
+  eval_every: 100       # ~34 validation checkpoints over 3380 steps
   learning_rate: 0.001
   batch_size: 16        # voxels per step
   n_events: 750         # events per voxel per step (half of 1500)
