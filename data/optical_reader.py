@@ -50,8 +50,12 @@ def nominal_center(name: str) -> np.ndarray:
     return np.array(match.groups(), dtype=float)
 
 
-def read_arrays(h) -> dict:
-    """Validated vertex and optical-hit arrays of one open LH5 file (h5py.File)."""
+def read_arrays(h, *, require_hits: bool = True) -> dict:
+    """Validated vertex and optical-hit arrays of one open LH5 file (h5py.File).
+
+    With ``require_hits=False`` a file without the ``stp/optical`` group is accepted:
+    ``labeled`` is False and the hit arrays are empty. Files with hits are always checked.
+    """
 
     def array(key, unit=None, integer=False):
         d = h[key]
@@ -81,6 +85,25 @@ def read_arrays(h) -> dict:
         raise ValueError("vertex array length mismatch")
     if np.any(n_part < 1):
         raise ValueError("n_part must be positive")
+    vertex = dict(
+        event_ids=ev,
+        positions=np.column_stack(pos),
+        momenta=np.column_stack(mom),
+        vertex_time=time,
+        n_part=n_part,
+    )
+    if "stp/optical" not in h:
+        if require_hits:
+            raise ValueError("no optical hit data (stp/optical)")
+        empty_int, empty = np.zeros(0, dtype=np.int64), np.zeros(0)
+        return dict(
+            **vertex,
+            labeled=False,
+            hit_event_ids=empty_int,
+            detector_ids=empty_int,
+            hit_time=empty,
+            hit_wavelength=empty,
+        )
     hit_ev = array("stp/optical/evtid", integer=True)
     det = array("stp/optical/det_uid", integer=True)
     ht = array("stp/optical/time", "ns")
@@ -90,11 +113,8 @@ def read_arrays(h) -> dict:
     if not np.isin(hit_ev, ev).all():
         raise ValueError("hit references unknown vertex event ID")
     return dict(
-        event_ids=ev,
-        positions=np.column_stack(pos),
-        momenta=np.column_stack(mom),
-        vertex_time=time,
-        n_part=n_part,
+        **vertex,
+        labeled=True,
         hit_event_ids=hit_ev,
         detector_ids=det,
         hit_time=ht,

@@ -21,7 +21,7 @@ from data.optical_split import (
 )
 from data.optical_view import OpticalView, phi_chunks, voxel_centers, write_view
 from schemas.data_models import InputMode, StandardBatch
-from schemas.optical import OpticalDataConfig
+from schemas.optical import UNLABELED_ROLES, OpticalDataConfig
 
 
 class PreparedOpticalData:
@@ -128,10 +128,20 @@ def prepare_optical_data(
     """
     runs, excluded = cached_runs(config.source, EventCache(config.event_cache), workers=workers)
     if config.target.kind == "single_channel" and not any(
-        np.any(r.cache.hits(r.row)["detector"] == config.target.detector_id) for r in runs
+        np.any(r.cache.hits(r.row)["detector"] == config.target.detector_id)
+        for r in runs
+        if r.labeled
     ):
         raise ValueError("Selected detector ID never observed; cannot validate it without a roster")
     assignments, manifest = assign_splits(runs, config, update=update_manifest)
+    missing = sorted(
+        r.file for r in runs if not r.labeled and assignments[r.file] not in UNLABELED_ROLES
+    )
+    if missing:
+        raise ValueError(
+            f"{len(missing)} files without optical hit data are in labeled partitions "
+            f"(only {', '.join(UNLABELED_ROLES)} may hold them), e.g. {missing[:3]}"
+        )
     training = [
         r
         for r in runs

@@ -130,6 +130,21 @@ class OpticalView:
         rows = cache.locate(self.paths(view), view["sha256"])
         return build_batch(cache, rows, self.config, self.meta["normalization"])
 
+    def load_inputs(self, partition: str, fidelity: str) -> tuple[StandardBatch, list[str]]:
+        """Normalized model inputs of one partition, also for files without hit data.
+
+        Returns (batch, file paths). The batch labels are a zero placeholder required by
+        StandardBatch: use the batch only for context-free predictions, never for scoring.
+        """
+        view = self.select(partition, fidelity)
+        if not len(view):
+            raise FileNotFoundError(f"{self.directory}: no {fidelity} files in {partition}")
+        cache = self.cache
+        paths = self.paths(view)
+        rows = cache.locate(paths, view["sha256"])
+        batch = build_batch(cache, rows, self.config, self.meta["normalization"], labeled=False)
+        return batch, paths
+
 
 def voxel_centers(cache: EventCache, rows, config: OpticalDataConfig) -> np.ndarray:
     """Voxel centers [B, 3] used for theta and vertex offsets."""
@@ -157,15 +172,20 @@ def phi_chunks(cache: EventCache, rows, centers, config: OpticalDataConfig):
         start = stop
 
 
-def build_batch(cache: EventCache, rows, config: OpticalDataConfig, normalization: dict):
-    """StandardBatch of cached files ``rows``; phi is float32, as the models compute."""
+def build_batch(
+    cache: EventCache, rows, config: OpticalDataConfig, normalization: dict, *, labeled=True
+):
+    """StandardBatch of cached files ``rows``; phi is float32, as the models compute.
+
+    ``labeled=False`` skips the labels (zero placeholder) so unlabeled files load too.
+    """
     counts = cache.index["n_events"][rows].astype(np.int64)  # [B]
     width = int(counts.max())
     centers = voxel_centers(cache, rows, config)  # [B, 3]
     theta = AffineTransform(**normalization["theta"]).transform(theta_features(centers, config)[0])
     detector = config.target.detector_id if config.target.kind == "single_channel" else None
     labels = np.zeros((len(rows), width), dtype=np.int8)  # [B, N]
-    for b, row in enumerate(rows):
+    for b, row in enumerate(rows if labeled else []):
         labels[b, : counts[b]] = _labels(cache, row, detector)
     phi = None
     if normalization["phi"] is not None:

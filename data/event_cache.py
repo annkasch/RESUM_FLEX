@@ -6,7 +6,11 @@ Layout of a cache directory::
     index.npy         one row per cached file (INDEX_DTYPE)
     shards/<name>/    events.npy  float32 [n_events, 6]  vertex x/y/z (m), momentum px/py/pz (MeV)
                       labels.npy  uint8   [n_events]     1 if any detector saw the event
+                                                         (0 for unlabeled files)
                       hits.npy    HIT_DTYPE [n_hits]     (event row in file, detector, hits)
+
+Files without optical hit data (``stp/optical``) are cached with ``labeled = False``:
+their events are usable as model inputs, their labels must never be read.
 
 Each file's events are one contiguous block of rows in one shard (``first``, ``n_events``),
 in the LH5 vertex order; its hit list is the block ``first_hit``, ``n_hits`` of the shard's
@@ -40,7 +44,7 @@ import numpy as np
 from data.optical_reader import nominal_center, read_arrays, select_inputs
 from schemas.optical import SourceConfig
 
-VERSION = 1
+VERSION = 2  # 2: "labeled" column; version-1 indexes are upgraded on load
 NAME_BYTES = 96
 INDEX_DTYPE = np.dtype(
     [
@@ -58,6 +62,7 @@ INDEX_DTYPE = np.dtype(
         ("measured_center", "f8", (3,)),  # midpoint of the vertex range
         ("max_n_part", "i4"),  # largest number of primaries in one event
         ("valid", "?"),  # False once the file changed and was cached again
+        ("labeled", "?"),  # False when the file has no optical hit data
     ]
 )
 HIT_DTYPE = np.dtype([("row", "i4"), ("detector", "i4"), ("hits", "i4")])
@@ -80,7 +85,7 @@ def _read_file(path: Path):
     data = path.read_bytes()
     digest = np.frombuffer(hashlib.sha256(data).digest(), dtype=np.uint8)
     with h5py.File(io.BytesIO(data), "r") as h:
-        a = read_arrays(h)
+        a = read_arrays(h, require_hits=False)
     ids = a["event_ids"]
     order = np.argsort(ids)
     rows = order[np.searchsorted(ids, a["hit_event_ids"], sorter=order)]
@@ -93,7 +98,7 @@ def _read_file(path: Path):
     labels[rows] = 1
     events = np.column_stack([a["positions"], a["momenta"]]).astype(np.float32)
     measured = (a["positions"].min(0).astype(float) + a["positions"].max(0)) / 2
-    return events, labels, hits, digest, measured, int(a["n_part"].max())
+    return events, labels, hits, digest, measured, int(a["n_part"].max()), a["labeled"]
 
 
 def _write_shard(directory: Path, events, labels, hits):
@@ -114,14 +119,14 @@ def _build_shard(task):
     for path in map(Path, files):
         try:
             center = nominal_center(path.name)
-            e, lab, h, digest, measured, n_part = _read_file(path)
+            e, lab, h, digest, measured, n_part, labeled = _read_file(path)
         except (KeyError, ValueError, OSError, TypeError) as exc:
             raise ValueError(f"{path}: {exc}") from exc
         events.append(e)
         labels.append(lab)
         hits.append(h)
         records.append(
-            (str(path), digest, first, len(e), first_hit, len(h), center, measured, n_part)
+            (str(path), digest, first, len(e), first_hit, len(h), center, measured, n_part, labeled)
         )
         first += len(e)
         first_hit += len(h)
@@ -153,10 +158,16 @@ class EventCache:
         meta = self.directory / "cache.json"
         if meta.is_file():
             info = json.loads(meta.read_text())
-            if info.get("version") != VERSION:
+            if info.get("version") not in (1, VERSION):
                 raise ValueError(f"Unsupported event cache version in {self.directory}")
             self.folders, self.shards = info["folders"], info["shards"]
             self.index = np.load(self.directory / "index.npy")
+            if info["version"] == 1:  # version 1 read only files with hit data
+                index = np.zeros(len(self.index), dtype=INDEX_DTYPE)
+                for name in self.index.dtype.names:
+                    index[name] = self.index[name]
+                index["labeled"] = True
+                self.index = index
         else:
             self.folders, self.shards = [], []
             self.index = np.empty(0, dtype=INDEX_DTYPE)
@@ -202,16 +213,26 @@ class EventCache:
             self._mapped[key] = np.load(path, mmap_mode="r")
         return self._mapped[key]
 
+    def _block(self, row: int, part: str) -> np.ndarray:
+        """Raw rows of one file in shard array ``part``, without label checks."""
+        r = self.index[row]
+        first, n = (r["first_hit"], r["n_hits"]) if part == "hits" else (r["first"], r["n_events"])
+        return self.shard(r["shard"], part)[first : first + n]
+
     def events(self, row: int) -> np.ndarray:  # [n_events, 6] float32
         r = self.index[row]
         return self.shard(r["shard"], "events")[r["first"] : r["first"] + r["n_events"]]
 
     def labels(self, row: int) -> np.ndarray:  # [n_events] uint8, any detector
         r = self.index[row]
+        if not r["labeled"]:
+            raise ValueError(f"{self.path(row)} has no optical hit data; labels are undefined")
         return self.shard(r["shard"], "labels")[r["first"] : r["first"] + r["n_events"]]
 
     def hits(self, row: int) -> np.ndarray:  # [n_hits] HIT_DTYPE
         r = self.index[row]
+        if not r["labeled"]:
+            raise ValueError(f"{self.path(row)} has no optical hit data")
         return self.shard(r["shard"], "hits")[r["first_hit"] : r["first_hit"] + r["n_hits"]]
 
     # --- update -----------------------------------------------------------------------------
@@ -290,7 +311,18 @@ class EventCache:
         added = []
         for name, records in zip(names, results, strict=True):
             self.shards.append(name)
-            for path, digest, first, n, first_hit, n_hits, center, measured, n_part in records:
+            for (
+                path,
+                digest,
+                first,
+                n,
+                first_hit,
+                n_hits,
+                center,
+                measured,
+                n_part,
+                labeled,
+            ) in records:
                 path = Path(path)
                 folder = folders.setdefault(str(path.parent), len(folders))
                 added.append(
@@ -309,6 +341,7 @@ class EventCache:
                         measured,
                         n_part,
                         True,
+                        labeled,
                     )
                 )
         added = np.array(added, dtype=INDEX_DTYPE)
@@ -344,8 +377,9 @@ class EventCache:
             first = first_hit = 0
             for i, row in enumerate(rows, start):
                 parts["events"].append(self.events(row))
-                parts["labels"].append(self.labels(row))
-                parts["hits"].append(self.hits(row))
+                # Raw slices: unlabeled files keep their (empty) label and hit blocks.
+                parts["labels"].append(self._block(row, "labels"))
+                parts["hits"].append(self._block(row, "hits"))
                 index[i]["shard"], index[i]["first"], index[i]["first_hit"] = k, first, first_hit
                 first += index[i]["n_events"]
                 first_hit += index[i]["n_hits"]
@@ -411,6 +445,11 @@ class CachedRun:
     @property
     def momenta(self) -> np.ndarray:  # [n_events, 3] float32, MeV
         return self.cache.events(self.row)[:, 3:]
+
+    @property
+    def labeled(self) -> bool:
+        """False for files without optical hit data (inputs only)."""
+        return bool(self.cache.index["labeled"][self.row])
 
     @property
     def max_n_part(self) -> int:

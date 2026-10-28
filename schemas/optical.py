@@ -7,8 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ANOMALOUS_FILE = "lf/run067_x-0.088_y+0.484_z-1.462.stp.lh5"
 # Roles of LF voxels in the role-based layout; see RoleSource.
-ROLES = ("cnp_train", "cnp_validation", "cnp_test", "gp_train")
-Role = Literal["cnp_train", "cnp_validation", "cnp_test", "gp_train"]
+ROLES = ("cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled")
+Role = Literal["cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled"]
+# Roles whose files need no optical hits (inputs only, e.g. for event-model inference).
+UNLABELED_ROLES = ("gp_unlabeled",)
 
 
 class StrictModel(BaseModel):

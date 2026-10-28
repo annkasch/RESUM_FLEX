@@ -7,6 +7,7 @@ import numpy as np
 
 from data.optical_features import center, make_labels
 from data.optical_split import FIDELITIES, partition_names
+from schemas.optical import UNLABELED_ROLES
 
 
 def write_csv(path, rows, fields=None):
@@ -37,6 +38,8 @@ def generate_reports(runs, assignments, excluded, config, manifest):
     import matplotlib.pyplot as plt
 
     root = config.output_directory / "reports"
+    # Hit statistics exist only for files with optical hit data.
+    runs = [r for r in runs if getattr(r, "labeled", True)]
     stats = {r.file: _run_stats(r, config) for r in runs}
     vocabulary = np.unique(
         np.concatenate([s["detectors"] for s in stats.values()] + [np.zeros(0, int)])
@@ -62,6 +65,8 @@ def generate_reports(runs, assignments, excluded, config, manifest):
         + "\n"
     )
     for split in partition_names(config):
+        if split in UNLABELED_ROLES:  # inputs only; no hits to report
+            continue
         held_out = split in ("test", "cnp_test")
         target = root / (split if held_out else f"development/{split}")
         target.mkdir(parents=True, exist_ok=True)

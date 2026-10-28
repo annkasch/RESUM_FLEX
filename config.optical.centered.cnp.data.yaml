@@ -8,10 +8,18 @@ source:
     fractions: {cnp_train: 1.0}
   - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/validation/lf/lf
     fractions: {cnp_validation: 0.5, cnp_test: 0.5}
+  # Inputs only (vertex + momentum, no optical hits): context-free model predictions for the
+  # GP's level 0. Disjoint from LF_sim/validation; contains the 200 HF_sim voxels.
+  - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/LF_primaries/lf
+    fractions: {gp_unlabeled: 1.0}
   # Crashed runs: N=1 with the single vertex at the origin.
   exclude_files:
   - lf/run00782_v00010738_x+0.4300_y+0.3650_z+0.3875.stp.lh5
   - lf/run00150_v00009939_x+0.4250_y+0.3650_z+0.3925.stp.lh5
+  # LF_primaries: crashed (N=1 at the origin) and truncated (54 of 1500 events) runs.
+  - lf/run00888_v00010803_x+0.4300_y+0.3750_z+0.3925.stp.lh5
+  - lf/run00921_v00009171_x+0.4200_y+0.3700_z+0.3925.stp.lh5
+  - lf/run01461_v00010772_x+0.4300_y+0.3700_z+0.3975.stp.lh5
 output_directory: outputs/optical_centered_cnp_v0
 theta:
   coordinates: cartesian
