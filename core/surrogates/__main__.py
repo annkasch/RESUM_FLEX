@@ -1,5 +1,6 @@
 """Run: python -m core.surrogates train config.optical.resum.yaml
-python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled"""
+python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
+python -m core.surrogates mfgp config.optical.centered.mfgp.yaml"""
 
 import argparse
 
@@ -20,10 +21,20 @@ def main():
     predict.add_argument("partition")
     predict.add_argument("--fidelity", default="lf", choices=["lf", "hf"])
     predict.add_argument("--threads", type=int, default=1)
+    mfgp = commands.add_parser("mfgp", help="Fit a standalone multi-fidelity GP")
+    mfgp.add_argument("config")
     args = parser.parse_args()
     import torch
 
     torch.set_num_threads(1)
+    if args.command == "mfgp":
+        from core.surrogates.mfgp_stage import run_mfgp_config
+        from schemas.surrogates import load_mfgp_config
+
+        config = load_mfgp_config(args.config)
+        print(f"Fitting a {len(config.levels)}-level MFGP", flush=True)
+        print(run_mfgp_config(config), flush=True)
+        return
     if args.command == "predict":
         from core.surrogates.inference import predict_partition
 

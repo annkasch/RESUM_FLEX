@@ -130,6 +130,17 @@ class OpticalView:
         rows = cache.locate(self.paths(view), view["sha256"])
         return build_batch(cache, rows, self.config, self.meta["normalization"])
 
+    def load_theta(self, partition: str, fidelity: str) -> tuple[np.ndarray, list[str]]:
+        """Normalized voxel coordinates [B, D_theta] and file paths, without reading events."""
+        view = self.select(partition, fidelity)
+        if not len(view):
+            raise FileNotFoundError(f"{self.directory}: no {fidelity} files in {partition}")
+        paths = self.paths(view)
+        rows = self.cache.locate(paths, view["sha256"])
+        centers = voxel_centers(self.cache, rows, self.config)
+        transform = AffineTransform(**self.meta["normalization"]["theta"])
+        return transform.transform(theta_features(centers, self.config)[0]), paths
+
     def load_inputs(self, partition: str, fidelity: str) -> tuple[StandardBatch, list[str]]:
         """Normalized model inputs of one partition, also for files without hit data.
 

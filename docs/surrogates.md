@@ -145,22 +145,56 @@ and focal losses can change probability calibration; the saved config records
 these choices. AP is explicitly undefined (`None`, with empty PR arrays) for
 validation sets with no positives; AP selection then fails before fitting.
 
-## MFGP boundary
+## Multi-fidelity GP: configurable levels
 
-```python
-from core.surrogates import prepare_surrogate_datasets
-from core import fit_mfgp_three_fidelity
+The MFGP fits an ordered list of levels, lowest fidelity first; the last level is the
+target. Each level is one (X, Y) set of prepared voxels:
 
-arrays = prepare_surrogate_datasets(model, lf_batch, hf_batch, seed=0)
-gp = fit_mfgp_three_fidelity(arrays)
+- `model_mean`: mean predicted p per voxel of an event model. With `inference:` (a file
+  from `python -m core.surrogates predict`) the saved values are used after checking that
+  voxels and normalization match the data; otherwise the event model predicts at fit time
+  (context models split each voxel's labeled events with `n_context`).
+- `observed_fraction`: simulated hit fraction m/N over all events of each voxel.
+
+`max_voxels` takes a seeded voxel subset (exact GPs scale as O(n³)); levels on the same
+partition/fidelity share it. `evaluation` lists held-out partitions whose observed
+fraction is scored against one level (default: the top level). Log mode smooths observed
+fractions to (m + a)/(N + 2a) and floors model means at `cnp_log_floor`.
+
+```yaml
+levels:
+  - {source: model_mean, partition: gp_unlabeled, inference: RUN/inference/best/gp_unlabeled_lf.npz}
+  - {source: observed_fraction, partition: gp_train, fidelity: hf}
+evaluation:
+  - {partition: gp_validation, fidelity: hf}
+kernel: rbf
+n_restarts: 5
+output_transform: log
 ```
 
-The helper requires theta and averages predicted probabilities and HF labels over
-the same target sets. It retains the historical `Y_lf_cnp` / `Y_hf_cnp` dictionary
-keys for GP compatibility; these now hold scores from the selected surrogate.
-The existing `prepare_mfgp_datasets_from_batches` also accepts an `EventSurrogate`.
-Importing or using event models does not require GPy/Emukit. Actual GP fitting does.
-Classifier uncertainty is not substituted for the GP posterior uncertainty.
+Two ways to run it, with the same code and outputs:
+
+- **Combined:** a `mfgp:` block in a training config fits the GP after training with the
+  checkpoint `mfgp_checkpoint`; outputs go to `RUN/mfgp/`.
+- **Standalone:** `python -m core.surrogates mfgp CONFIG.yaml` with the block above plus
+  `data_directory`, `output_directory`, optional `data_config` and `checkpoint` (needed
+  only for `model_mean` levels without an inference file). Paths are relative to the YAML.
+
+An `mfgp:` block without `levels` keeps the former three levels: model mean train/lf →
+model mean train/hf → observed fraction train/hf, evaluated on validation/lf (level 0, if
+`lf_validation`) and validation/hf (top). Differences from before: observed fractions use
+all events of a voxel, not only the events left after the model's context split.
+
+Outputs: `training_arrays.npz` (`X_k`, `Y_k`, `events_k`, `index_k`), `fit_arrays.npz`,
+`transformed_training_arrays.npz`, `levels.json` (settings, voxel counts, provenance),
+`model.pkl`/`model.json`, `evaluation_<e>.npz` + `metrics.json` (one row per evaluation
+set), `development_map.npz`, and plots (`training_inputs`, `evaluation_<e>_means`,
+`evaluation_<e>_coverage`, `development_map`).
+
+The synthetic three-level helpers (`prepare_surrogate_datasets`, `fit_mfgp_three_fidelity`)
+remain for the phase scripts, the optimizer and notebooks; `fit_mfgp(X_list, Y_list)` is
+the general fit. GP fitting needs GPy/Emukit; event models don't. Classifier uncertainty
+is not substituted for the GP posterior uncertainty.
 
 ## Existing trained models
 

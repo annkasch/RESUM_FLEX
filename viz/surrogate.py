@@ -239,38 +239,35 @@ def plot_fine_tuning_comparison(directory):
 
 
 def plot_mfgp_training_inputs(directory):
-    """Plot the exact saved surrogate means passed to the GP, in training-row order."""
+    """Plot the exact values of every GP level, in training-row order (original units)."""
     directory = Path(directory)
-    with np.load(directory / "training_arrays.npz") as arrays:
-        lf = arrays["Y_lf_cnp"].reshape(-1)
-        hf = arrays["Y_hf_cnp"].reshape(-1)
-        raw = arrays["Y_hf_raw"].reshape(-1)
-    fig, axes = plt.subplots(1, 2, figsize=(13, 4), sharey=True, layout="constrained")
-    for ax, fid, values, level in zip(axes, ("LF", "HF"), (lf, hf), (0, 1), strict=True):
-        ax.scatter(np.arange(len(values)), values, s=18, label=f"CNP mean → GP level {level}")
-        ax.set(
-            title=f"{fid}: {len(values)} GP training voxels",
-            xlabel=f"{fid} training voxel index (saved row order)",
-            ylabel="Detection fraction",
-        )
-        ax.grid(alpha=0.2)
-    axes[1].scatter(
-        np.arange(len(raw)), raw, marker="x", color="black", label="Raw HF target fraction"
+    levels = json.loads((directory / "levels.json").read_text())
+    log_mode = json.loads((directory / "model.json").read_text())["config"][
+        "output_transform"
+    ] == "log"
+    fig, axes = plt.subplots(
+        1, len(levels), figsize=(5 * len(levels), 4), sharey=True, layout="constrained",
+        squeeze=False,
     )
-    for ax in axes:
-        ax.legend(fontsize=9)
-    if (directory / "transform.json").exists():
-        transform = json.loads((directory / "transform.json").read_text())
-        if transform["output_transform"] == "log":
-            with np.load(directory / "fit_arrays.npz") as adjusted:
-                axes[1].scatter(
-                    np.arange(len(raw)),
-                    adjusted["Y_hf_raw"].ravel(),
-                    marker="+",
-                    label="Smoothed HF target before log",
-                )
-            axes[1].legend(fontsize=9)
-    fig.suptitle("CNP predictions supplied to the MFGP (original units)")
+    with np.load(directory / "training_arrays.npz") as raw, \
+            np.load(directory / "fit_arrays.npz") as adjusted:
+        for ax, level in zip(axes[0], levels, strict=True):
+            k = level["level"]
+            values = raw[f"Y_{k}"].ravel()
+            label = "model mean" if level["source"] == "model_mean" else "observed fraction"
+            ax.scatter(np.arange(len(values)), values, s=10, label=label)
+            if log_mode and level["source"] == "observed_fraction":
+                ax.scatter(np.arange(len(values)), adjusted[f"Y_{k}"].ravel(), marker="+",
+                           s=12, label="smoothed before log")
+            ax.set(
+                title=f"Level {k}: {level['partition']}/{level['fidelity']} ({len(values)})",
+                xlabel="GP training voxel index (saved row order)",
+                yscale="log" if log_mode else "linear",
+            )
+            ax.grid(alpha=0.2)
+            ax.legend(fontsize=8)
+    axes[0, 0].set_ylabel("Detection fraction")
+    fig.suptitle("GP training levels, lowest to highest fidelity")
     for suffix in ("png", "pdf"):
         fig.savefig(directory / f"training_inputs.{suffix}", dpi=150)
     plt.close(fig)
@@ -278,51 +275,33 @@ def plot_mfgp_training_inputs(directory):
 
 
 def plot_mfgp_run(directory):
-    """Training inputs and mean/residual/coverage diagnostics on held-out voxels."""
+    """Training levels and mean/residual/coverage diagnostics per evaluation set."""
     plot_mfgp_training_inputs(directory)
     directory = Path(directory)
-    for fid in ("lf", "hf"):
-        if not (directory / f"{fid}_validation.npz").exists():
-            continue
-        with np.load(directory / f"{fid}_validation.npz") as a:
+    for path in sorted(directory.glob("evaluation_*.npz")):
+        with np.load(path) as a:
             obs, mean, sigma = a["observed"], a["mean"], a["sigma"]
-            cnp = a["cnp_mean"]
-            intervals = {
-                k: (a[f"lower_{k}"], a[f"upper_{k}"])
-                if f"lower_{k}" in a
-                else (mean - k * sigma, mean + k * sigma)
-                for k in (1, 2, 3)
-            }
-            is_log = "output_transform" in a and str(a["output_transform"]) == "log"
+            model = a["model_mean"] if "model_mean" in a else None
+            intervals = {k: (a[f"lower_{k}"], a[f"upper_{k}"]) for k in (1, 2, 3)}
+            is_log = str(a["output_transform"]) == "log"
+            label = str(a["label"])
+        name = path.stem
         band_label = "95.45% lognormal interval" if is_log else "MFGP ±2σ (observation)"
         x = np.arange(len(obs))
         fig, axes = plt.subplots(2, 1, figsize=(11, 7), sharex=True, layout="constrained")
         axes[0].fill_between(x, *intervals[2], alpha=0.2, label=band_label)
         axes[0].plot(x, mean, "o", label="MFGP mean")
-        axes[0].plot(x, cnp, "x", label="CNP mean")
-        axes[0].plot(x, obs, "k.", label="Observed target fraction")
-        axes[0].set(title=f"{fid.upper()} held-out voxels", ylabel="Detection fraction")
+        if model is not None:
+            axes[0].plot(x, model, "x", label="Event-model mean")
+        axes[0].plot(x, obs, "k.", label="Observed fraction")
+        axes[0].set(title=f"{label}: held-out voxels", ylabel="Detection fraction")
         axes[0].legend()
         axes[1].plot(x, mean - obs, "o-", label="MFGP residual")
         axes[1].axhline(0, color="black", ls="--")
-        axes[1].set(xlabel="Validation voxel index", ylabel="Predicted − observed")
+        axes[1].set(xlabel="Evaluation voxel index", ylabel="Predicted − observed")
         for suffix in ("png", "pdf"):
-            fig.savefig(directory / f"{fid}_means.{suffix}", dpi=150)
+            fig.savefig(directory / f"{name}_means.{suffix}", dpi=150)
         plt.close(fig)
-        # Keep a GP-only view readable when the CNP has a large mean offset.
-        gp_fig, gp_ax = plt.subplots(figsize=(10, 4), layout="constrained")
-        gp_ax.fill_between(x, *intervals[2], alpha=0.2, label=band_label)
-        gp_ax.plot(x, mean, "o", label="MFGP mean")
-        gp_ax.plot(x, obs, "k.-", label="Observed target fraction")
-        gp_ax.set(
-            xlabel="Validation voxel index",
-            ylabel="Detection fraction",
-            title=f"{fid.upper()} MFGP validation",
-        )
-        gp_ax.legend()
-        for suffix in ("png", "pdf"):
-            gp_fig.savefig(directory / f"{fid}_gp_means.{suffix}", dpi=150)
-        plt.close(gp_fig)
         from viz.dispatch import plot_coverage_test
 
         low = min(float(obs.min()), float(intervals[3][0].min()))
@@ -333,11 +312,11 @@ def plot_mfgp_run(directory):
                 obs,
                 mean,
                 sigma,
-                out_path=directory / f"{fid}_coverage.{suffix}",
-                title=f"{fid.upper()} MFGP — observation-predictive coverage",
-                xlabel="Validation voxel index",
+                out_path=directory / f"{name}_coverage.{suffix}",
+                title=f"{label}: MFGP observation-predictive coverage",
+                xlabel="Evaluation voxel index",
                 predicted_label="MFGP mean",
-                raw_label="Observed target fraction",
+                raw_label="Observed fraction",
                 ylim=(max(0, low - padding) if is_log else low - padding, high + padding),
                 intervals=intervals,
                 interval_label="σ in log space" if is_log else "σ",
@@ -348,7 +327,7 @@ def plot_mfgp_run(directory):
         fig = plt.figure(figsize=(8, 6), layout="constrained")
         ax = fig.add_subplot(111, projection="3d")
         points = ax.scatter(*theta.T, c=mean, cmap="viridis")
-        ax.set(xlabel="x", ylabel="y", zlabel="z", title="HF-equivalent map at development voxels")
+        ax.set(xlabel="x", ylabel="y", zlabel="z", title="Target-level map at development voxels")
         fig.colorbar(points, ax=ax, label="Predicted detection fraction", shrink=0.7)
         for suffix in ("png", "pdf"):
             fig.savefig(directory / f"development_map.{suffix}", dpi=150)

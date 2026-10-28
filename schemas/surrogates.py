@@ -323,22 +323,144 @@ class SurrogateConfig(StrictConfigModel):
         return self
 
 
+Fidelity = Literal["lf", "hf"]
+
+
+class ModelMeanLevel(StrictConfigModel):
+    """GP level from an event model: mean predicted p per voxel of a prepared partition.
+
+    ``inference``: a file written by ``python -m core.surrogates predict``; without it the
+    run's (or the configured) checkpoint predicts at fit time. Context models need labeled
+    voxels for their context; context-free models also predict unlabeled voxels.
+    """
+
+    source: Literal["model_mean"]
+    partition: str
+    fidelity: Fidelity = "lf"
+    inference: Path | None = None
+    max_voxels: int | None = Field(default=None, gt=0)
+
+
+class ObservedFractionLevel(StrictConfigModel):
+    """GP level from simulation: observed hit fraction m/N over all events of each voxel."""
+
+    source: Literal["observed_fraction"]
+    partition: str
+    fidelity: Fidelity = "hf"
+    max_voxels: int | None = Field(default=None, gt=0)
+
+
+GPLevel = Annotated[ModelMeanLevel | ObservedFractionLevel, Field(discriminator="source")]
+
+
+class GPEvaluation(StrictConfigModel):
+    """Held-out voxels whose observed fraction is compared with one GP level (default: top)."""
+
+    partition: str
+    fidelity: Fidelity = "hf"
+    level: int | None = None
+
+
 class MFGPStageConfig(StrictConfigModel):
+    # Ordered from the lowest to the highest fidelity; the last level is the target.
+    levels: list[GPLevel] = Field(min_length=2)
+    evaluation: list[GPEvaluation] = Field(default_factory=list)
     projections: MFGPProjectionConfig = Field(default_factory=MFGPProjectionConfig)
     output_transform: Literal["identity", "log"] = "identity"
+    # Log mode: observed fractions become (m + a) / (N + 2a); model means are floored.
     raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
+    # Context events per voxel when a context model computes a model_mean level.
     n_context: int = Field(default=64, gt=0)
-    # Seeded voxel subsets of the GP training partitions (exact GPs scale as O(n^3)).
-    # None uses all training voxels; event-model training is never subsampled.
-    max_lf_voxels: int | None = Field(default=None, gt=0)
-    max_hf_voxels: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def consistent_levels(self):
+        limits = {}
+        for level in self.levels:
+            key = level.partition, level.fidelity
+            if limits.setdefault(key, level.max_voxels) != level.max_voxels:
+                raise ValueError(f"Levels on {key[0]}/{key[1]} need the same max_voxels")
+        for evaluation in self.evaluation:
+            if evaluation.level is not None and not 0 <= evaluation.level < len(self.levels):
+                raise ValueError(f"evaluation level must be in [0, {len(self.levels) - 1}]")
+        return self
+
+
+def legacy_mfgp_levels(mfgp: dict, *, lf_validation: bool = True) -> dict:
+    """Map an MFGP block without ``levels`` to the former three levels.
+
+    LF model mean (train/lf) -> HF model mean (train/hf) -> HF observed fraction (train/hf),
+    evaluated on validation/lf at level 0 and validation/hf at the top level.
+    """
+    if not isinstance(mfgp, dict) or "levels" in mfgp:
+        return mfgp
+    mfgp = dict(mfgp)
+    lf, hf = mfgp.pop("max_lf_voxels", None), mfgp.pop("max_hf_voxels", None)
+    mfgp["levels"] = [
+        {"source": "model_mean", "partition": "train", "fidelity": "lf", "max_voxels": lf},
+        {"source": "model_mean", "partition": "train", "fidelity": "hf", "max_voxels": hf},
+        {"source": "observed_fraction", "partition": "train", "fidelity": "hf", "max_voxels": hf},
+    ]
+    if "evaluation" not in mfgp:
+        evaluation = [{"partition": "validation", "fidelity": "lf", "level": 0}]
+        mfgp["evaluation"] = (evaluation if lf_validation else []) + [
+            {"partition": "validation", "fidelity": "hf"}
+        ]
+    return mfgp
+
+
+class MFGPRunConfig(MFGPStageConfig):
+    """Standalone MFGP fit on prepared data, independent of event-model training."""
+
+    data_directory: Path
+    # Optional data-preparation YAML; prepared data is regenerated when it differs.
+    data_config: Path | None = None
+    # Event model for model_mean levels without an inference file.
+    checkpoint: Path | None = None
+    output_directory: Path
+
+    @model_validator(mode="after")
+    def model_available(self):
+        if self.checkpoint is None and any(
+            level.source == "model_mean" and level.inference is None for level in self.levels
+        ):
+            raise ValueError("model_mean levels without an inference file need a checkpoint")
+        return self
+
+
+def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
+    """Standalone MFGP config; paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = MFGPRunConfig.model_validate(legacy_mfgp_levels(yaml.safe_load(path.read_text())))
+
+    def resolve(value):
+        return value if value is None or value.is_absolute() else (path.parent / value).resolve()
+
+    for name in ("data_directory", "data_config", "checkpoint", "output_directory"):
+        setattr(config, name, resolve(getattr(config, name)))
+    for level in config.levels:
+        if level.source == "model_mean":
+            level.inference = resolve(level.inference)
+    return config
 
 
 class SurrogateRunConfig(SurrogateConfig):
+    @model_validator(mode="before")
+    @classmethod
+    def legacy_mfgp(cls, data):
+        """MFGP blocks without levels keep their former three levels."""
+        if isinstance(data, dict) and isinstance(data.get("mfgp"), dict):
+            data = {
+                **data,
+                "mfgp": legacy_mfgp_levels(
+                    data["mfgp"], lf_validation=data.get("lf_validation", True)
+                ),
+            }
+        return data
+
     lf_validation: bool = True
     hf_validation: bool = True
     test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)
@@ -410,4 +532,7 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
         value = getattr(config, name)
         if value is not None and not value.is_absolute():
             setattr(config, name, (path.parent / value).resolve())
+    for level in config.mfgp.levels if config.mfgp else []:
+        if level.source == "model_mean" and level.inference and not level.inference.is_absolute():
+            level.inference = (path.parent / level.inference).resolve()
     return config

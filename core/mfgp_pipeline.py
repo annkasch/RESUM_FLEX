@@ -230,7 +230,7 @@ def fit_mfgp_three_fidelity(
     verbose: bool = False,
     output_transform: str = "identity",
 ) -> MultiFidelityGP:
-    """Fit a 3-fidelity MFGP on ``(LF β̄, HF β̄, HF y_raw)``.
+    """Fit the synthetic 3-level recipe ``(LF β̄, HF β̄, HF y_raw)``; see :func:`fit_mfgp`.
 
     Log mode requires strictly positive targets, already smoothed by the caller
     where appropriate; this low-level function never invents event counts.
@@ -241,14 +241,36 @@ def fit_mfgp_three_fidelity(
     """
     if config is not None and kernel is not None:
         raise ValueError("pass either config or kernel, not both")
-    selected_kernel = config.kernel if config is not None else (kernel or "rbf")
-    dim_theta = data["X_hf"].shape[1]
-    X_list = [data["X_lf"], data["X_hf"], data["X_hf"]]
-    Y_list = [data["Y_lf_cnp"], data["Y_hf_cnp"], data["Y_hf_raw"]]
+    return fit_mfgp(
+        [data["X_lf"], data["X_hf"], data["X_hf"]],
+        [data["Y_lf_cnp"], data["Y_hf_cnp"], data["Y_hf_raw"]],
+        kernel=config.kernel if config is not None else (kernel or "rbf"),
+        n_restarts=n_restarts,
+        verbose=verbose,
+        output_transform=output_transform,
+    )
+
+
+def fit_mfgp(
+    X_list: list[np.ndarray],
+    Y_list: list[np.ndarray],
+    *,
+    kernel: str = "rbf",
+    n_restarts: int = 5,
+    verbose: bool = False,
+    output_transform: str = "identity",
+) -> MultiFidelityGP:
+    """Fit a linear multi-fidelity GP with one level per (X, Y) pair, lowest fidelity first.
+
+    X_list[k]: [n_k, D_theta]; Y_list[k]: [n_k, 1]. Log mode requires strictly positive
+    targets, already smoothed or floored by the caller.
+    """
+    if len(X_list) != len(Y_list) or len(X_list) < 2:
+        raise ValueError("Need matching X/Y lists with at least two levels")
     return MultiFidelityGP(
-        n_fidelities=3,
-        dim_theta=dim_theta,
-        kernel=selected_kernel,
+        n_fidelities=len(X_list),
+        dim_theta=X_list[0].shape[1],
+        kernel=kernel,
         output_transform=output_transform,
     ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose)
 

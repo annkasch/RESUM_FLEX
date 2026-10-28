@@ -39,17 +39,41 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
     )
 
 
+def _saved_layout(directory):
+    """(validation file, training thetas, observed top-level theta, observed values).
+
+    Flexible-level runs store X_k/Y_k per level and evaluation_<e>.npz; the observed
+    training points are the top level when it is an observed fraction. Older runs used
+    X_lf/X_hf/Y_hf_raw and hf_validation.npz.
+    """
+    with np.load(directory / "training_arrays.npz") as data:
+        if "X_lf" in data:
+            return (directory / "hf_validation.npz", [data["X_lf"], data["X_hf"]],
+                    data["X_hf"], data["Y_hf_raw"].ravel())
+        levels = json.loads((directory / "levels.json").read_text())
+        top = levels[-1]["level"]
+        # Levels on the same voxels (e.g. HF model mean and HF fraction) count once.
+        thetas = [np.unique(np.concatenate([data[f"X_{r['level']}"] for r in levels]), axis=0)]
+        observed = levels[-1]["source"] == "observed_fraction"
+        observed_theta = data[f"X_{top}"] if observed else np.zeros((0, thetas[0].shape[1]))
+        observed_values = data[f"Y_{top}"].ravel() if observed else np.zeros(0)
+    rows = json.loads((directory / "metrics.json").read_text())
+    at_top = [r["evaluation"] for r in rows if r["level"] == top]
+    if not at_top:
+        raise ValueError("Projections need an evaluation set at the top GP level")
+    return directory / f"evaluation_{at_top[0]}.npz", thetas, observed_theta, observed_values
+
+
 def ensure_mfgp_projections(directory, settings):
     """Create cached projections from a saved run; never retrain or reread raw data."""
     from core.surrogate_mfgp import load_mfgp
     from viz.mfgp_projections import plot_mfgp_projections
 
     directory = Path(directory)
-    sources = [
-        directory / name for name in ("model.pkl", "training_arrays.npz", "hf_validation.npz")
-    ]
+    validation_path, thetas, observed_theta, observed_values = _saved_layout(directory)
+    sources = [directory / "model.pkl", directory / "training_arrays.npz", validation_path]
     if settings.quantity == "observed_fraction" and settings.target_events is None:
-        with np.load(directory / "hf_validation.npz") as validation:
+        with np.load(validation_path) as validation:
             n_target = None
             if "target_events" in validation:
                 budgets = np.unique(validation["target_events"])
@@ -107,14 +131,13 @@ def ensure_mfgp_projections(directory, settings):
             offset, scale = np.asarray(norm["offset"]), np.asarray(norm["scale"])
         if offset.shape != (3,) or scale.shape != (3,) or np.any(scale <= 0):
             raise ValueError("Projections require a valid three-coordinate affine normalization")
-        with np.load(directory / "training_arrays.npz") as data:
-            training_theta = np.concatenate((data["X_lf"], data["X_hf"])) * scale + offset
-            observed_train_theta = data["X_hf"] * scale + offset
-            observed_train = data["Y_hf_raw"].ravel()
+        training_theta = np.concatenate(thetas) * scale + offset
+        observed_train_theta = observed_theta * scale + offset
+        observed_train = observed_values
         gp = load_mfgp(directory / "model.pkl")
         arrays, metadata = marginalize_posterior(gp, training_theta, offset, scale, settings)
         arrays.update(observed_train_theta=observed_train_theta, observed_train=observed_train)
-        with np.load(directory / "hf_validation.npz") as data:
+        with np.load(validation_path) as data:
             arrays.update(
                 observed_validation_theta=data["theta"] * scale + offset,
                 observed_validation=data["observed"],

@@ -1,4 +1,4 @@
-"""Complete shared neural -> three-fidelity GP artifact workflow."""
+"""Complete shared neural -> multi-fidelity GP artifact workflow (combined mode)."""
 
 import json
 
@@ -68,18 +68,25 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
                 load_surrogate(out / "checkpoints" / checkpoint), lf, hf,
                 n_lf_context=4, n_hf_context=4, seed=config.mfgp.seed)
         expected_inputs, old_inputs = inputs("best"), inputs("pretraining")
+        # Model-mean levels keep the former context splits (seed + 1 LF, seed + 101 HF).
         with np.load(out / "mfgp/training_arrays.npz") as arrays:
-            for key, expected_array in expected_inputs.items():
-                np.testing.assert_array_equal(arrays[key], expected_array)
-            assert not np.array_equal(arrays["Y_lf_cnp"], old_inputs["Y_lf_cnp"])
+            np.testing.assert_array_equal(arrays["Y_0"], expected_inputs["Y_lf_cnp"])
+            np.testing.assert_array_equal(arrays["Y_1"], expected_inputs["Y_hf_cnp"])
+            assert not np.array_equal(arrays["Y_0"], old_inputs["Y_lf_cnp"])
 
     meta = json.loads((out / "mfgp/model.json").read_text())
-    expected = {"train/lf", "train/hf", "validation/hf"}
+    assert meta["mode"] == "combined" and meta["target_level"] == 2
+    assert meta["levels"] == [
+        "model_mean train/lf", "model_mean train/hf", "observed_fraction train/hf"
+    ]
+    levels = json.loads((out / "mfgp/levels.json").read_text())
+    assert [r["voxels"] for r in levels] == [4, 4, 4]
+    scores = json.loads((out / "mfgp/metrics.json").read_text())
+    expected = [("validation", "hf", 2)]
     if lf_validation:
-        expected.add("validation/lf")
-    assert set(meta["data"]) == expected
+        expected.insert(0, ("validation", "lf", 0))
+    assert [(r["partition"], r["fidelity"], r["level"]) for r in scores] == expected
     if not lf_validation:
-        assert not (out / "mfgp/lf_validation.npz").exists()
         assert not (out / "lf_means.png").exists()
         assert (out / "training_history.png").exists()
         assert (out / "lf_precision_recall.png").exists()
@@ -89,27 +96,30 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert best["metadata"]["step"] == 2
         with np.load(out / "hf_validation_best.npz") as best_arrays, np.load(out / "hf_validation_final.npz") as final_arrays:
             np.testing.assert_array_equal(best_arrays["predicted"], final_arrays["predicted"])
-    scores = json.loads((out / "mfgp/metrics.json").read_text())
     for row in scores:
         assert row["mean_bias"] == pytest.approx(row["mean_predicted"] - row["mean_observed"])
         assert row["crps"] >= 0
         assert "weighted_interval_score" in row
         assert "mean_width" in row["interval_metrics"]["2"]
-    assert meta["test_data"] == "Not loaded"
-    assert (out / "mfgp/hf_coverage.png").exists()
+    hf = len(scores) - 1
+    assert (out / f"mfgp/evaluation_{hf}_coverage.png").exists()
+    assert (out / "mfgp/training_inputs.png").exists()
     assert (out / "mfgp/model.pkl").exists()
-    with np.load(out / "mfgp/hf_validation.npz") as data:
+    with np.load(out / f"mfgp/evaluation_{hf}.npz") as data:
         assert np.isfinite(data["mean"]).all()
         assert (data["sigma"] >= 0).all()
+        assert data["model_mean"].shape == data["mean"].shape
     with np.load(out / "mfgp/training_arrays.npz") as data:
-        assert data["X_hf"].shape[0] == 4
+        assert data["X_2"].shape[0] == 4
+        # Observed fractions use every event of the voxel.
+        np.testing.assert_allclose(data["events_2"], 24)
 
     if transform == "log":
         with (np.load(out / "mfgp/training_arrays.npz") as raw,
               np.load(out / "mfgp/fit_arrays.npz") as fit):
-            assert raw["Y_hf_raw"][0, 0] == 0
-            assert fit["Y_hf_raw"][0, 0] > 0
-            np.testing.assert_allclose(fit["Y_hf_raw"], (raw["Y_hf_raw"] * 20 + 0.5) / 21)
-        with np.load(out / "mfgp/hf_validation.npz") as arrays:
+            assert raw["Y_2"][0, 0] == 0
+            assert fit["Y_2"][0, 0] > 0
+            np.testing.assert_allclose(fit["Y_2"], (raw["Y_2"] * 24 + 0.5) / 25)
+        with np.load(out / f"mfgp/evaluation_{hf}.npz") as arrays:
             assert (arrays["lower_3"] > 0).all()
             assert (arrays["upper_3"] >= arrays["lower_3"]).all()
