@@ -352,12 +352,28 @@ class SurrogateRunConfig(SurrogateConfig):
     data_config: Path | None = None
     output_directory: Path
     validation_context_events: int = Field(default=64, gt=0)
+    # Extra context sizes evaluated after training (read-out only, not selection). The
+    # targets are the events after the largest context size, so every size scores the
+    # same targets; the contexts are nested.
+    validation_context_sweep: list[int] = Field(default_factory=list)
     validation_seed: int = 12345
     # Checkpoint selection during training uses a seeded subset of LF validation voxels;
     # None uses all. Full validation and test sets are evaluated once after training.
     selection_max_voxels: int | None = Field(default=None, gt=0)
     # CPU threads for evaluation passes only; training steps keep their own thread count.
     evaluation_threads: int = Field(default=1, gt=0)
+
+    @property
+    def validation_context_pool(self) -> int:
+        """Events per voxel reserved for contexts; the targets are all later events."""
+        return max([self.validation_context_events, *self.validation_context_sweep])
+
+    @model_validator(mode="after")
+    def valid_context_sweep(self):
+        sweep = self.validation_context_sweep
+        if any(n <= 0 for n in sweep) or len(set(sweep)) != len(sweep):
+            raise ValueError("validation_context_sweep needs unique positive sizes")
+        return self
 
     @model_validator(mode="after")
     def unique_tests(self):

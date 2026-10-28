@@ -113,7 +113,10 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
             continue
         batch = batches["validation", fid]
         context, target = split_context_target(
-            batch, config.validation_context_events, seed=config.validation_seed
+            batch,
+            config.validation_context_events,
+            seed=config.validation_seed,
+            n_pool=config.validation_context_pool,
         )
         observed = target.voxel_mean(target.labels)
         predicted = surrogate.predict(target, context=context).mean

@@ -91,7 +91,10 @@ def run_experiment(config: SurrogateRunConfig):
     episodes = {
         key: Episode(
             *split_context_target(
-                batch, config.validation_context_events, seed=config.validation_seed
+                batch,
+                config.validation_context_events,
+                seed=config.validation_seed,
+                n_pool=config.validation_context_pool,
             )
         )
         for key, batch in batches.items()
@@ -154,6 +157,7 @@ def run_experiment(config: SurrogateRunConfig):
     test_provenance = {}
     for fidelity in config.test_fidelities:
         batch, test_provenance[fidelity] = load_split(root, "test", fidelity)
+        batches["test", fidelity] = batch
         if (
             batch.theta is not None
             and train.theta is not None
@@ -165,6 +169,7 @@ def run_experiment(config: SurrogateRunConfig):
                 batch,
                 config.validation_context_events,
                 seed=config.validation_seed,
+                n_pool=config.validation_context_pool,
             )
         )
     if test_provenance:
@@ -174,12 +179,18 @@ def run_experiment(config: SurrogateRunConfig):
                     "data": test_provenance,
                     "used_for_selection": False,
                     "context_events": config.validation_context_events,
+                    "context_pool": config.validation_context_pool,
                     "context_seed": config.validation_seed,
                 },
                 indent=2,
             )
         )
-    metrics = []
+    from core.surrogates.readout import context_sweep, readout_metrics
+
+    # Constant-rate reference for the log-loss skill, from the training partition only.
+    prevalence = float(train.labels[train.event_mask].mean())
+    prevalence = prevalence if 0 < prevalence < 1 else None
+    metrics, sweep = [], []
     checkpoints = ["best", "final"]
     if (output / "checkpoints/pretraining/model.json").exists():
         checkpoints.insert(0, "pretraining")
@@ -188,7 +199,22 @@ def run_experiment(config: SurrogateRunConfig):
         saved = load_surrogate(output / "checkpoints" / checkpoint)
         for (split, fidelity), episode in episodes.items():
             with evaluation_threads(config.evaluation_threads):
-                summary, arrays = evaluate_surrogate(saved, episode.target, context=episode.context)
+                summary, arrays = evaluate_surrogate(
+                    saved, episode.target, context=episode.context, reference_rate=prevalence
+                )
+                # Training metrics are in-sample; the read-out covers held-out splits only.
+                if split != "train":
+                    summary.update(
+                        readout_metrics(episode.target, arrays, seed=config.validation_seed)
+                    )
+                    if saved.uses_context:
+                        sweep.extend(
+                            dict(checkpoint=checkpoint, split=split, fidelity=fidelity, **row)
+                            for row in context_sweep(
+                                saved, batches[split, fidelity], config,
+                                reference_rate=prevalence,
+                            )
+                        )
             metrics.append(
                 dict(
                     checkpoint=checkpoint,
@@ -200,6 +226,8 @@ def run_experiment(config: SurrogateRunConfig):
             )
             np.savez_compressed(output / f"{fidelity}_{split}_{checkpoint}.npz", **arrays)
     (output / "metrics.json").write_text(json.dumps(metrics, indent=2, allow_nan=False))
+    if sweep:
+        (output / "context_sweep.json").write_text(json.dumps(sweep, indent=2, allow_nan=False))
     from viz.surrogate import plot_surrogate_run
 
     plot_surrogate_run(output)

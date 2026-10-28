@@ -367,6 +367,7 @@ def split_context_target(
     n_context: int,
     *,
     seed: int | None = None,
+    n_pool: int | None = None,
 ) -> tuple[StandardBatch, StandardBatch]:
     """Per-trial random partition of each trial's events into context and target.
 
@@ -379,6 +380,11 @@ def split_context_target(
     remaining events, zero-padded, with its own ``event_counts``.
 
     ``n_context`` must lie in ``[1, min_count - 1]`` so both sets are non-empty.
+
+    ``n_pool`` (evaluation layout): the targets are the events after the first
+    ``n_pool`` of each permutation and the context is the first ``n_context``
+    of them. With the same seed, every ``n_context <= n_pool`` scores the same
+    targets and the contexts are nested.
     """
     B, N = batch.batch_size, batch.n_events
     counts = batch.events_per_voxel                      # [B]
@@ -386,15 +392,21 @@ def split_context_target(
         raise ValueError(
             f"n_context must be in [1, N-1] = [1, {int(counts.min()) - 1}]; got {n_context}"
         )
+    n_pool = n_context if n_pool is None else n_pool
+    if not n_context <= n_pool <= int(counts.min()) - 1:
+        raise ValueError(
+            f"n_pool must be in [n_context, N-1] = [{n_context}, {int(counts.min()) - 1}]; "
+            f"got {n_pool}"
+        )
 
     rng = np.random.default_rng(seed)
     perms = [rng.permutation(int(n)) for n in counts]
     ctx_idx = np.stack([p[:n_context] for p in perms], axis=0)  # [B, n_context]
-    tgt_idx = np.zeros((B, N - n_context), dtype=np.int64)       # [B, N - n_context]
+    tgt_idx = np.zeros((B, N - n_pool), dtype=np.int64)          # [B, N - n_pool]
     for b, p in enumerate(perms):
-        tgt_idx[b, : len(p) - n_context] = p[n_context:]
-    tgt_counts = counts - n_context
-    tgt_valid = np.arange(N - n_context)[None, :] < tgt_counts[:, None]
+        tgt_idx[b, : len(p) - n_pool] = p[n_pool:]
+    tgt_counts = counts - n_pool
+    tgt_valid = np.arange(N - n_pool)[None, :] < tgt_counts[:, None]
 
     def _gather(arr: np.ndarray, idx: np.ndarray, valid=None) -> np.ndarray:
         # arr: [B, N] or [B, N, D]; idx: [B, k]

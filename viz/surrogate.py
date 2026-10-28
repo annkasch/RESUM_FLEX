@@ -22,10 +22,9 @@ def plot_surrogate_run(directory):
 
     has_validation = any("voxel_rate_mae" in r for r in history)
     if has_validation:
-        fig, axes = plt.subplots(1, 3, figsize=(14, 4), layout="constrained")
-        for ax, key in zip(
-            axes, ["voxel_rate_mae", "average_precision", "bernoulli_log_loss"], strict=True
-        ):
+        keys = ["bernoulli_log_loss", "average_precision", "spearman_r", "calibration_z"]
+        fig, axes = plt.subplots(1, 4, figsize=(18, 4), layout="constrained")
+        for ax, key in zip(axes, keys, strict=True):
             ax.plot([r["step"] for r in history], [r.get(key) for r in history])
             ax.set(xlabel="Training step / tree count", ylabel=key)
             ax.grid(alpha=0.2)
@@ -34,6 +33,8 @@ def plot_surrogate_run(directory):
             if boundary is not None:
                 ax.axvline(boundary, color="gray", ls="--", label="Start last-layer fitting")
                 ax.legend(fontsize=8)
+        axes[3].axhspan(-3, 3, color="gray", alpha=0.15, label="|Z| < 3")
+        axes[3].legend(fontsize=8)
         save(fig, "validation_history")
     else:
         fig, ax = plt.subplots(layout="constrained")
@@ -86,6 +87,68 @@ def plot_surrogate_run(directory):
                     ax.legend(fontsize=8)
                 ax.grid(alpha=0.2)
             save(fig, f"{fidelity}_precision_recall" + ("_log" if logscale else ""))
+        plot_calibration(directory, fidelity, save)
+    if (directory / "context_sweep.json").exists():
+        plot_context_sweep(directory, save)
+
+
+def _wilson(hits, events, z=1.96):
+    """Wilson score interval for a binomial fraction."""
+    frac = hits / events
+    centre = (frac + z**2 / (2 * events)) / (1 + z**2 / events)
+    half = z * np.sqrt(frac * (1 - frac) / events + z**2 / (4 * events**2)) / (1 + z**2 / events)
+    return centre - half, centre + half
+
+
+def plot_calibration(directory, fidelity, save):
+    """Observed hit fraction vs mean predicted p in equal-count bins, per held-out split."""
+    files = [
+        (split, checkpoint, directory / f"{fidelity}_{split}_{checkpoint}.npz")
+        for split in ("validation", "test")
+        for checkpoint in ("best", "final")
+    ]
+    files = [f for f in files if f[2].exists()]
+    if not files:
+        return
+    fig, ax = plt.subplots(figsize=(5.5, 5), layout="constrained")
+    for split, checkpoint, path in files:
+        with np.load(path) as arrays:
+            if "calibration_events" not in arrays:
+                continue
+            events = arrays["calibration_events"]
+            predicted = arrays["calibration_predicted"] / events
+            observed = arrays["calibration_hits"] / events
+            low, high = _wilson(arrays["calibration_hits"], events)
+        ax.errorbar(predicted, observed, yerr=[observed - low, high - observed], fmt="o-",
+                    ms=3, capsize=2, label=f"{split}, {checkpoint}")
+    limits = ax.get_xlim()
+    ax.plot(limits, limits, "k--", lw=1, label="calibrated")
+    ax.set(xscale="log", yscale="log", xlabel="Mean predicted p (bin)",
+           ylabel="Observed hit fraction (bin)", title=f"{fidelity.upper()} calibration")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.2)
+    save(fig, f"{fidelity}_calibration")
+
+
+def plot_context_sweep(directory, save):
+    """Read-out metrics against context size on one fixed target set."""
+    rows = json.loads((directory / "context_sweep.json").read_text())
+    keys = ["bernoulli_log_loss", "average_precision", "spearman_r", "calibration_z"]
+    fig, axes = plt.subplots(1, 4, figsize=(18, 4), layout="constrained")
+    groups = sorted({(r["fidelity"], r["split"], r["checkpoint"]) for r in rows})
+    for ax, key in zip(axes, keys, strict=True):
+        for group in groups:
+            selected = [r for r in rows if (r["fidelity"], r["split"], r["checkpoint"]) == group]
+            observed = [r for r in selected if r["context_labels"] == "observed"]
+            line = ax.plot([r["n_context"] for r in observed], [r[key] for r in observed],
+                           "o-", label=", ".join(group))[0]
+            for r in selected:
+                if r["context_labels"] == "zeroed":
+                    ax.plot(r["n_context"], r[key], "x", ms=9, color=line.get_color())
+        ax.set(xlabel="Context events", ylabel=key)
+        ax.grid(alpha=0.2)
+    axes[0].legend(fontsize=7, title="x = context labels set to 0", title_fontsize=7)
+    save(fig, "context_sweep")
 
 
 def plot_fine_tuning_comparison(directory):

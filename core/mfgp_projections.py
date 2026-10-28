@@ -72,9 +72,12 @@ def ensure_mfgp_projections(directory, settings):
                     "Cannot recover saved target N; set projections.target_events explicitly"
                 )
             with np.load(batch_path) as batch:
-                n_target = (
-                    batch["labels"].shape[1]
-                    - experiment["resolved_config"]["validation_context_events"]
+                resolved = experiment["resolved_config"]
+                n_target = batch["labels"].shape[1] - max(
+                    [
+                        resolved["validation_context_events"],
+                        *resolved.get("validation_context_sweep", []),
+                    ]
                 )
         if n_target <= 0:
             raise ValueError("Saved target-event count must be positive")

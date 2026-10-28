@@ -51,6 +51,9 @@ def _fit_stage(
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
     training_events = int(train.events_per_voxel.sum())
+    # Constant-rate reference for the validation log-loss skill (training partition only).
+    prevalence = float(train.labels[train.event_mask].mean())
+    prevalence = prevalence if 0 < prevalence < 1 else None
     # Training batches must be real, normalized inputs with binary labels.
     model.validate(train, train if model.uses_context else None)
     if not np.isin(train.labels, [0, 1]).all():
@@ -81,7 +84,9 @@ def _fit_stage(
         metrics = (
             {}
             if validation is None
-            else evaluate_surrogate(model, validation.target, context=validation.context)[0]
+            else evaluate_surrogate(
+                model, validation.target, context=validation.context, reference_rate=prevalence
+            )[0]
         )
         row = dict(step=step, **metrics)
         if loss is not None:
