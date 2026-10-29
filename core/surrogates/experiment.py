@@ -71,12 +71,10 @@ def run_experiment(config: SurrogateRunConfig):
     data_check = None
     if config.data_config is not None:
         data_check = ensure_matching_data(config.data_config, root)
-    if role_based(root) and (
-        config.hf_validation or "hf" in config.test_fidelities or config.mfgp is not None
-    ):
+    if role_based(root) and (config.hf_validation or "hf" in config.test_fidelities):
         raise ValueError(
-            "Role-based prepared data is LF only; set hf_validation: false, "
-            "no hf in test_fidelities and no mfgp stage"
+            "Event models train on LF roles of role-based data; set hf_validation: false "
+            "and no hf in test_fidelities (HF roles are for the GP)"
         )
     batches, provenance = {}, {}
     partitions = [("train", "lf")]

@@ -527,12 +527,12 @@ def test_role_sources_reject_invalid_splits(tmp_path):
     runs, _ = read_optical_runs(c.source)
     with pytest.raises(ValueError, match="do not match its 4 files"):
         assign_splits(runs, c)
-    # The same voxel position in two folders could get conflicting roles.
+    # A position shared by CNP training and GP training would leak into the GP.
     twin = role_folder(tmp_path / "b", 1, first_run=50)
     c = role_config(tmp_path, [{"path": str(folder), "fractions": {"cnp_train": 1}},
                                {"path": str(twin), "fractions": {"gp_train": 1}}])
     runs, _ = read_optical_runs(c.source)
-    with pytest.raises(ValueError, match="several source folders"):
+    with pytest.raises(ValueError, match="shared by roles"):
         assign_splits(runs, c)
 
 
@@ -565,7 +565,7 @@ def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
     root = c.output_directory
     assert partition_name(root, "validation") == "cnp_validation"
     base = yaml_safe_config(root, tmp_path / "run")
-    with pytest.raises(ValueError, match="LF only"):
+    with pytest.raises(ValueError, match="HF roles are for the GP"):
         run_experiment(SurrogateRunConfig.model_validate({**base, "hf_validation": True}))
 
 

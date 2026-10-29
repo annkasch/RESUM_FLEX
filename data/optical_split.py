@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from data.optical_features import center
-from schemas.optical import ROLES, OpticalDataConfig, RoleSource
+from schemas.optical import GP_TRAINING_ROLES, ROLES, OpticalDataConfig, RoleSource
 
 SPLITS = ("train", "validation", "test")
 FIDELITIES = ("lf", "hf")
@@ -105,17 +105,18 @@ def assign_roles(runs, config: OpticalDataConfig, *, update=False):
             raise ValueError("Sources or split settings changed; use explicit manifest update")
         if old["settings"] == settings:
             previous = {r["file"]: r["split"] for r in old["files"]}
-    groups = voxel_groups(runs, config)
+    # Voxels are grouped per folder; positions shared across folders are checked below.
+    groups = [
+        group
+        for index in range(len(sources))
+        for group in voxel_groups([r for r in runs if r.source == index], config)
+    ]
     assignments, records = {}, []
     targets = np.zeros((len(sources), len(ROLES)), dtype=int)
     counts = np.zeros_like(targets)
     pending = {i: [] for i in range(len(sources))}
     for group in groups:
-        origin = {r.source for r in group}
-        if len(origin) > 1:
-            names = ", ".join(sorted(r.file for r in group))
-            raise ValueError(f"Same voxel position in several source folders: {names}")
-        index = origin.pop()
+        index = group[0].source
         locked = {previous[r.file] for r in group if r.file in previous}
         if len(locked) > 1:
             raise ValueError("Equivalent voxel inputs cross roles; use a new manifest")
@@ -136,6 +137,7 @@ def assign_roles(runs, config: OpticalDataConfig, *, update=False):
             k = int(np.argmax(deficit))
             counts[index, k] += len(group)
             assignments.update({r.file: ROLES[k] for r in group})
+    _check_shared_positions(runs, assignments, config)
     for group in groups:
         identities = sorted(set(tuple(r.nominal_center.tolist()) for r in group))
         group_id = hashlib.sha256(json.dumps(identities).encode()).hexdigest()[:16]
@@ -161,6 +163,18 @@ def assign_roles(runs, config: OpticalDataConfig, *, update=False):
         "overlapping_groups": 0,
     }
     return assignments, payload
+
+
+def _check_shared_positions(runs, assignments, config):
+    """Reject voxel positions shared by different roles, except among GP training roles."""
+    for group in voxel_groups(runs, config):
+        shared = {assignments[r.file] for r in group}
+        if len(shared) > 1 and not shared <= set(GP_TRAINING_ROLES):
+            names = ", ".join(sorted(r.file for r in group))
+            raise ValueError(
+                f"Voxel position shared by roles {sorted(shared)} ({names}); only "
+                f"{', '.join(GP_TRAINING_ROLES)} may share positions"
+            )
 
 
 def assign_splits(runs, config: OpticalDataConfig, *, update=False):

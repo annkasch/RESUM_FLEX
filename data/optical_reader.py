@@ -168,14 +168,14 @@ def list_source_files(config: SourceConfig) -> list[tuple[Path, Path, str | None
         for fidelity in ("hf", "lf"):
             inputs.extend((p, root, None) for p in sorted((root / fidelity).glob("*.stp.lh5")))
     elif config.sources:
-        for folder in (s.path for s in config.sources):
-            folder = folder.expanduser().resolve()
+        for source in config.sources:
+            folder = source.path.expanduser().resolve()
             if not folder.is_dir():
                 raise FileNotFoundError(f"Optical input folder does not exist: {folder}")
             paths = sorted(folder.glob("*.stp.lh5"))
             if not paths:
                 raise ValueError(f"No simulation files found in {folder}")
-            inputs.extend((p, folder, "lf") for p in paths)
+            inputs.extend((p, folder, source.fidelity) for p in paths)
     else:
         for fidelity, folders in sorted(config.directories.items()):
             for folder in folders:

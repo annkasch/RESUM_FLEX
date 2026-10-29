@@ -1,5 +1,5 @@
 # Ian Wang's centered_425_375_375 box (x 0.365-0.485, y 0.315-0.435, z 0.2975-0.4525 m, 5 mm
-# voxels), LF only (1500 primaries/voxel), for CNP-only work (2026-10-22).
+# voxels): LF (1500 primaries/voxel) for the event models, LF inputs + HF (5000) for the GP.
 # LF_sim -> training; Ian's separate validation/lf voxels -> 50/50 validation/test.
 # Voxels partly overlapping a Ge detector (smaller LAr fill volume) are kept as normal voxels.
 source:
@@ -12,6 +12,14 @@ source:
   # GP's level 0. Disjoint from LF_sim/validation; contains the 200 HF_sim voxels.
   - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/LF_primaries/lf
     fractions: {gp_unlabeled: 1.0}
+  # HF (5000 primaries/voxel): GP training at 200 LF_primaries positions (nested design);
+  # Ian's separate validation/hf voxels -> GP validation / blinded GP test.
+  - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/HF_sim/hf
+    fidelity: hf
+    fractions: {gp_train: 1.0}
+  - path: /global/cfs/projectdirs/m2676/users/iwang/sim_output/centered_425_375_375/validation/hf/hf
+    fidelity: hf
+    fractions: {gp_validation: 0.5, gp_test: 0.5}
   # Crashed runs: N=1 with the single vertex at the origin.
   exclude_files:
   - lf/run00782_v00010738_x+0.4300_y+0.3650_z+0.3875.stp.lh5
@@ -20,6 +28,8 @@ source:
   - lf/run00888_v00010803_x+0.4300_y+0.3750_z+0.3925.stp.lh5
   - lf/run00921_v00009171_x+0.4200_y+0.3700_z+0.3925.stp.lh5
   - lf/run01461_v00010772_x+0.4300_y+0.3700_z+0.3975.stp.lh5
+  # validation/hf: truncated run (3102 of 5000 events).
+  - hf/run00147_v00009983_x+0.4250_y+0.3700_z+0.4525.stp.lh5
 output_directory: outputs/optical_centered_cnp_v0
 theta:
   coordinates: cartesian

@@ -6,11 +6,21 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ANOMALOUS_FILE = "lf/run067_x-0.088_y+0.484_z-1.462.stp.lh5"
-# Roles of LF voxels in the role-based layout; see RoleSource.
-ROLES = ("cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled")
-Role = Literal["cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled"]
+# Roles of voxels in the role-based layout; see RoleSource. New roles are appended.
+ROLES = (
+    "cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled", "gp_validation",
+    "gp_test",
+)
+Role = Literal[
+    "cnp_train", "cnp_validation", "cnp_test", "gp_train", "gp_unlabeled", "gp_validation",
+    "gp_test",
+]
 # Roles whose files need no optical hits (inputs only, e.g. for event-model inference).
 UNLABELED_ROLES = ("gp_unlabeled",)
+# Roles that may share voxel positions across folders (nested multi-fidelity GP design,
+# e.g. HF training voxels at positions of unlabeled LF voxels). Any other shared position
+# between different roles is rejected as leakage.
+GP_TRAINING_ROLES = ("gp_train", "gp_unlabeled")
 
 
 class StrictModel(BaseModel):
@@ -18,7 +28,7 @@ class StrictModel(BaseModel):
 
 
 class RoleSource(StrictModel):
-    """One LF folder whose voxels are divided among ROLES by fraction or by file count.
+    """One folder whose voxels are divided among ROLES by fraction or by file count.
 
     Roles left out get no files. ``fractions`` must sum to 1 and are rounded per folder;
     ``counts`` must add up to the folder's file count unless one role takes ``rest``.
@@ -26,6 +36,7 @@ class RoleSource(StrictModel):
     """
 
     path: Path
+    fidelity: Literal["lf", "hf"] = "lf"
     fractions: dict[Role, float] | None = None
     counts: dict[Role, int | Literal["rest"]] | None = None
 

@@ -544,10 +544,11 @@ map, and leaves all checkpoints and prediction arrays in the run directory. It d
 not read test files, regenerate simulation data, or submit a Slurm job.
 
 
-## LF role sources (CNP-only data)
+## Role sources (event models and GP)
 
-For CNP work without HF, `source.sources` lists LF folders and how each folder's voxels are
-divided among four roles: `cnp_train`, `cnp_validation`, `cnp_test` and `gp_train`. Each folder
+`source.sources` lists folders (`fidelity: lf` by default, or `hf`) and how each folder's
+voxels are divided among the roles `cnp_train`, `cnp_validation`, `cnp_test` (event models),
+`gp_train`, `gp_unlabeled` (inputs only), `gp_validation` and `gp_test` (GP). Each folder
 gives either `fractions` (sum to 1, rounded per folder) or `counts` (file counts; one role may
 take `rest`). Roles left out get no files, so an already split folder is a single role at 1.0:
 
@@ -560,16 +561,22 @@ source:
     counts: {cnp_train: 5000, cnp_validation: 1000, gp_train: rest}
   - path: /data/lf_val_only
     fractions: {cnp_validation: 1.0}
+  - path: /data/hf
+    fidelity: hf
+    fractions: {gp_train: 1.0}
 split:
   seed: 42
   manifest: outputs/my_data/splits/voxel_split.json
 ```
 
 Splitting keeps whole voxels together and is seeded per folder; the global split fractions
-are rejected in this layout. The same voxel position in two folders is an error.
-Normalization is fitted on `cnp_train`. The view lists each role's files. `python -m core.surrogates train` reads `cnp_train`, `cnp_validation`
-(with `lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]`). Set
-`hf_validation: false` and leave out `mfgp`; the run stops before training otherwise.
+are rejected in this layout. A voxel position shared by different roles is an error, except
+between `gp_train` and `gp_unlabeled` (nested multi-fidelity design: HF voxels at positions of
+LF inputs). Normalization is fitted on `cnp_train` and applied to every role and fidelity.
+`python -m core.surrogates train` reads `cnp_train`, `cnp_validation` (with
+`lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]` and `unblind_test`). Set
+`hf_validation: false`; the HF roles are GP levels and evaluation sets (`mfgp` levels name the
+role partitions directly, e.g. `gp_train`/`hf`).
 
 Two settings in the training config make large validation sets cheap.
 `selection_max_voxels: N` selects checkpoints during training on a seeded subset of at most N

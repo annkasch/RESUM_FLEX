@@ -142,3 +142,73 @@ def test_inference_rejects_context_models_and_other_normalization(tmp_path):
     mlp, _ = _checkpoint(tmp_path, "mlp", other)
     with pytest.raises(ValueError, match="Normalization"):
         predict_partition(mlp, c.output_directory, "gp_unlabeled")
+
+
+def hf_layout(tmp_path, *, hf_validation_offset=3.0):
+    """LF CNP voxels, unlabeled LF voxels, nested HF voxels and HF validation/test voxels."""
+    labeled = role_folder(tmp_path / "labeled", 6)
+    unlabeled = strip_hits(role_folder(tmp_path / "inputs", 4, offset=1.0, first_run=10))
+    hf = role_folder(tmp_path / "hf", 3, offset=1.0, first_run=20)  # at unlabeled positions
+    hf_val = role_folder(tmp_path / "hf_val", 4, offset=hf_validation_offset, first_run=30)
+    return role_config(
+        tmp_path,
+        [
+            {"path": str(labeled), "fractions": {"cnp_train": 0.5, "cnp_validation": 0.5}},
+            {"path": str(unlabeled), "fractions": {"gp_unlabeled": 1.0}},
+            {"path": str(hf), "fidelity": "hf", "fractions": {"gp_train": 1.0}},
+            {"path": str(hf_val), "fidelity": "hf",
+             "fractions": {"gp_validation": 0.5, "gp_test": 0.5}},
+        ],
+    )
+
+
+def test_hf_roles_allow_nested_gp_design(tmp_path):
+    c = hf_layout(tmp_path)
+    result = prepare_optical_data(c)
+    out = c.output_directory
+    for role, n in [("gp_train", 3), ("gp_validation", 2), ("gp_test", 2)]:
+        batch, _ = load_partition(out, role, "hf")
+        assert batch.batch_size == n
+    assert all(f.startswith("lf/") for f in result.normalization["fit_files"])
+    # The HF training voxels sit at unlabeled LF positions (nested design).
+    hf_theta = load_partition(out, "gp_train", "hf")[0].theta
+    lf_theta = OpticalView(out).load_theta("gp_unlabeled", "lf")[0]
+    assert all(any(np.allclose(t, u) for u in lf_theta) for t in hf_theta)
+
+
+def test_shared_positions_outside_gp_training_are_rejected(tmp_path):
+    # HF validation voxels at the positions of unlabeled GP training voxels: leakage.
+    with pytest.raises(ValueError, match="shared by roles"):
+        prepare_optical_data(hf_layout(tmp_path, hf_validation_offset=1.0))
+
+
+def test_two_level_gp_from_inference_and_hf(tmp_path):
+    pytest.importorskip("GPy")
+    from core.surrogates.inference import predict_partition
+    from core.surrogates.mfgp_stage import run_mfgp_config
+    from schemas.surrogates import MFGPRunConfig
+
+    c = hf_layout(tmp_path)
+    result = prepare_optical_data(c)
+    checkpoint, _ = _checkpoint(tmp_path, "mlp", result.normalization)
+    inference = predict_partition(checkpoint, c.output_directory, "gp_unlabeled")
+    settings = dict(
+        levels=[
+            {"source": "model_mean", "partition": "gp_unlabeled", "inference": str(inference)},
+            {"source": "observed_fraction", "partition": "gp_train", "fidelity": "hf"},
+        ],
+        n_restarts=1,
+        data_directory=c.output_directory,
+        output_directory=tmp_path / "gp",
+    )
+    with pytest.raises(ValueError, match="blinded"):
+        MFGPRunConfig(**settings, evaluation=[{"partition": "gp_test", "fidelity": "hf"}])
+    out = run_mfgp_config(
+        MFGPRunConfig(**settings, evaluation=[{"partition": "gp_validation", "fidelity": "hf"}])
+    )
+    rows = json.loads((out / "metrics.json").read_text())
+    assert [(r["partition"], r["fidelity"], r["level"], r["voxels"]) for r in rows] == [
+        ("gp_validation", "hf", 1, 2)
+    ]
+    with np.load(out / "training_arrays.npz") as arrays:
+        assert arrays["X_0"].shape[0] == 4 and arrays["X_1"].shape[0] == 3
