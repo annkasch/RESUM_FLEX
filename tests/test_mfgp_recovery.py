@@ -29,8 +29,8 @@ import torch
 from core import (
     build_cnp,
     evaluate_mfgp_coverage,
-    fit_mfgp_three_fidelity,
-    prepare_mfgp_datasets,
+    fit_mfgp,
+    synthetic_levels,
     train_cnp,
 )
 from data import for_scenario
@@ -86,15 +86,16 @@ def test_mfgp_coverage(name: str) -> None:
         training_config=_train_cfg(name),
     )
 
-    data = prepare_mfgp_datasets(
+    # The paper's recipe: LF CNP mean -> HF CNP mean -> HF observed fraction.
+    X_list, Y_list = synthetic_levels(
         cnp, gen,
-        n_lf_trials=200, n_lf_events=64,
-        n_hf_trials=50, n_hf_events=128,
+        [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")],
+        n_trials={"lf": 200, "hf": 50}, n_events={"lf": 64, "hf": 128},
         seed=0,
     )
-    mfgp = fit_mfgp_three_fidelity(data, n_restarts=10)
+    mfgp = fit_mfgp(X_list, Y_list, n_restarts=10)
     result = evaluate_mfgp_coverage(
-        mfgp, cnp, gen,
+        mfgp, gen,
         n_test_trials=100, n_test_events=128, seed=12345,
     )
 

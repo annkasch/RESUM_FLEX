@@ -180,10 +180,8 @@ Two ways to run it, with the same code and outputs:
   `data_directory`, `output_directory`, optional `data_config` and `checkpoint` (needed
   only for `model_mean` levels without an inference file). Paths are relative to the YAML.
 
-An `mfgp:` block without `levels` keeps the former three levels: model mean train/lf →
-model mean train/hf → observed fraction train/hf, evaluated on validation/lf (level 0, if
-`lf_validation`) and validation/hf (top). Differences from before: observed fractions use
-all events of a voxel, not only the events left after the model's context split.
+Every `mfgp:` block lists its levels explicitly. Observed fractions use all events of a
+voxel; model means of context models cover the events left after the context split.
 
 Outputs: `training_arrays.npz` (`X_k`, `Y_k`, `events_k`, `index_k`), `fit_arrays.npz`,
 `transformed_training_arrays.npz`, `levels.json` (settings, voxel counts, provenance),
@@ -191,9 +189,10 @@ Outputs: `training_arrays.npz` (`X_k`, `Y_k`, `events_k`, `index_k`), `fit_array
 set), `development_map.npz`, and plots (`training_inputs`, `evaluation_<e>_means`,
 `evaluation_<e>_coverage`, `development_map`).
 
-The synthetic three-level helpers (`prepare_surrogate_datasets`, `fit_mfgp_three_fidelity`)
-remain for the phase scripts, the optimizer and notebooks; `fit_mfgp(X_list, Y_list)` is
-the general fit. GP fitting needs GPy/Emukit; event models don't. Classifier uncertainty
+In Python, `core.mfgp_pipeline` builds levels from batches (`BatchLevel`,
+`levels_from_batches`, `synthetic_levels` for pseudo data) and `fit_mfgp(X_list, Y_list)`
+fits them; the active-learning loop takes the same lists plus `observed_levels` (which
+levels a new simulation extends). GP fitting needs GPy/Emukit; event models don't. Classifier uncertainty
 is not substituted for the GP posterior uncertainty.
 
 ## Existing trained models
@@ -429,11 +428,11 @@ OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
   python -m core.surrogates train config.optical.resum.yaml
 ```
 
-The optional `mfgp` run-config section enables this second stage. It requires the
-GP dependencies. `kernel`, `n_restarts`, `seed`, and `n_context` are explicit.
-Large datasets: `max_lf_voxels` / `max_hf_voxels` fit the exact GP on a seeded subset of the
-LF/HF training voxels (`gp_voxel_subsets.npz`, stream 0 = LF, 1 = HF under `seed`). Validation
-and the development map still use every voxel, and event-model training is not subsampled.
+The optional `mfgp` run-config section enables this second stage (levels: see "Multi-fidelity
+GP: configurable levels"). It requires the GP dependencies. Large datasets: a level's
+`max_voxels` fits the exact GP on a seeded subset of its partition (`index_k` in
+`training_arrays.npz`; one stream per partition/fidelity in order of appearance). Evaluation
+sets and the development map use every voxel, and event-model training is not subsampled.
 The count GP has the same option as `backend.max_training_voxels` (`training_voxel_subset.npy`).
 Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
 validation MAE. The current optical test sets `lf_validation: false`: it uses

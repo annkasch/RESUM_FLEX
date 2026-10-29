@@ -248,17 +248,15 @@ Per-trial predictive distribution from a trained CNP. All values are 1-D arrays 
 | `sigma_epistemic` | CNP-decoder uncertainty (model knowledge) |
 | `sigma_aleatoric` | √(p(1-p)/N) — irreducible Bernoulli noise |
 
-### Output — MFGP datasets dict
+### Output — MFGP levels
 
-Returned by `prepare_mfgp_datasets_from_batches`. Each entry is `(n_trials, k)` numpy:
+Returned by `levels_from_batches` / `synthetic_levels`: `(X_list, Y_list)`, one entry per
+GP level, lowest fidelity first; the last level is the target.
 
-| Key | Shape | Meaning |
+| Entry | Shape | Meaning |
 |---|---|---|
-| `X_lf` | `(n_lf, D_θ)` | Per-trial θ for the LF dataset |
-| `Y_lf_cnp` | `(n_lf, 1)` | β̄(θ) per LF trial (CNP-aggregated) |
-| `X_hf` | `(n_hf, D_θ)` | Per-trial θ for the HF dataset |
-| `Y_hf_cnp` | `(n_hf, 1)` | β̄(θ) per HF trial |
-| `Y_hf_raw` | `(n_hf, 1)` | `m/N` per HF trial — the GP's target signal |
+| `X_list[k]` | `(n_k, D_θ)` | Per-trial θ of level k |
+| `Y_list[k]` | `(n_k, 1)` | `model_mean` (β̄ per trial) or `observed_fraction` (`m/N`) |
 
 ### Output — coverage dict
 
@@ -550,23 +548,21 @@ print(coverage)  # {"1sigma": 0.68, "2sigma": 0.96, "3sigma": 1.00}
 ### 4. Fit the MFGP on your LF + HF data
 
 ```python
-from core import (
-    prepare_mfgp_datasets_from_batches,
-    fit_mfgp_three_fidelity,
-    save_mfgp,
-)
+from core import BatchLevel, fit_mfgp, levels_from_batches, save_mfgp
 
 lf_batch = StandardBatch(mode=InputMode.FULL, theta=lf_theta, phi=lf_phi,
                          labels=lf_X.astype(np.int8))
 hf_batch = StandardBatch(mode=InputMode.FULL, theta=hf_theta, phi=hf_phi,
                          labels=hf_X.astype(np.int8))
 
-# Aggregate β̄ via the CNP for both fidelities; collect y_raw = m/N for HF.
-data = prepare_mfgp_datasets_from_batches(cnp, lf_batch, hf_batch,
-                                           n_mc_samples=50, seed=0)
-
-# Fit the 3-fidelity MFGP (LF β̄, HF β̄, HF y_raw).
-mfgp = fit_mfgp_three_fidelity(data, config=cfg.mfgp, n_restarts=5)
+# Levels, lowest fidelity first; here the paper's recipe LF β̄ -> HF β̄ -> HF y_raw.
+# Levels on the same batch, n_context and seed share their target events.
+X_list, Y_list = levels_from_batches(cnp, [
+    BatchLevel("model_mean", lf_batch, n_context=lf_batch.n_events // 2, seed=1),
+    BatchLevel("model_mean", hf_batch, n_context=hf_batch.n_events // 2, seed=101),
+    BatchLevel("observed_fraction", hf_batch, n_context=hf_batch.n_events // 2, seed=101),
+])
+mfgp = fit_mfgp(X_list, Y_list, kernel=cfg.mfgp.kernel, n_restarts=5)
 
 save_mfgp("results/mfgp.pkl", mfgp)        # pickle-backed
 ```

@@ -7,7 +7,6 @@ from core.surrogates.base import Episode, EventPrediction, EventSurrogate
 from core.surrogates.checkpoints import import_legacy_surrogate, load_surrogate, save_surrogate
 from core.surrogates.evaluation import evaluate_surrogate
 from core.surrogates.models import build_surrogate
-from core.surrogates.pipeline import prepare_surrogate_datasets
 from core.surrogates.training import FitResult, fit_surrogate
 
 __all__ = [
@@ -20,6 +19,5 @@ __all__ = [
     "fit_surrogate",
     "load_surrogate",
     "import_legacy_surrogate",
-    "prepare_surrogate_datasets",
     "save_surrogate",
 ]

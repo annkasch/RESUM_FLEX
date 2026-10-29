@@ -24,11 +24,11 @@ from core import (
     IvrAcquisition,
     MultiFidelityGP,
     build_cnp,
-    fit_mfgp_three_fidelity,
+    fit_mfgp,
     integrated_variance,
     posterior_covariance,
-    prepare_mfgp_datasets,
     simulate_at_theta,
+    synthetic_levels,
     train_cnp,
 )
 from data import for_scenario
@@ -298,24 +298,17 @@ def test_active_loop_accepts_real_observation_provider() -> None:
         calls.append(theta.copy())
         assert n_events == 32
         assert seed == 1007
-        return HighFidelityObservation(beta_bar=0.25, y_raw=0.2)
+        return HighFidelityObservation(model_mean=0.25, observed_fraction=0.2)
 
     x = np.array([[-1.0], [0.0], [1.0]])
     y = np.sin(np.pi * x)
-    mfgp = MultiFidelityGP(n_fidelities=3, dim_theta=1).fit(
-        [x, x, x], [y, y, y], n_restarts=1
-    )
-    data = {
-        "X_lf": x.copy(),
-        "Y_lf_cnp": np.zeros((3, 1)),
-        "X_hf": x.copy(),
-        "Y_hf_cnp": np.zeros((3, 1)),
-        "Y_hf_raw": np.zeros((3, 1)),
-    }
+    mfgp = MultiFidelityGP(n_fidelities=2, dim_theta=1).fit([x, x], [y, y], n_restarts=1)
     loop = ActiveLearningLoop(
         mfgp=mfgp,
         bounds=BoxBounds(low=np.array([-1.0]), high=np.array([1.0])),
-        data=data,
+        X_list=[x.copy(), x.copy()],
+        Y_list=[np.zeros((3, 1)), np.zeros((3, 1))],
+        observed_levels={1: "observed_fraction"},
         observation_provider=provider,
         n_hf_events=32,
         n_mc_samples=20,
@@ -325,8 +318,16 @@ def test_active_loop_accepts_real_observation_provider() -> None:
     )
     record = loop.step()
     assert len(calls) == 1
-    assert record.beta_bar_obs == 0.25
-    assert record.y_raw_obs == 0.2
+    assert record.observation.model_mean == 0.25
+    assert record.observation.observed_fraction == 0.2
+    # Only the configured level receives the new point.
+    assert [len(x) for x in loop.X_list] == [3, 4]
+    assert loop.Y_list[1][-1, 0] == 0.2
+    with pytest.raises(ValueError, match="observed_levels"):
+        ActiveLearningLoop(
+            mfgp=mfgp, bounds=loop.bounds, X_list=[x, x], Y_list=[y, y],
+            observed_levels={2: "observed_fraction"}, observation_provider=provider,
+        )
 
 
 def test_active_loop_rejects_invalid_provider_rates() -> None:
@@ -337,19 +338,14 @@ def test_active_loop_rejects_invalid_provider_rates() -> None:
     mfgp = MultiFidelityGP(n_fidelities=3, dim_theta=1).fit(
         [x, x, x], [y, y, y], n_restarts=1
     )
-    data = {
-        "X_lf": x,
-        "Y_lf_cnp": np.zeros((3, 1)),
-        "X_hf": x,
-        "Y_hf_cnp": np.zeros((3, 1)),
-        "Y_hf_raw": np.zeros((3, 1)),
-    }
     loop = ActiveLearningLoop(
         mfgp=mfgp,
         bounds=BoxBounds(low=np.array([-1.0]), high=np.array([1.0])),
-        data=data,
+        X_list=[x, x, x],
+        Y_list=[np.zeros((3, 1))] * 3,
+        observed_levels={1: "model_mean", 2: "observed_fraction"},
         observation_provider=lambda theta, **kwargs: HighFidelityObservation(
-            beta_bar=1.2, y_raw=0.2
+            model_mean=1.2, observed_fraction=0.2
         ),
         n_mc_samples=10,
         n_candidates_per_axis=5,
@@ -395,18 +391,20 @@ def test_active_learning_loop_shrinks_integrated_variance() -> None:
     cnp = build_cnp(enc, gen.dim_theta, gen.dim_phi)
     train_cnp(cnp, gen, cnp_config=cnp_cfg, training_config=train_cfg)
 
-    data = prepare_mfgp_datasets(
+    X_list, Y_list = synthetic_levels(
         cnp, gen,
-        n_lf_trials=100, n_lf_events=64,
-        n_hf_trials=12, n_hf_events=128,
+        [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")],
+        n_trials={"lf": 100, "hf": 12}, n_events={"lf": 64, "hf": 128},
         seed=0,
     )
-    mfgp = fit_mfgp_three_fidelity(data, n_restarts=5)
+    mfgp = fit_mfgp(X_list, Y_list, n_restarts=5)
     bounds = BoxBounds(low=np.array([-1.0]), high=np.array([1.0]))
 
     iv0 = integrated_variance(mfgp, bounds, n_mc_samples=2000, seed=0)
     loop = ActiveLearningLoop(
-        mfgp=mfgp, generator=gen, cnp=cnp, bounds=bounds, data=data,
+        mfgp=mfgp, generator=gen, cnp=cnp, bounds=bounds,
+        X_list=X_list, Y_list=Y_list,
+        observed_levels={1: "model_mean", 2: "observed_fraction"},
         n_hf_events=128, n_mc_samples=300, n_candidates_per_axis=30,
         seed=0, refit_n_restarts=5,
     )
@@ -424,4 +422,4 @@ def test_active_learning_loop_shrinks_integrated_variance() -> None:
     assert all(r.theta_next.shape == (1,) for r in records)
     assert all(r.acquisition is not None and r.sigma is not None for r in records)
     # First record's sampled_theta == prior HF count + 1 (the just-acquired point).
-    assert records[0].sampled_theta.shape[0] == data["X_hf"].shape[0] + 1
+    assert records[0].sampled_theta.shape[0] == X_list[2].shape[0] + 1

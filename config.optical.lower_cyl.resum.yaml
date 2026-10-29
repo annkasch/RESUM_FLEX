@@ -35,6 +35,13 @@ output_directory: outputs/optical_resum/lower_cyl_v0/seed0
 validation_context_events: 64
 validation_seed: 12345
 mfgp:
+  # Lowest to highest fidelity; the last level is the target.
+  levels:
+  - {source: model_mean, partition: train, fidelity: lf}
+  - {source: model_mean, partition: train, fidelity: hf}
+  - {source: observed_fraction, partition: train, fidelity: hf}
+  evaluation:
+  - {partition: validation, fidelity: hf}
   projections:
     plots: [projected_axes, projected_planes]
     enabled: true

@@ -8,7 +8,7 @@ import torch
 from pydantic import ValidationError
 
 from core.surrogate_cnp import split_context_target
-from core.surrogates import Episode, build_surrogate, load_surrogate, prepare_surrogate_datasets
+from core.surrogates import Episode, build_surrogate, load_surrogate
 from core.surrogates.experiment import run_experiment
 from data.pseudo_generator import for_scenario
 from schemas.surrogates import NeuralTraining, SurrogateRunConfig
@@ -62,8 +62,9 @@ def test_only_final_layer_changes_with_real_targets(kind, tmp_path):
         model.predict(tgt, context=ctx).logits, restored.predict(tgt, context=ctx).logits
     )
     assert restored.metadata["training"]["fine_tuning"]["n_steps"] == 3
-    arrays = prepare_surrogate_datasets(restored, batch, batch, n_lf_context=4, n_hf_context=4)
-    assert arrays["Y_lf_cnp"].shape == (4, 1)
+    from core.mfgp_pipeline import model_mean
+
+    assert model_mean(restored, batch, n_context=4).shape == (4,)
     assert load_surrogate(tmp_path / "final").metadata["step"] == 6
 
 

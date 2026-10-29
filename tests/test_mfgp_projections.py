@@ -116,9 +116,15 @@ def test_saved_projection_cache_tracks_settings_and_model(tmp_path, monkeypatch)
     monkeypatch.setattr("viz.mfgp_projections.plot_mfgp_projections", plot)
     x = np.array(list(product((0.0, 1.0), repeat=3)))
     np.savez(
-        tmp_path / "training_arrays.npz", X_lf=x, X_hf=x[:2], Y_hf_raw=np.array([[0.0], [0.01]])
+        tmp_path / "training_arrays.npz",
+        X_0=x, Y_0=np.full((8, 1), 0.01), X_1=x[:2], Y_1=np.array([[0.0], [0.01]]),
     )
-    np.savez(tmp_path / "hf_validation.npz", theta=x[2:], observed=np.arange(6) / 100)
+    (tmp_path / "levels.json").write_text(json.dumps(
+        [{"level": 0, "source": "model_mean"}, {"level": 1, "source": "observed_fraction"}]
+    ))
+    (tmp_path / "metrics.json").write_text(json.dumps([{"evaluation": 0, "level": 1}]))
+    np.savez(tmp_path / "evaluation_0.npz", theta=x[2:], observed=np.arange(6) / 100,
+             target_events=np.full(6, 50.0))
     (tmp_path / "model.pkl").write_bytes(b"model version 1")
     settings = MFGPProjectionConfig(grid_steps=3, n_draws=2048)
     out = ensure_mfgp_projections(tmp_path, settings)
@@ -136,7 +142,8 @@ def test_saved_projection_cache_tracks_settings_and_model(tmp_path, monkeypatch)
     ensure_mfgp_projections(tmp_path, settings)
     assert len(calls) == 3
     np.savez(
-        tmp_path / "hf_validation.npz", theta=x[2:], observed=np.arange(6) / 100, target_events=100
+        tmp_path / "evaluation_0.npz", theta=x[2:], observed=np.arange(6) / 100,
+        target_events=np.full(6, 100.0),
     )
     settings.quantity = "observed_fraction"
     predictive_out = ensure_mfgp_projections(tmp_path, settings)

@@ -27,13 +27,11 @@ from core.gp_metrics import mfgp_metrics
 
 
 def _model_mean(model, batch, *, n_context, seed):
-    """Mean predicted p per voxel [B]; context models split each voxel's labeled events."""
-    from core.surrogate_cnp import split_context_target
+    """Mean predicted p per voxel [B]; only context models split off a context."""
+    from core.mfgp_pipeline import model_mean
 
-    if not model.uses_context:
-        return model.predict(batch).mean
-    context, target = split_context_target(batch, n_context, seed=seed)
-    return model.predict(target, context=context).mean
+    return model_mean(model, batch, n_context=n_context if model.uses_context else None,
+                      seed=seed)
 
 
 def _same_normalization(model, root):
@@ -80,23 +78,19 @@ class _Data:
         return self._inputs[key]
 
 
-def _observed(batch):
-    """Hits [B] and valid events [B] per voxel."""
-    hits = np.where(batch.event_mask, batch.labels, 0).sum(axis=1).astype(float)
-    return hits, batch.events_per_voxel.astype(float)
-
-
 def _level_arrays(level, stream, data, cfg, model):
     """X [n, D], Y [n], events [n], voxel index [n] and provenance of one level."""
     from core.gp_subsample import subsample_voxels
 
-    seed = cfg.seed + 1 + 100 * stream  # former LF/HF context seeds for streams 0 and 1
+    seed = cfg.seed + 1 + 100 * stream  # context split of this level's voxels
     if level.source == "observed_fraction":
         batch, provenance = data.labeled(level.partition, level.fidelity)
         index = subsample_voxels(batch.batch_size, level.max_voxels, cfg.seed, stream)
         batch = batch.take(index)
-        hits, events = _observed(batch)
-        return batch.theta, hits / events, events, index, provenance
+        from core.mfgp_pipeline import observed_fraction
+
+        fraction, events = observed_fraction(batch)
+        return batch.theta, fraction, events, index, provenance
     if level.inference is not None:
         return _inference_arrays(level, stream, data, cfg)
     if model is None:
@@ -156,7 +150,7 @@ def run_mfgp(
     cfg, *, data_directory, output_directory, model=None, metrics_seed=None, extra_metadata=None
 ):
     """Fit the configured levels, score the evaluation sets and write the output directory."""
-    from core.mfgp_pipeline import fit_mfgp
+    from core.mfgp_pipeline import fit_mfgp, observed_fraction
     from core.surrogate_mfgp import load_mfgp, save_mfgp
 
     directory = Path(output_directory)
@@ -223,8 +217,7 @@ def run_mfgp(
     for e, evaluation in enumerate(cfg.evaluation):
         level = n - 1 if evaluation.level is None else evaluation.level
         batch, provenance = data.labeled(evaluation.partition, evaluation.fidelity)
-        hits, events = _observed(batch)
-        observed = hits / events
+        observed, events = observed_fraction(batch)
         mean, variance = gp.predict(batch.theta, fidelity=level)
         loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level)
         np.testing.assert_array_equal(mean, loaded_mean)

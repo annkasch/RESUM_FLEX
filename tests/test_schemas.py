@@ -247,7 +247,7 @@ def test_config_loads(legacy_config_path) -> None:
     cfg = load_config(legacy_config_path)
     assert cfg.encoder.latent_dim == 64
     assert cfg.cnp.objective == "theory-truth"
-    assert cfg.mfgp.n_fidelities == 3
+    assert cfg.mfgp.kernel == "rbf"
     assert cfg.mae_thresholds.s4 > cfg.mae_thresholds.s1  # higher-dim looser
 
 
@@ -259,7 +259,7 @@ def test_retired_or_unknown_config_fields_are_rejected() -> None:
     with pytest.raises(ValidationError):
         CNPConfig(n_context_min=1, n_context_max=2, mixup_alpha=0.1)
     with pytest.raises(ValidationError):
-        MFGPConfig(n_fidelities=2)
+        MFGPConfig(n_fidelities=3)  # levels are set per GP, not here
     with pytest.raises(ValidationError):
         CNPConfig(n_context_min=1, n_context_max=2, objective="unknown")
 

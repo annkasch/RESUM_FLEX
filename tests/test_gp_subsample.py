@@ -73,26 +73,40 @@ def test_mfgp_stage_fits_on_voxel_subset(tmp_path):
             "n_context_min": 4,
             "n_context_max": 4,
         },
-        mfgp={"n_restarts": 1, "n_context": 4, "max_lf_voxels": 5, "max_hf_voxels": 4},
+        mfgp={
+            "n_restarts": 1,
+            "n_context": 4,
+            "levels": [
+                {"source": "model_mean", "partition": "train", "fidelity": "lf", "max_voxels": 5},
+                {"source": "model_mean", "partition": "train", "fidelity": "hf", "max_voxels": 4},
+                {
+                    "source": "observed_fraction",
+                    "partition": "train",
+                    "fidelity": "hf",
+                    "max_voxels": 4,
+                },
+            ],
+            "evaluation": [{"partition": "validation", "fidelity": "hf"}],
+        },
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
     )
     out = run_experiment(config)
-    with np.load(out / "mfgp/gp_voxel_subsets.npz") as subsets:
-        lf, hf = subsets["lf"], subsets["hf"]
-    np.testing.assert_array_equal(lf, subsample_voxels(9, 5, 0, 0))
-    np.testing.assert_array_equal(hf, subsample_voxels(6, 4, 0, 1))
     with (
         np.load(out / "mfgp/training_arrays.npz") as arrays,
         np.load(root / "batches/train/lf.npz") as full,
     ):
-        np.testing.assert_array_equal(arrays["X_lf"], full["theta"][lf])
-        assert arrays["X_hf"].shape[0] == 4
-    meta = json.loads((out / "mfgp/model.json").read_text())
-    assert meta["data"]["train/lf"]["n_gp_voxels"] == 5
-    assert meta["data"]["train/lf"]["n_voxels"] == 9
-    with np.load(out / "mfgp/hf_validation.npz") as validation:
+        lf, hf = arrays["index_0"], arrays["index_1"]
+        np.testing.assert_array_equal(lf, subsample_voxels(9, 5, 0, 0))
+        np.testing.assert_array_equal(hf, subsample_voxels(6, 4, 0, 1))
+        # Levels on the same partition share one subset.
+        np.testing.assert_array_equal(arrays["index_2"], hf)
+        np.testing.assert_array_equal(arrays["X_0"], full["theta"][lf])
+        assert arrays["X_1"].shape[0] == 4
+    levels = json.loads((out / "mfgp/levels.json").read_text())
+    assert [r["voxels"] for r in levels] == [5, 4, 4]
+    with np.load(out / "mfgp/evaluation_0.npz") as validation:
         assert len(validation["mean"]) == 3  # Validation is never subsampled.
 
 

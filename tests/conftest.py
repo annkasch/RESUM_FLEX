@@ -17,7 +17,6 @@ cnp:
 
 mfgp:
   kernel: rbf
-  n_fidelities: 3
 
 ivr:
   n_mc_samples: 1000

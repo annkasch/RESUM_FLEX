@@ -389,29 +389,6 @@ class MFGPStageConfig(StrictConfigModel):
         return self
 
 
-def legacy_mfgp_levels(mfgp: dict, *, lf_validation: bool = True) -> dict:
-    """Map an MFGP block without ``levels`` to the former three levels.
-
-    LF model mean (train/lf) -> HF model mean (train/hf) -> HF observed fraction (train/hf),
-    evaluated on validation/lf at level 0 and validation/hf at the top level.
-    """
-    if not isinstance(mfgp, dict) or "levels" in mfgp:
-        return mfgp
-    mfgp = dict(mfgp)
-    lf, hf = mfgp.pop("max_lf_voxels", None), mfgp.pop("max_hf_voxels", None)
-    mfgp["levels"] = [
-        {"source": "model_mean", "partition": "train", "fidelity": "lf", "max_voxels": lf},
-        {"source": "model_mean", "partition": "train", "fidelity": "hf", "max_voxels": hf},
-        {"source": "observed_fraction", "partition": "train", "fidelity": "hf", "max_voxels": hf},
-    ]
-    if "evaluation" not in mfgp:
-        evaluation = [{"partition": "validation", "fidelity": "lf", "level": 0}]
-        mfgp["evaluation"] = (evaluation if lf_validation else []) + [
-            {"partition": "validation", "fidelity": "hf"}
-        ]
-    return mfgp
-
-
 class MFGPRunConfig(MFGPStageConfig):
     """Standalone MFGP fit on prepared data, independent of event-model training."""
 
@@ -434,7 +411,7 @@ class MFGPRunConfig(MFGPStageConfig):
 def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
     """Standalone MFGP config; paths resolve relative to the YAML file."""
     path = Path(path).resolve()
-    config = MFGPRunConfig.model_validate(legacy_mfgp_levels(yaml.safe_load(path.read_text())))
+    config = MFGPRunConfig.model_validate(yaml.safe_load(path.read_text()))
 
     def resolve(value):
         return value if value is None or value.is_absolute() else (path.parent / value).resolve()
@@ -448,19 +425,6 @@ def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
 
 
 class SurrogateRunConfig(SurrogateConfig):
-    @model_validator(mode="before")
-    @classmethod
-    def legacy_mfgp(cls, data):
-        """MFGP blocks without levels keep their former three levels."""
-        if isinstance(data, dict) and isinstance(data.get("mfgp"), dict):
-            data = {
-                **data,
-                "mfgp": legacy_mfgp_levels(
-                    data["mfgp"], lf_validation=data.get("lf_validation", True)
-                ),
-            }
-        return data
-
     lf_validation: bool = True
     hf_validation: bool = True
     test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)

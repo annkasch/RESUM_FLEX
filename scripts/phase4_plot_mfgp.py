@@ -4,7 +4,7 @@ For each of S1, S2, S3, S4, S7, S8 (skipping the EVENT_ONLY scenarios
 that have no θ to drive an MFGP):
 
   1. Train a CNP on synthetic data (Phase 3 budgets).
-  2. Build LF / HF datasets and fit a 3-fidelity MFGP.
+  2. Build the paper's three GP levels (PAPER_LEVELS) and fit the MFGP.
   3. Generate held-out HF observations and assemble three plots:
      - mfgp_posterior_<S>.png  (1-D or 2-D depending on dim_θ)
      - mfgp_coverage_<S>.png   (Figure-5 time series + calibration bars)
@@ -33,8 +33,8 @@ from scipy.stats import norm  # noqa: E402
 from core import (  # noqa: E402
     build_cnp,
     evaluate_mfgp_coverage,
-    fit_mfgp_three_fidelity,
-    prepare_mfgp_datasets,
+    fit_mfgp,
+    synthetic_levels,
     train_cnp,
 )
 from data.pseudo_generator import for_scenario  # noqa: E402
@@ -75,6 +75,10 @@ def _train_cfg(name: str) -> TrainingConfig:
     )
 
 
+# The paper's recipe: LF CNP mean -> HF CNP mean -> HF observed fraction (target).
+PAPER_LEVELS = [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")]
+
+
 def _train_pipeline(name: str):
     """Train CNP + fit MFGP for one scenario; return (gen, cnp, mfgp, data)."""
     torch.manual_seed(0)
@@ -83,14 +87,15 @@ def _train_pipeline(name: str):
     cnp = build_cnp(_enc_cfg(), gen.dim_theta, gen.dim_phi)
     train_cnp(cnp, gen, cnp_config=_cnp_cfg(), training_config=_train_cfg(name))
     cnp.eval()
-    data = prepare_mfgp_datasets(
-        cnp, gen,
-        n_lf_trials=N_LF_TRIALS, n_lf_events=N_LF_EVENTS,
-        n_hf_trials=N_HF_TRIALS, n_hf_events=N_HF_EVENTS,
+    X_list, Y_list = synthetic_levels(
+        cnp, gen, PAPER_LEVELS,
+        n_trials={"lf": N_LF_TRIALS, "hf": N_HF_TRIALS},
+        n_events={"lf": N_LF_EVENTS, "hf": N_HF_EVENTS},
         seed=0,
     )
-    mfgp = fit_mfgp_three_fidelity(data, n_restarts=N_RESTARTS)
-    return gen, cnp, mfgp, data
+    mfgp = fit_mfgp(X_list, Y_list, n_restarts=N_RESTARTS)
+    # The observed HF training points are the top level.
+    return gen, cnp, mfgp, {"X_hf": X_list[-1], "Y_hf_raw": Y_list[-1]}
 
 
 def _grid_1d(n: int = 80) -> np.ndarray:
@@ -205,7 +210,7 @@ def plot_posterior_2d(name: str, gen, mfgp, data, out: Path) -> None:
 
 def plot_coverage(name: str, gen, mfgp, cnp, out: Path) -> dict[str, float]:
     result = evaluate_mfgp_coverage(
-        mfgp, cnp, gen,
+        mfgp, gen,
         n_test_trials=N_TEST_TRIALS, n_test_events=N_TEST_EVENTS, seed=12345,
     )
     coverage = plot_coverage_test(

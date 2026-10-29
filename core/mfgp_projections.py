@@ -42,14 +42,10 @@ def marginalize_posterior(gp, training_theta, offset, scale, settings):
 def _saved_layout(directory):
     """(validation file, training thetas, observed top-level theta, observed values).
 
-    Flexible-level runs store X_k/Y_k per level and evaluation_<e>.npz; the observed
-    training points are the top level when it is an observed fraction. Older runs used
-    X_lf/X_hf/Y_hf_raw and hf_validation.npz.
+    Runs store X_k/Y_k per level and evaluation_<e>.npz; the observed training points
+    are the top level when it is an observed fraction.
     """
     with np.load(directory / "training_arrays.npz") as data:
-        if "X_lf" in data:
-            return (directory / "hf_validation.npz", [data["X_lf"], data["X_hf"]],
-                    data["X_hf"], data["Y_hf_raw"].ravel())
         levels = json.loads((directory / "levels.json").read_text())
         top = levels[-1]["level"]
         # Levels on the same voxels (e.g. HF model mean and HF fraction) count once.
@@ -74,35 +70,12 @@ def ensure_mfgp_projections(directory, settings):
     sources = [directory / "model.pkl", directory / "training_arrays.npz", validation_path]
     if settings.quantity == "observed_fraction" and settings.target_events is None:
         with np.load(validation_path) as validation:
-            n_target = None
-            if "target_events" in validation:
-                budgets = np.unique(validation["target_events"])
-                if len(budgets) != 1:
-                    raise ValueError(
-                        "Unequal validation target counts: set projections.target_events explicitly"
-                    )
-                n_target = int(budgets[0])
-        if n_target is None:
-            # Older runs: recover N only from the exact prepared batch used in that run.
-            model_meta = json.loads((directory / "model.json").read_text())
-            experiment = json.loads((directory.parent / "experiment.json").read_text())
-            record = model_meta["data"]["validation/hf"]
-            batch_path = Path(record["path"])
-            if (
-                not batch_path.exists()
-                or hashlib.sha256(batch_path.read_bytes()).hexdigest() != record["sha256"]
-            ):
-                raise ValueError(
-                    "Cannot recover saved target N; set projections.target_events explicitly"
-                )
-            with np.load(batch_path) as batch:
-                resolved = experiment["resolved_config"]
-                n_target = batch["labels"].shape[1] - max(
-                    [
-                        resolved["validation_context_events"],
-                        *resolved.get("validation_context_sweep", []),
-                    ]
-                )
+            budgets = np.unique(validation["target_events"])
+        if len(budgets) != 1:
+            raise ValueError(
+                "Unequal validation target counts: set projections.target_events explicitly"
+            )
+        n_target = int(budgets[0])
         if n_target <= 0:
             raise ValueError("Saved target-event count must be positive")
         settings = settings.model_copy(update={"target_events": n_target})

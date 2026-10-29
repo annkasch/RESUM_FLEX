@@ -425,8 +425,8 @@ def simulate_at_theta(
     the CNP-aggregated continuous score; ``y_raw = m/N`` is the raw
     Bernoulli rate. Both are computed over the trial's *target* events
     (50/50 context/target split) — same convention as
-    :func:`prepare_mfgp_datasets`, so the new HF observation is on the
-    same scale as the existing dataset.
+    :func:`core.mfgp_pipeline.synthetic_levels`, so the new HF observation is on
+    the same scale as the existing levels.
 
     EVENT_ONLY scenarios are rejected: there is no θ to fix.
     """
@@ -466,10 +466,10 @@ def simulate_at_theta(
 
 @dataclass(frozen=True)
 class HighFidelityObservation:
-    """One evaluated design point, ready to append to the MFGP datasets."""
+    """One evaluated design point: its model mean and observed fraction (level sources)."""
 
-    beta_bar: float
-    y_raw: float
+    model_mean: float
+    observed_fraction: float
 
 
 class ObservationProvider(Protocol):
@@ -499,7 +499,7 @@ class SyntheticObservationProvider:
             seed=seed,
             n_mc_samples=self.n_mc_samples,
         )
-        return HighFidelityObservation(beta_bar=beta_bar, y_raw=y_raw)
+        return HighFidelityObservation(model_mean=beta_bar, observed_fraction=y_raw)
 
 
 # ---------------------------------------------------------------------------
@@ -528,8 +528,7 @@ class ActiveLearningStep:
     sigma: np.ndarray | None
     integrated_variance_before: float
     integrated_variance_after: float
-    beta_bar_obs: float
-    y_raw_obs: float
+    observation: HighFidelityObservation
 
 
 @dataclass
@@ -544,24 +543,27 @@ class ActiveLearningLoop:
     * ``acquisition='ei'`` — Expected Improvement, exploitation-leaning.
       The ``target`` flag (``'max'`` or ``'min'``) controls the
       direction of optimization; the incumbent for EI is the running
-      best of ``Y_hf_raw`` in the appropriate direction.
+      best of the top level's Y in the appropriate direction.
 
     Each step:
 
     1. Score the chosen acquisition over a candidate set (grid for dim
        ≤ 2, uniform sample for higher-dim).
     2. Ask the configured observation provider for one fresh HF trial.
-    3. Append ``β̄`` and ``y_raw`` to the MFGP's HF datasets and refit.
+    3. Append its values to the levels in ``observed_levels`` and refit.
     4. Record an :class:`ActiveLearningStep` with the surfaces & metrics.
 
-    LF data stays fixed across steps — active learning only spends HF
-    "budget", which matches the paper's framing where HF events are the
-    expensive thing.
+    ``X_list``/``Y_list`` are the GP levels, lowest fidelity first (as for
+    :func:`core.mfgp_pipeline.fit_mfgp`). ``observed_levels`` maps level index ->
+    ``"model_mean"`` or ``"observed_fraction"``: the new trial's value appended there.
+    Other levels stay fixed — active learning spends only the new simulations.
     """
 
     mfgp: MultiFidelityGP
     bounds: BoxBounds
-    data: dict[str, np.ndarray]
+    X_list: list[np.ndarray]
+    Y_list: list[np.ndarray]
+    observed_levels: dict[int, str]
     observation_provider: ObservationProvider | None = None
     generator: PseudoDataGenerator | None = None
     cnp: ConditionalNeuralProcess | None = None
@@ -588,6 +590,18 @@ class ActiveLearningLoop:
             )
         if self.target not in ("max", "min"):
             raise ValueError(f"target must be 'max' or 'min', got {self.target!r}")
+        n = self.mfgp.n_fidelities
+        if len(self.X_list) != n or len(self.Y_list) != n:
+            raise ValueError(f"Need X/Y for all {n} GP levels")
+        if not self.observed_levels or any(
+            not 0 <= k < n or source not in ("model_mean", "observed_fraction")
+            for k, source in self.observed_levels.items()
+        ):
+            raise ValueError(
+                "observed_levels must map GP level indices to 'model_mean' or "
+                "'observed_fraction'"
+            )
+        self.X_list, self.Y_list = list(self.X_list), list(self.Y_list)
         if self.observation_provider is None:
             if self.generator is None or self.cnp is None:
                 raise ValueError(
@@ -628,11 +642,10 @@ class ActiveLearningLoop:
                 n_mc_samples=self.n_mc_samples, fidelity=None,
                 seed=self.seed + self._step,
             )
-        # EI — incumbent is the current best of Y_hf_raw in the target's
-        # direction (this is the y-space the GP predicts at the highest
-        # fidelity, which matches what we'd compare against).
-        y_hf = self.data["Y_hf_raw"].ravel()
-        incumbent = float(y_hf.min() if self.target == "min" else y_hf.max())
+        # EI — incumbent is the current best of the top level in the target's
+        # direction (the y-space the GP predicts at the highest fidelity).
+        y_top = self.Y_list[-1].ravel()
+        incumbent = float(y_top.min() if self.target == "min" else y_top.max())
         return ExpectedImprovementAcquisition(
             self.mfgp, self.bounds, incumbent=incumbent,
             target=self.target, xi=self.ei_xi, fidelity=None,
@@ -656,31 +669,25 @@ class ActiveLearningLoop:
             n_events=self.n_hf_events,
             seed=self.seed + 1000 + self._step,
         )
-        beta_bar = float(observation.beta_bar)
-        y_raw = float(observation.y_raw)
-        if not np.isfinite([beta_bar, y_raw]).all():
+        values = {
+            "model_mean": float(observation.model_mean),
+            "observed_fraction": float(observation.observed_fraction),
+        }
+        if not np.isfinite(list(values.values())).all():
             raise ValueError("observation_provider returned non-finite values")
-        if not 0.0 <= beta_bar <= 1.0 or not 0.0 <= y_raw <= 1.0:
+        if not all(0.0 <= v <= 1.0 for v in values.values()):
             raise ValueError("observation_provider rates must lie in [0, 1]")
 
         new_theta = theta_next.reshape(1, -1)
-        self.data = {
-            "X_lf": self.data["X_lf"],
-            "Y_lf_cnp": self.data["Y_lf_cnp"],
-            "X_hf": np.vstack([self.data["X_hf"], new_theta]),
-            "Y_hf_cnp": np.vstack([self.data["Y_hf_cnp"], [[beta_bar]]]),
-            "Y_hf_raw": np.vstack([self.data["Y_hf_raw"], [[y_raw]]]),
-        }
+        for k, source in self.observed_levels.items():
+            self.X_list[k] = np.vstack([self.X_list[k], new_theta])
+            self.Y_list[k] = np.vstack([self.Y_list[k], [[values[source]]]])
         self.mfgp = MultiFidelityGP(
             n_fidelities=self.mfgp.n_fidelities,
             dim_theta=self.mfgp.dim_theta,
             kernel=self.mfgp.kernel_name,
             ard=self.mfgp.ard,
-        ).fit(
-            [self.data["X_lf"], self.data["X_hf"], self.data["X_hf"]],
-            [self.data["Y_lf_cnp"], self.data["Y_hf_cnp"], self.data["Y_hf_raw"]],
-            n_restarts=self.refit_n_restarts,
-        )
+        ).fit(self.X_list, self.Y_list, n_restarts=self.refit_n_restarts)
         iv_after = integrated_variance(
             self.mfgp, self.bounds,
             n_mc_samples=2000, fidelity=None, seed=self.seed,
@@ -689,14 +696,13 @@ class ActiveLearningLoop:
         record = ActiveLearningStep(
             step=self._step,
             theta_next=theta_next,
-            sampled_theta=self.data["X_hf"].copy(),
+            sampled_theta=self.X_list[max(self.observed_levels)].copy(),
             grid_axes=axes,
             acquisition=scores.reshape(shape) if shape is not None else None,
             sigma=sigma_cand.reshape(shape) if shape is not None else None,
             integrated_variance_before=iv_before,
             integrated_variance_after=iv_after,
-            beta_bar_obs=beta_bar,
-            y_raw_obs=y_raw,
+            observation=HighFidelityObservation(**values),
         )
         self._step += 1
         return record

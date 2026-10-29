@@ -1,6 +1,5 @@
 """Unequal event counts per voxel: padded batches with explicit event_counts."""
 
-import json
 
 import numpy as np
 import pytest
@@ -232,19 +231,32 @@ def test_mfgp_stage_uses_per_voxel_target_counts(tmp_path, transform):
             "n_context_min": 4,
             "n_context_max": 4,
         },
-        mfgp={"n_restarts": 1, "n_context": 4, "output_transform": transform},
+        mfgp={
+            "n_restarts": 1,
+            "n_context": 4,
+            "output_transform": transform,
+            "levels": [
+                {"source": "model_mean", "partition": "train", "fidelity": "lf"},
+                {"source": "model_mean", "partition": "train", "fidelity": "hf"},
+                {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
+            ],
+            "evaluation": [{"partition": "validation", "fidelity": "hf"}],
+        },
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
     )
     out = run_experiment(config)
+    # Model means cover the target events; observed fractions every event of a voxel.
     with np.load(out / "mfgp/training_arrays.npz") as data:
-        np.testing.assert_array_equal(data["hf_target_events"].ravel(), COUNTS - 4)
-    with np.load(out / "mfgp/hf_validation.npz") as data:
-        np.testing.assert_array_equal(data["target_events"], COUNTS - 4)
+        np.testing.assert_array_equal(data["events_1"].ravel(), COUNTS - 4)
+        np.testing.assert_array_equal(data["events_2"].ravel(), COUNTS)
+        raw = data["Y_2"].ravel()
+    with np.load(out / "mfgp/evaluation_0.npz") as data:
+        np.testing.assert_array_equal(data["target_events"], COUNTS)
     if transform == "log":
-        details = json.loads((out / "mfgp/transform.json").read_text())
-        assert details["hf_target_events"] == (COUNTS - 4).tolist()
+        with np.load(out / "mfgp/fit_arrays.npz") as fit:
+            np.testing.assert_allclose(fit["Y_2"].ravel(), (raw * COUNTS + 0.5) / (COUNTS + 1))
 
 
 def test_rectangular_only_helpers_reject_ragged_batches():

@@ -41,6 +41,14 @@ validation_seed: 12345
 
 # Three levels: fine-tuned LF score, fine-tuned HF score, observed HF fraction.
 mfgp:
+  # Lowest to highest fidelity; the last level is the target.
+  levels:
+  - {source: model_mean, partition: train, fidelity: lf}
+  - {source: model_mean, partition: train, fidelity: hf}
+  - {source: observed_fraction, partition: train, fidelity: hf}
+  evaluation:
+  - {partition: validation, fidelity: lf, level: 0}
+  - {partition: validation, fidelity: hf}
   output_transform: log
   raw_pseudocount: 0.5
   cnp_log_floor: 1.0e-12

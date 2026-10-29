@@ -41,9 +41,9 @@ from core import (  # noqa: E402
     ActiveLearningStep,
     BoxBounds,
     build_cnp,
-    fit_mfgp_three_fidelity,
+    fit_mfgp,
     integrated_variance,
-    prepare_mfgp_datasets,
+    synthetic_levels,
     train_cnp,
 )
 from data import for_scenario  # noqa: E402
@@ -104,13 +104,15 @@ def _train_pipeline(name: str, n_hf_trials: int = N_HF_TRIALS):
     cnp = build_cnp(_enc_cfg(), gen.dim_theta, gen.dim_phi)
     train_cnp(cnp, gen, cnp_config=_cnp_cfg(), training_config=_train_cfg(name))
 
-    data = prepare_mfgp_datasets(
+    # The paper's recipe: LF CNP mean -> HF CNP mean -> HF observed fraction (target).
+    data = synthetic_levels(
         cnp, gen,
-        n_lf_trials=N_LF_TRIALS, n_lf_events=N_LF_EVENTS,
-        n_hf_trials=n_hf_trials, n_hf_events=N_HF_EVENTS,
+        [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")],
+        n_trials={"lf": N_LF_TRIALS, "hf": n_hf_trials},
+        n_events={"lf": N_LF_EVENTS, "hf": N_HF_EVENTS},
         seed=0,
     )
-    mfgp = fit_mfgp_three_fidelity(data, n_restarts=REFIT_N_RESTARTS)
+    mfgp = fit_mfgp(*data, n_restarts=REFIT_N_RESTARTS)
     return gen, cnp, mfgp, data
 
 
@@ -652,7 +654,7 @@ def _run_scenario(
         high=np.full(gen.dim_theta, 1.0),
     )
     iv0 = integrated_variance(mfgp, bounds, n_mc_samples=2000, seed=0)
-    initial_hf_theta = data["X_hf"].copy()
+    initial_hf_theta = data[0][-1].copy()
 
     # Fine grid + analytical t̄ for trajectory & metrics.
     eval_pts, eval_axes = _eval_grid(bounds, gen.dim_theta)
@@ -671,7 +673,10 @@ def _run_scenario(
     mae_history = [m0]
 
     loop = ActiveLearningLoop(
-        mfgp=mfgp, generator=gen, cnp=cnp, bounds=bounds, data=data,
+        mfgp=mfgp, generator=gen, cnp=cnp, bounds=bounds,
+        X_list=data[0], Y_list=data[1],
+        # New HF simulations add to both HF levels.
+        observed_levels={1: "model_mean", 2: "observed_fraction"},
         n_hf_events=N_HF_EVENTS, n_mc_samples=N_MC_SAMPLES,
         n_candidates_per_axis=N_CAND_PER_AXIS,
         seed=0, refit_n_restarts=REFIT_N_RESTARTS,

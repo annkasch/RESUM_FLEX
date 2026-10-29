@@ -45,7 +45,20 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             "n_context_max": 4,
             "sampling": {"strategy": "class_aware_mixup", "mixup": {"mix_context": True}},
         },
-        mfgp={"n_restarts": 1, "n_context": 4, "output_transform": transform},
+        mfgp={
+            "n_restarts": 1,
+            "n_context": 4,
+            "output_transform": transform,
+            "levels": [
+            {"source": "model_mean", "partition": "train", "fidelity": "lf"},
+            {"source": "model_mean", "partition": "train", "fidelity": "hf"},
+            {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
+        ],
+            "evaluation": (
+                [{"partition": "validation", "fidelity": "lf", "level": 0}] if lf_validation
+                else []
+            ) + [{"partition": "validation", "fidelity": "hf"}],
+        },
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,
@@ -58,21 +71,22 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         config.training.fine_tuning = LastLayerFineTuning(n_steps=2, eval_every=1)
     out = run_experiment(config)
     if fine_tuned:
+        from core.mfgp_pipeline import model_mean
         from core.surrogates.checkpoints import load_surrogate
-        from core.surrogates.pipeline import prepare_surrogate_datasets
         from data.optical_pipeline import load_prepared_batch
         lf = load_prepared_batch(root / "batches/train/lf.npz")
         hf = load_prepared_batch(root / "batches/train/hf.npz")
-        def inputs(checkpoint):
-            return prepare_surrogate_datasets(
-                load_surrogate(out / "checkpoints" / checkpoint), lf, hf,
-                n_lf_context=4, n_hf_context=4, seed=config.mfgp.seed)
-        expected_inputs, old_inputs = inputs("best"), inputs("pretraining")
-        # Model-mean levels keep the former context splits (seed + 1 LF, seed + 101 HF).
+        seed = config.mfgp.seed
+
+        def means(checkpoint, batch, stream):
+            model = load_surrogate(out / "checkpoints" / checkpoint)
+            # Level streams 0 (train/lf) and 1 (train/hf) split with seed + 1 + 100 stream.
+            return model_mean(model, batch, n_context=4, seed=seed + 1 + 100 * stream)
+
         with np.load(out / "mfgp/training_arrays.npz") as arrays:
-            np.testing.assert_array_equal(arrays["Y_0"], expected_inputs["Y_lf_cnp"])
-            np.testing.assert_array_equal(arrays["Y_1"], expected_inputs["Y_hf_cnp"])
-            assert not np.array_equal(arrays["Y_0"], old_inputs["Y_lf_cnp"])
+            np.testing.assert_array_equal(arrays["Y_0"].ravel(), means("best", lf, 0))
+            np.testing.assert_array_equal(arrays["Y_1"].ravel(), means("best", hf, 1))
+            assert not np.array_equal(arrays["Y_0"].ravel(), means("pretraining", lf, 0))
 
     meta = json.loads((out / "mfgp/model.json").read_text())
     assert meta["mode"] == "combined" and meta["target_level"] == 2

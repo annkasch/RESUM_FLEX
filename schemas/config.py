@@ -54,7 +54,6 @@ class CNPConfig(StrictConfigModel):
 
 class MFGPConfig(StrictConfigModel):
     kernel: Literal["rbf", "matern52"] = "rbf"
-    n_fidelities: Literal[3] = 3
 
 
 class IVRConfig(StrictConfigModel):

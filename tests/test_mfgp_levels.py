@@ -12,7 +12,6 @@ from schemas.surrogates import (
     MFGPRunConfig,
     MFGPStageConfig,
     SurrogateRunConfig,
-    legacy_mfgp_levels,
     load_mfgp_config,
 )
 
@@ -22,25 +21,19 @@ TWO_LEVELS = [
 ]
 
 
-def test_legacy_block_maps_to_three_levels():
-    mapped = legacy_mfgp_levels({"max_lf_voxels": 10, "max_hf_voxels": 3}, lf_validation=False)
-    config = MFGPStageConfig.model_validate(mapped)
-    assert [(lv.source, lv.partition, lv.fidelity, lv.max_voxels) for lv in config.levels] == [
-        ("model_mean", "train", "lf", 10),
-        ("model_mean", "train", "hf", 3),
-        ("observed_fraction", "train", "hf", 3),
-    ]
-    assert [(e.partition, e.fidelity, e.level) for e in config.evaluation] == [
-        ("validation", "hf", None)
-    ]
-    run = SurrogateRunConfig(
+def test_mfgp_blocks_need_explicit_levels():
+    base = dict(
         model={"kind": "mlp"},
         training={"backend": "neural", "n_steps": 2, "eval_every": 1},
-        mfgp={"n_restarts": 1},
         data_directory="d",
         output_directory="o",
     )
-    assert len(run.mfgp.levels) == 3 and run.mfgp.evaluation[0].level == 0
+    with pytest.raises(ValueError, match="levels"):
+        SurrogateRunConfig(**base, mfgp={"n_restarts": 1})
+    with pytest.raises(ValueError, match="max_lf_voxels"):
+        SurrogateRunConfig(**base, mfgp={"levels": TWO_LEVELS, "max_lf_voxels": 3})
+    run = SurrogateRunConfig(**base, mfgp={"levels": TWO_LEVELS})
+    assert [lv.source for lv in run.mfgp.levels] == ["model_mean", "observed_fraction"]
 
 
 def test_level_settings_are_validated(tmp_path):

@@ -14,7 +14,6 @@ from core.surrogates import (
     build_surrogate,
     evaluate_surrogate,
     load_surrogate,
-    prepare_surrogate_datasets,
 )
 from data.pseudo_generator import for_scenario
 from schemas.surrogates import NeuralTraining, SurrogateConfig, TreeTraining
@@ -92,12 +91,16 @@ def test_common_api_all_modes(kind, scenario, tmp_path):
     else:
         np.testing.assert_array_equal(model.predict(tgt).logits, prediction.logits)
     if train.theta is not None:
-        data = prepare_surrogate_datasets(
-            restored, val, val, n_lf_context=4, n_hf_context=4, seed=6
-        )
-        assert data["Y_lf_cnp"].shape == (3, 1)
+        pytest.importorskip("GPy")
+        from core.mfgp_pipeline import BatchLevel, levels_from_batches
+
+        _, Y_list = levels_from_batches(restored, [
+            BatchLevel("model_mean", val, n_context=4, seed=107),
+            BatchLevel("observed_fraction", val, n_context=4, seed=107),
+        ])
+        assert Y_list[0].shape == (3, 1)
         _, hf_target = split_context_target(val, 4, seed=107)
-        np.testing.assert_array_equal(data["Y_hf_raw"][:, 0], hf_target.labels.mean(1))
+        np.testing.assert_array_equal(Y_list[1][:, 0], hf_target.labels.mean(1))
 
 
 @pytest.mark.parametrize(
@@ -283,17 +286,19 @@ def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
         run_experiment(config)
 
 
-def test_existing_mfgp_entrypoint_accepts_new_component():
+def test_mfgp_levels_accept_context_free_component():
     pytest.importorskip("GPy")
-    from core import prepare_mfgp_datasets_from_batches
+    from core import model_mean
 
     s = for_scenario("S1", seed=0)
     b = s.generate(n_trials=3, n_events=24)
     model = build_surrogate(spec("mlp"), s.dim_theta, s.dim_phi)
-    old_entry = prepare_mfgp_datasets_from_batches(model, b, b, n_lf_context=4, n_hf_context=4)
-    new_entry = prepare_surrogate_datasets(model, b, b, n_lf_context=4, n_hf_context=4)
-    for key in old_entry:
-        np.testing.assert_array_equal(old_entry[key], new_entry[key])
+    # Context-free: every event without n_context, only the targets with it.
+    np.testing.assert_array_equal(model_mean(model, b), model.predict(b).mean)
+    _, target = split_context_target(b, 4, seed=3)
+    np.testing.assert_array_equal(
+        model_mean(model, b, n_context=4, seed=3), model.predict(target).mean
+    )
 
 
 def test_ap_selection_restores_highest_ap(tmp_path):
