@@ -35,7 +35,7 @@ hf_validation: false
 test_fidelities: [lf]
 data_directory: outputs/optical_centered_cnp_v0
 data_config: config.optical.centered.cnp.data.yaml
-output_directory: outputs/optical_resum/centered_cnp_v0/seed0
+output_directory: outputs/optical_resum/centered_cnp_v1/seed0
 validation_context_events: 200
 # Read-out only: same 1125 targets per voxel (events after the first 375), nested contexts.
 validation_context_sweep: [16, 64, 128, 256, 375]
