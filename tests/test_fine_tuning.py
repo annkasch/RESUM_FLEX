@@ -84,7 +84,8 @@ def test_frozen_dropout_features_are_deterministic(tmp_path):
     assert any(modes[:-6]) and modes[-6:] == [False] * 6
 
 
-def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch):
+@pytest.mark.parametrize("unblind", [False, True])
+def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch, unblind):
     from core.surrogates.models import NeuralSurrogate
     from data import optical_pipeline
 
@@ -113,7 +114,7 @@ def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch):
 
     def load(path):
         if "/test/" in str(path):
-            assert fitted
+            assert fitted and unblind, "blinded test data must never be read"
         return original_load(path)
 
     monkeypatch.setattr(NeuralSurrogate, "fit", fit)
@@ -127,9 +128,16 @@ def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch):
             validation_context_events=4,
             hf_validation=False,
             test_fidelities=["lf"],
+            unblind_test=unblind,
         )
     )
     rows = json.loads((out / "metrics.json").read_text())
+    status = json.loads((out / "test_evaluation.json").read_text())["status"]
+    if not unblind:
+        assert status == "blinded" and {r["split"] for r in rows} == {"train", "validation"}
+        assert not list(out.glob("lf_test_*"))
+        return
+    assert status == "unblinded"
     assert len(rows) == 9
     assert {r["checkpoint"] for r in rows} == {"pretraining", "best", "final"}
     assert (out / "lf_test_fine_tuning_means.png").exists()

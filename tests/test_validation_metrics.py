@@ -201,6 +201,7 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
         selection="bernoulli_log_loss",
         hf_validation=False,
         test_fidelities=["lf"],
+        unblind_test=True,
         data_directory=root,
         output_directory=tmp_path / "run",
         validation_context_events=4,

@@ -155,7 +155,12 @@ def run_experiment(config: SurrogateRunConfig):
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
     # Selection is complete. Never pass test episodes into either training stage.
     test_provenance = {}
-    for fidelity in config.test_fidelities:
+    if config.test_fidelities and not config.unblind_test:
+        print("Test set blinded (set unblind_test: true to evaluate it)", flush=True)
+        (output / "test_evaluation.json").write_text(json.dumps(
+            {"status": "blinded", "fidelities": config.test_fidelities}, indent=2
+        ))
+    for fidelity in config.test_fidelities if config.unblind_test else []:
         batch, test_provenance[fidelity] = load_split(root, "test", fidelity)
         batches["test", fidelity] = batch
         if (
@@ -176,6 +181,7 @@ def run_experiment(config: SurrogateRunConfig):
         (output / "test_evaluation.json").write_text(
             json.dumps(
                 {
+                    "status": "unblinded",
                     "data": test_provenance,
                     "used_for_selection": False,
                     "context_events": config.validation_context_events,

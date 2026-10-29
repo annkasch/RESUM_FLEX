@@ -353,6 +353,10 @@ class ObservedFractionLevel(StrictConfigModel):
 GPLevel = Annotated[ModelMeanLevel | ObservedFractionLevel, Field(discriminator="source")]
 
 
+# Held-out test partitions: never GP training levels, evaluated only with unblind_test.
+TEST_PARTITIONS = ("test", "cnp_test", "gp_test")
+
+
 class GPEvaluation(StrictConfigModel):
     """Held-out voxels whose observed fraction is compared with one GP level (default: top)."""
 
@@ -375,10 +379,21 @@ class MFGPStageConfig(StrictConfigModel):
     seed: int = 0
     # Context events per voxel when a context model computes a model_mean level.
     n_context: int = Field(default=64, gt=0)
+    # Test partitions stay blinded until all choices are final; then set true once.
+    unblind_test: bool = False
 
     @model_validator(mode="after")
     def consistent_levels(self):
         limits = {}
+        for level in self.levels:
+            if level.partition in TEST_PARTITIONS:
+                raise ValueError(f"Test partition {level.partition} can't be a GP training level")
+        for evaluation in self.evaluation:
+            if evaluation.partition in TEST_PARTITIONS and not self.unblind_test:
+                raise ValueError(
+                    f"{evaluation.partition} is blinded; set unblind_test: true once all "
+                    "choices are final"
+                )
         for level in self.levels:
             key = level.partition, level.fidelity
             if limits.setdefault(key, level.max_voxels) != level.max_voxels:
@@ -427,7 +442,10 @@ def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
+    # Test sets that exist; they are evaluated only with unblind_test (blinded by default,
+    # so model choices are made on validation only).
     test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)
+    unblind_test: bool = False
     stages: list[TrainingStage] | None = Field(default=None, min_length=1)
     initial_checkpoint: Path | None = None
     mfgp_checkpoint: str = "best"

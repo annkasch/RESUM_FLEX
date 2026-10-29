@@ -79,6 +79,15 @@ Notebooks can call it and display artifacts, without duplicating a training loop
 The CLI limits Torch threads to one; BDT fitting limits its thread pools to one.
 CUDA is opt-in through `training.device`; default examples run on CPU.
 
+## Blinded test sets
+
+Test partitions are blinded by default. `test_fidelities` declares which test sets exist,
+but a training run evaluates them only with `unblind_test: true`; otherwise it writes
+`test_evaluation.json` with `status: blinded` and never reads the test data. The MFGP
+does the same: evaluation on `test`, `cnp_test` or `gp_test` needs `unblind_test: true`,
+and test partitions can never be GP training levels. Make all model and GP choices on
+validation, then unblind once.
+
 ## Validation metrics
 
 The event models output per-event hit probabilities, so they are judged as
