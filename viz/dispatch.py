@@ -341,13 +341,14 @@ def plot_coverage_test(
 
     x = np.arange(len(y_predicted))
 
-    # Each trial's step is at least one dot wide: the band panel (~70 % of the figure
-    # width) grows with the number of trials.
+    # Each trial's step is wider than its dot: the band panel grows with the number of
+    # trials (resized after layout below).
     dot_size = 14  # points^2
-    width = max(13.0, len(x) * np.sqrt(dot_size) / 72 / 0.70)  # inches
+    step_width = 1.3 * np.sqrt(dot_size) / 72  # inches per trial
+    panel = max(9.0, len(x) * step_width)
     fig, (ax_ts, ax_cal) = plt.subplots(
-        1, 2, figsize=(width, 5),
-        gridspec_kw={"width_ratios": [3 * width / 13, 1]},
+        1, 2, figsize=(panel + 4.0, 5),
+        gridspec_kw={"width_ratios": [panel, 3.0]},
     )
 
     # ---- Left: step bands, flat over each trial; trials are independent, so no
@@ -399,7 +400,14 @@ def plot_coverage_test(
     ax_cal.grid(alpha=0.3, axis="y")
 
     fig.suptitle(title)
+    ax_ts.set_xlim(-0.5, len(x) - 0.5)  # steps fill the panel, no empty margins
     fig.tight_layout()
+    for _ in range(3):  # grow the figure until the band panel is wide enough
+        missing = len(x) * step_width - ax_ts.get_position().width * fig.get_figwidth()
+        if missing <= 0.01:
+            break
+        fig.set_size_inches(fig.get_figwidth() + missing, fig.get_figheight())
+        fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     return coverage
