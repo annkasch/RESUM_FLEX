@@ -292,6 +292,7 @@ def plot_coverage_test(
     ylabel: str = "y",
     nominal_label: str = "target (Gaussian)",
     show_predicted: bool = True,
+    order: str = "input",
 ) -> dict[str, float]:
     """Figure-5-style coverage diagnostic with a calibration sub-panel.
 
@@ -339,6 +340,15 @@ def plot_coverage_test(
                 for k in (1, 2, 3)}
     target = {"1sigma": 0.6827, "2sigma": 0.9545, "3sigma": 0.9973}
 
+    # Display order only; coverage is computed above. Sorting by the noisy observation
+    # pushes low draws left and high draws right, which looks like bias even for a
+    # perfect model; sorting by the prediction does not.
+    if order not in ("input", "predicted", "observed"):
+        raise ValueError(f"order must be input, predicted or observed, got {order!r}")
+    if order != "input":
+        index = np.argsort(y_predicted if order == "predicted" else y_raw, kind="stable")
+        y_raw, y_predicted = y_raw[index], y_predicted[index]
+        intervals = {k: (lo[index], hi[index]) for k, (lo, hi) in intervals.items()}
     x = np.arange(len(y_predicted))
 
     fig, (ax_ts, ax_cal) = plt.subplots(

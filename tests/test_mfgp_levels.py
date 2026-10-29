@@ -228,3 +228,20 @@ def test_coverage_plot_can_hide_predicted_line(tmp_path, monkeypatch, show):
     plot_coverage_test(y, y, np.full(5, 0.01), out_path=tmp_path / "c.png", title="t",
                        predicted_label="MFGP mean", show_predicted=show)
     assert ("MFGP mean" in labels) == show
+
+
+def test_coverage_plot_order_changes_display_only(tmp_path):
+    from viz.dispatch import plot_coverage_test
+
+    rng = np.random.default_rng(0)
+    mean = rng.uniform(0.1, 0.2, 30)
+    obs = mean + rng.normal(0, 0.01, 30)
+    results = {
+        order: plot_coverage_test(obs, mean, np.full(30, 0.01), out_path=tmp_path / f"{order}.png",
+                                  title="t", order=order)
+        for order in ("input", "predicted", "observed")
+    }
+    assert results["input"] == results["predicted"] == results["observed"]
+    with pytest.raises(ValueError, match="order must be"):
+        plot_coverage_test(obs, mean, np.full(30, 0.01), out_path=tmp_path / "x.png", title="t",
+                           order="random")
