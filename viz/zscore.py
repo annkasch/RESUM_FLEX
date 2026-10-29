@@ -13,10 +13,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
 
-# Equal-count bins of the predicted rate in the z-vs-rate panel.
-RATE_BINS = 10
-
-
 def gp_zscores(arrays, pseudocount):
     """z [B] of a saved GP evaluation (evaluation_<e>.npz) in the GP's own space.
 
@@ -35,7 +31,7 @@ def gp_zscores(arrays, pseudocount):
 
 
 def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
-    """Histogram of z against N(0, 1), and z per equal-count bin of the predicted rate.
+    """Histogram of z against N(0, 1), and z against the predicted rate with ±1/2/3σ bands.
 
     z, predicted: [B] per voxel. Writes PNG and PDF next to ``out_path`` (no suffix).
     Returns the summary (mean, std, fraction |z| > 2).
@@ -56,19 +52,12 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
                       f"|z|>2: {summary['outside_2']:.0%} (4.6% expected)")
     ax_hist.legend(fontsize=8)
     ax_hist.grid(alpha=0.2)
-    order = np.argsort(predicted, kind="stable")
-    bins = np.array_split(order, min(RATE_BINS, len(z)))
-    centers = np.array([predicted[b].mean() for b in bins])
-    means = np.array([z[b].mean() for b in bins])
-    errors = np.array([z[b].std(ddof=1) / np.sqrt(len(b)) if len(b) > 1 else 0.0 for b in bins])
     # Standard residual plot: z in units of σ against the prediction, ±1/2/3σ bands.
     for k, color, alpha in ((3, "#d62728", 0.15), (2, "#ffd700", 0.35), (1, "#2ca02c", 0.35)):
         inside = np.mean(np.abs(z) <= k)
         ax_rate.axhspan(-k, k, color=color, alpha=alpha, lw=0,
                         label=f"±{k}σ: {inside:.0%} ({[68.3, 95.4, 99.7][k - 1]}%)")
     ax_rate.scatter(predicted, z, s=8, color="black", alpha=0.6, label="voxels", zorder=3)
-    ax_rate.errorbar(centers, means, yerr=errors, fmt="o", color="C3", capsize=3, zorder=4,
-                     label="bin mean ± s.e.")
     ax_rate.axhline(0, color="black", lw=1)
     ax_rate.set(xlabel=rate_label, ylabel="z [σ]", title="z vs predicted rate",
                 ylim=(-limit, limit))
