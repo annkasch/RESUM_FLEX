@@ -299,8 +299,7 @@ def plot_coverage_test(
     Two-panel figure:
 
     * **Left (time series)** — ``y_predicted`` as a line (``show_predicted``), ``±1/2/3 σ``
-      shaded step bands (flat over each trial, not interpolated), ``y_raw``
-      overlaid as black dots. Trials are kept in
+      shaded bands, ``y_raw`` overlaid as black dots. Trials are kept in
       their natural input order (no sorting), so the bands and dots jump
       around together — and the "are dots inside the bands?" question
       stays honest, not visually choreographed by sorting.
@@ -356,16 +355,25 @@ def plot_coverage_test(
         gridspec_kw={"width_ratios": [3, 1]},
     )
 
-    # ---- Left: step bands, flat over each trial; trials are independent, so no
-    # interpolation between neighbours ----
-    for k, color, alpha in ((3, "#d62728", 0.18), (2, "#ffd700", 0.40), (1, "#2ca02c", 0.50)):
-        ax_ts.fill_between(
-            x, intervals[k][0], intervals[k][1], step="mid", color=color, alpha=alpha,
-            linewidth=0, label=f"±{k}{interval_label} ({coverage[f'{k}sigma'] * 100:.0f}%)",
-        )
+    # ---- Left: time series ----
+    ax_ts.fill_between(
+        x, intervals[3][0], intervals[3][1],
+        color="#d62728", alpha=0.18,
+        label=f"±3{interval_label} ({coverage['3sigma'] * 100:.0f}%)",
+    )
+    ax_ts.fill_between(
+        x, intervals[2][0], intervals[2][1],
+        color="#ffd700", alpha=0.40,
+        label=f"±2{interval_label} ({coverage['2sigma'] * 100:.0f}%)",
+    )
+    ax_ts.fill_between(
+        x, intervals[1][0], intervals[1][1],
+        color="#2ca02c", alpha=0.50,
+        label=f"±1{interval_label} ({coverage['1sigma'] * 100:.0f}%)",
+    )
     if show_predicted:
         ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
-    dots = ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
+    ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
     ax_ts.set_xlabel(xlabel)
     ax_ts.set_ylabel(ylabel)
     lo = min(-0.02, float(intervals[3][0].min()) - 0.02)
@@ -375,8 +383,7 @@ def plot_coverage_test(
         float(intervals[3][1].max()) + 0.02,
     )
     ax_ts.set_ylim(*(ylim if ylim is not None else (lo, hi)))
-    # Above the panel: with many trials no corner is free of points.
-    ax_ts.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=5, fontsize=9, frameon=False)
+    ax_ts.legend(loc="best", fontsize=9)
     ax_ts.grid(alpha=0.3)
 
     # ---- Right: calibration ----
@@ -405,11 +412,7 @@ def plot_coverage_test(
     ax_cal.grid(alpha=0.3, axis="y")
 
     fig.suptitle(title)
-    ax_ts.set_xlim(-0.5, len(x) - 0.5)  # steps fill the panel, no empty margins
     fig.tight_layout()
-    # Dots narrower than their trial's step: shrink them when trials are dense.
-    step = ax_ts.get_position().width * fig.get_figwidth() * 72 / len(x)  # points
-    dots.set_sizes([min(14.0, (step / 1.3) ** 2)])
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
     return coverage
