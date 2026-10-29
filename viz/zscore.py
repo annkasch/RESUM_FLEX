@@ -60,16 +60,17 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
     bins = np.array_split(order, min(RATE_BINS, len(z)))
     centers = np.array([predicted[b].mean() for b in bins])
     means = np.array([z[b].mean() for b in bins])
-    spreads = np.array([z[b].std(ddof=1) if len(b) > 1 else 0.0 for b in bins])
-    errors = spreads / np.sqrt([len(b) for b in bins])
-    ax_rate.scatter(predicted, z, s=6, color="gray", alpha=0.4, label="voxels")
-    ax_rate.errorbar(centers, means, yerr=errors, fmt="o", color="C3", capsize=3,
-                     label="bin mean ± s.e. (ideal 0)")
-    ax_rate.plot(centers, spreads, "s--", color="C0", label="bin std (ideal 1)")
+    errors = np.array([z[b].std(ddof=1) / np.sqrt(len(b)) if len(b) > 1 else 0.0 for b in bins])
+    # Standard residual plot: z in units of σ against the prediction, ±1/2/3σ bands.
+    for k, color, alpha in ((3, "#d62728", 0.15), (2, "#ffd700", 0.35), (1, "#2ca02c", 0.35)):
+        inside = np.mean(np.abs(z) <= k)
+        ax_rate.axhspan(-k, k, color=color, alpha=alpha, lw=0,
+                        label=f"±{k}σ: {inside:.0%} ({[68.3, 95.4, 99.7][k - 1]}%)")
+    ax_rate.scatter(predicted, z, s=8, color="black", alpha=0.6, label="voxels", zorder=3)
+    ax_rate.errorbar(centers, means, yerr=errors, fmt="o", color="C3", capsize=3, zorder=4,
+                     label="bin mean ± s.e.")
     ax_rate.axhline(0, color="black", lw=1)
-    for level in (-1, 1):
-        ax_rate.axhline(level, color="black", lw=0.8, ls=":")
-    ax_rate.set(xlabel=rate_label, ylabel="z", title="z vs predicted rate (equal-count bins)",
+    ax_rate.set(xlabel=rate_label, ylabel="z [σ]", title="z vs predicted rate",
                 ylim=(-limit, limit))
     ax_rate.legend(fontsize=8)
     ax_rate.grid(alpha=0.2)
