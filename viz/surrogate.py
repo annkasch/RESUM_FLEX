@@ -65,6 +65,17 @@ def plot_surrogate_run(directory):
                 ax.legend()
                 ax.grid(alpha=0.2)
             save(fig, name)
+            # z-scores of the selected checkpoint: binomial counting noise only.
+            with np.load(directory / f"{fidelity}_{split}_best.npz") as arrays:
+                if "voxel_z" in arrays:
+                    from viz.zscore import plot_zscores
+
+                    plot_zscores(
+                        arrays["voxel_z"], arrays["predicted"],
+                        directory / f"{fidelity}_{split}_zscore",
+                        title=f"{fidelity.upper()} {split}, best checkpoint: "
+                              "z = (hits − Σp) / √Σp(1−p)",
+                    )
         for logscale in (False, True):
             fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
             for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
@@ -278,6 +289,18 @@ def plot_mfgp_run(directory):
     """Training levels and mean/residual/coverage diagnostics per evaluation set."""
     plot_mfgp_training_inputs(directory)
     directory = Path(directory)
+    from viz.zscore import gp_zscores, plot_zscores
+
+    pseudocount = json.loads((directory / "model.json").read_text())["config"]["raw_pseudocount"]
+    for path in sorted(directory.glob("evaluation_*.npz")):
+        with np.load(path) as a:
+            log_mode = str(a["output_transform"]) == "log"
+            plot_zscores(
+                gp_zscores(a, pseudocount), a["mean"], directory / f"{path.stem}_zscore",
+                title=f"{a['label']}: z = (observed − GP mean) / GP σ"
+                      + (" in log space" if log_mode else ""),
+                rate_label="GP predicted rate",
+            )
     for path in sorted(directory.glob("evaluation_*.npz")):
         with np.load(path) as a:
             obs, mean, sigma = a["observed"], a["mean"], a["sigma"]
