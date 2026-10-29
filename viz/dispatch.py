@@ -341,9 +341,13 @@ def plot_coverage_test(
 
     x = np.arange(len(y_predicted))
 
+    # Each trial's step is at least one dot wide: the band panel (~70 % of the figure
+    # width) grows with the number of trials.
+    dot_size = 14  # points^2
+    width = max(13.0, len(x) * np.sqrt(dot_size) / 72 / 0.70)  # inches
     fig, (ax_ts, ax_cal) = plt.subplots(
-        1, 2, figsize=(13, 5),
-        gridspec_kw={"width_ratios": [3, 1]},
+        1, 2, figsize=(width, 5),
+        gridspec_kw={"width_ratios": [3 * width / 13, 1]},
     )
 
     # ---- Left: step bands, flat over each trial; trials are independent, so no
@@ -355,7 +359,7 @@ def plot_coverage_test(
         )
     if show_predicted:
         ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
-    ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
+    ax_ts.scatter(x, y_raw, c="black", s=dot_size, alpha=0.85, label=raw_label, zorder=4)
     ax_ts.set_xlabel(xlabel)
     ax_ts.set_ylabel(ylabel)
     lo = min(-0.02, float(intervals[3][0].min()) - 0.02)
@@ -365,7 +369,8 @@ def plot_coverage_test(
         float(intervals[3][1].max()) + 0.02,
     )
     ax_ts.set_ylim(*(ylim if ylim is not None else (lo, hi)))
-    ax_ts.legend(loc="best", fontsize=9)
+    # Above the panel: with many trials no corner is free of points.
+    ax_ts.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=5, fontsize=9, frameon=False)
     ax_ts.grid(alpha=0.3)
 
     # ---- Right: calibration ----
