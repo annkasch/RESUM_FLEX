@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
 
+
 def gp_zscores(arrays, pseudocount):
     """z [B] of a saved GP evaluation (evaluation_<e>.npz) in the GP's own space.
 
