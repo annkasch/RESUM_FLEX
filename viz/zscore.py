@@ -62,16 +62,15 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
     means = np.array([z[b].mean() for b in bins])
     spreads = np.array([z[b].std(ddof=1) if len(b) > 1 else 0.0 for b in bins])
     errors = spreads / np.sqrt([len(b) for b in bins])
+    ax_rate.scatter(predicted, z, s=6, color="gray", alpha=0.4, label="voxels")
     ax_rate.errorbar(centers, means, yerr=errors, fmt="o", color="C3", capsize=3,
                      label="bin mean ± s.e. (ideal 0)")
     ax_rate.plot(centers, spreads, "s--", color="C0", label="bin std (ideal 1)")
     ax_rate.axhline(0, color="black", lw=1)
     for level in (-1, 1):
         ax_rate.axhline(level, color="black", lw=0.8, ls=":")
-    # Bin summaries only: single voxels with few hits fall on one curve per hit count.
     ax_rate.set(xlabel=rate_label, ylabel="z", title="z vs predicted rate (equal-count bins)",
-                ylim=(min(-2.0, float((means - errors).min()) - 0.5),
-                      max(2.0, float(spreads.max()) + 0.5)))
+                ylim=(-limit, limit))
     ax_rate.legend(fontsize=8)
     ax_rate.grid(alpha=0.2)
     fig.suptitle(title)
