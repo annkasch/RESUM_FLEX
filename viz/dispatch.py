@@ -291,12 +291,13 @@ def plot_coverage_test(
     interval_label: str = "σ",
     ylabel: str = "y",
     nominal_label: str = "target (Gaussian)",
+    show_predicted: bool = True,
 ) -> dict[str, float]:
     """Figure-5-style coverage diagnostic with a calibration sub-panel.
 
     Two-panel figure:
 
-    * **Left (time series)** — ``y_predicted`` as a line, ``±1/2/3 σ``
+    * **Left (time series)** — ``y_predicted`` as a line (``show_predicted``), ``±1/2/3 σ``
       shaded bands, ``y_raw`` overlaid as black dots. Trials are kept in
       their natural input order (no sorting), so the bands and dots jump
       around together — and the "are dots inside the bands?" question
@@ -360,7 +361,8 @@ def plot_coverage_test(
         color="#2ca02c", alpha=0.50,
         label=f"±1{interval_label} ({coverage['1sigma'] * 100:.0f}%)",
     )
-    ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
+    if show_predicted:
+        ax_ts.plot(x, y_predicted, color="C0", linewidth=1.5, label=predicted_label, zorder=3)
     ax_ts.scatter(x, y_raw, c="black", s=14, alpha=0.85, label=raw_label, zorder=4)
     ax_ts.set_xlabel(xlabel)
     ax_ts.set_ylabel(ylabel)

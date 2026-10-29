@@ -320,6 +320,7 @@ def plot_mfgp_run(directory):
                 ylim=(max(0, low - padding) if is_log else low - padding, high + padding),
                 intervals=intervals,
                 interval_label="σ in log space" if is_log else "σ",
+                show_predicted=False,  # the bands carry the mean; the line hid the points
             )
     with np.load(directory / "development_map.npz") as a:
         theta, mean = a["theta_physical"], a["mean"]

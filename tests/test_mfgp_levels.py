@@ -208,3 +208,23 @@ def test_projections_read_flexible_layout(tmp_path, monkeypatch):
     with np.load(out / "projections.npz") as a:
         np.testing.assert_array_equal(a["observed_train"], [0.0, 0.01])
         np.testing.assert_array_equal(a["observed_validation"], np.arange(6) / 100)
+
+
+@pytest.mark.parametrize("show", [True, False])
+def test_coverage_plot_can_hide_predicted_line(tmp_path, monkeypatch, show):
+    import matplotlib.axes
+
+    from viz.dispatch import plot_coverage_test
+
+    labels = []
+    original = matplotlib.axes.Axes.plot
+
+    def plot(self, *args, label=None, **kwargs):
+        labels.append(label)
+        return original(self, *args, label=label, **kwargs)
+
+    monkeypatch.setattr(matplotlib.axes.Axes, "plot", plot)
+    y = np.linspace(0.1, 0.2, 5)
+    plot_coverage_test(y, y, np.full(5, 0.01), out_path=tmp_path / "c.png", title="t",
+                       predicted_label="MFGP mean", show_predicted=show)
+    assert ("MFGP mean" in labels) == show
