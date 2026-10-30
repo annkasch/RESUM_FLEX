@@ -722,38 +722,11 @@ pytest tests/test_mfgp_recovery.py -v   # MFGP coverage gate, ~2 min
 * The reference paper for the RED problem formulation, CNP loss derivation,
   and MFGP / IVR details: [openreview lqTILjL6lP](https://openreview.net/pdf?id=lqTILjL6lP).
 
-## Optical map directly from simulation counts
-
-The binomial count GP (`core/count_gp_experiment.py`, schema `schemas/count_gp.py`) fits a
-shared spatial probability function to simulations with identical physics and different
-primary counts; no example config is kept. This separate
-workflow requires the `gp` and `optical-data` extras. It does not use a CNP.
-
-The input is the voxel center `(x, y, z)`; observations are integer hit-producing
-primary counts `m` and total primary counts `N`. The backend uses
-`m ~ Binomial(N, sigmoid(f(x)))`, a Matérn-5/2 (or RBF) GP plus a constant kernel,
-and Laplace inference. Kernel hyperparameters are optimized; their uncertainty
-is not integrated. Coordinate scaling uses training data only. LF/HF tags control
-splits and reporting, not separate latent functions.
-
-The default uses nonzero N1500 LF files and both zero/nonzero N5000 HF files, all LF voxels and
-10 HF voxels for training, and the remaining HF voxels for validation. The full
-primary budget enters the likelihood; no context events are removed. Nonzero-only
-selection can bias population inference: this is an ordinary binomial likelihood,
-not a likelihood conditioned on selecting nonzero files. The loader also supports
-zero-hit files if their folders are explicitly added later.
-
-The notebook prepares counts automatically, shows a data-count table, fits the GP,
-and saves a checkpoint, configuration, counts, metrics, mean/residual plots and
-exact-coordinate predictive coverage under `outputs/optical_binomial/<run>/`.
-Predictive intervals use latent logistic-GP draws followed by binomial counts with
-each validation voxel's own N. Set `RUN_TRAINING=False` to view saved results.
-The existing CNP/MFGP notebook remains a separate workflow.
+## GP validation and projections
 
 ### Default GP validation metrics
 
-Count-GP and MFGP experiments write a shared set of original-scale, equally
-weighted per-voxel scores to their `metrics.json`: mean bias (predicted minus
+MFGP runs write original-scale, equally weighted per-voxel scores to `metrics.json`: mean bias (predicted minus
 observed), MAE, RMSE, Pearson/Spearman correlations, descriptive calibration
 intercept/slope, CRPS, and weighted interval score. `interval_metrics` contains
 nominal probability, inside/total counts, measured coverage, mean width and
@@ -762,10 +735,8 @@ median, not the mean. Undefined correlations are JSON null. Existing coverage
 keys remain compatible. The low-level MFGP coverage evaluator returns these
 scores under `metrics` as well.
 
-Likelihood scores describe their measure explicitly: the count GP evaluates
-binomial count mass integrated by Monte Carlo over latent probability; MFGP
-uses its Gaussian/lognormal predictive density in response units. These NLLs
-must not be ranked against each other directly. A lognormal model assigns zero
+The MFGP NLL is a Gaussian/lognormal predictive density in response units; it must not
+be ranked against a count-probability NLL. A lognormal model assigns zero
 probability to a zero observation; its nonfinite NLL is saved as null with an
 explanation rather than silently clipping the observation. Predictive sampling
 uses a fixed seed, and the method/draw count are recorded.
@@ -780,12 +751,8 @@ physical evaluation design; no volume weighting is inferred from sparse points.
 `core/spatial_projections.py` implements the integration grid, physical-volume
 averages, individual-voxel mixtures, and all x/y/z and xy/xz/yz projections.
 `viz/spatial_projections.py` renders the common artifact format. The old MFGP
-entry points and `MFGPProjectionConfig` remain compatible aliases/wrappers.
-Both approaches use `schemas.projections.ProjectionConfig`.
-
-The notebooks display only the configured projection figures. Set `RUN_TRAINING=False`
-to project a saved run without fitting; YAML `projections.enabled` controls this
-step. Saved outputs are `projections/` (latent mean) and
+entry points and `MFGPProjectionConfig` remain compatible aliases/wrappers of
+`schemas.projections.ProjectionConfig`. YAML `projections.enabled` controls this step. Saved outputs are `projections/` (latent mean) and
 `projections_observed_fraction/` (individual observations), each with curves,
 planes, NPZ arrays and metadata. Predictive projections have validation inclusion
 counters. They use the saved HF budget when unique; mixed budgets require an
@@ -806,7 +773,7 @@ from core.projection_adapters import projection_adapter, BinomialObservation
 from core.spatial_projections import project_response
 from schemas.projections import ProjectionConfig
 
-adapter = projection_adapter("binomial_laplace", fitted_gp)
+adapter = projection_adapter("mfgp", fitted_mfgp)
 settings = ProjectionConfig(quantity="observed_fraction", target_events=5000)
 arrays, metadata = project_response(
     adapter, physical_training_centers, settings,
@@ -817,14 +784,13 @@ arrays, metadata = project_response(
 For `latent_mean`, omit the observation model: each joint response draw is
 averaged before its quantiles are computed. For `observed_fraction`, the engine
 retains omitted-coordinate variation and applies a separate observation model.
-Neither built-in adapter includes learned Gaussian observation noise. Invalid
+The MFGP adapter does not include learned Gaussian observation noise. Invalid
 binomial probabilities fail rather than being clipped. Uniform midpoint-cell
 weights and dense joint covariance are currently used; grid size is capped to
 control memory. To compare models, use the same explicit physical box, grid,
 weights, and counting budget. Training convex hulls can differ between datasets.
 
-Projection figure selection is controlled by `projections.plots` (count GP) or
-`mfgp.projections.plots` (RESuM). The default, when omitted, is:
+Projection figure selection is controlled by `mfgp.projections.plots`. The default, when omitted, is:
 
 ```yaml
 plots: [projected_axes, projected_planes]
@@ -833,8 +799,8 @@ plots: [projected_axes, projected_planes]
 These are the axis and plane predictions with observed data and coverage counters.
 Add `marginalized_axes` and/or `marginalized_planes` for spatially averaged
 probabilities. Any subset and order is supported; `plots: []` selects none.
-`enabled: false` disables the whole step. Both notebooks and experiment runners
-use `ensure_selected_projections`; it computes only requested quantities and
+`enabled: false` disables the whole step. The GP runner uses
+`ensure_selected_projections`; it computes only requested quantities and
 renders only requested figures. Existing unselected files are retained but not
 displayed. The `quantity` field is retained for low-level, single-quantity calls;
 the high-level runner derives quantity from `plots`.

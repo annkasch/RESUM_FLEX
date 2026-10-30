@@ -53,7 +53,7 @@ class PreparedOpticalData:
 
 
 def load_prepared_batch(path: str | Path) -> StandardBatch:
-    """Batch saved as .npz (budget-transfer test sets, older prepared data)."""
+    """Batch saved as .npz (older prepared data)."""
     with np.load(path, allow_pickle=False) as arrays:
         return StandardBatch(
             mode=InputMode(str(arrays["mode"].item())),
@@ -115,12 +115,9 @@ def fit_normalization(runs, config: OpticalDataConfig) -> dict:
 
 
 def prepare_optical_data(
-    config: OpticalDataConfig, *, update_manifest=False, workers: int | None = None, extra=()
+    config: OpticalDataConfig, *, update_manifest=False, workers: int | None = None
 ) -> PreparedOpticalData:
     """Cache new or changed inputs, assign partitions, fit normalization and write the view.
-
-    extra: (partition, CachedRun) pairs added to the view without entering the split or the
-    normalization (independent test files of the budget transfer).
 
     Writes view.npy/view.json (see data.optical_view), metadata.json, normalization.json,
     config.json, source_stamp.json, manifest_snapshot.json and reports/ to
@@ -154,7 +151,7 @@ def prepare_optical_data(
     normalization = fit_normalization(training, config)
     partitions = partition_names(config)
     features = feature_info(config)
-    entries = [(assignments[r.file], r) for r in runs] + list(extra)
+    entries = [(assignments[r.file], r) for r in runs]
     metadata = {}
     for split in partitions:
         metadata[split] = {}

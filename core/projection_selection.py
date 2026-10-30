@@ -20,9 +20,7 @@ def ensure_selected_projections(directory, settings, *, backend):
     """Generate selected quantities only and return ordered PNG paths for display."""
     if not settings.enabled or not settings.plots:
         return []
-    if backend == "binomial_laplace":
-        from core.count_gp_projections import ensure_count_gp_projections as ensure
-    elif backend == "mfgp":
+    if backend == "mfgp":
         from core.mfgp_projections import ensure_mfgp_projections as ensure
     else:
         raise ValueError(f"Unsupported saved-run projection backend: {backend}")

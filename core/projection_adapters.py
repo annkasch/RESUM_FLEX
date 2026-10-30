@@ -114,19 +114,7 @@ class MFGPProjectionAdapter:
         return response
 
 
-class BinomialGPProjectionAdapter:
-    def __init__(self, model):
-        self.model = model
-
-    def prepare(self, coordinates):
-        # This backend owns its physical-coordinate normalization.
-        mean, covariance = self.model.predict_latent(coordinates, full_cov=True)
-        response = GaussianResponse(mean, covariance, "logit")
-        response.metadata.update(backend="binomial_laplace")
-        return response
-
-
-_ADAPTERS = {"mfgp": MFGPProjectionAdapter, "binomial_laplace": BinomialGPProjectionAdapter}
+_ADAPTERS = {"mfgp": MFGPProjectionAdapter}
 
 
 def register_projection_adapter(name, factory):

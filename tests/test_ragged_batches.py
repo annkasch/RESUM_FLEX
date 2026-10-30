@@ -257,14 +257,3 @@ def test_mfgp_stage_uses_per_voxel_target_counts(tmp_path, transform):
     if transform == "log":
         with np.load(out / "mfgp/fit_arrays.npz") as fit:
             np.testing.assert_allclose(fit["Y_2"].ravel(), (raw * COUNTS + 0.5) / (COUNTS + 1))
-
-
-def test_rectangular_only_helpers_reject_ragged_batches():
-    from core.cnp_validation import evaluate_cnp_validation
-    from core.surrogate_cnp import build_cnp
-    from schemas.config import EncoderConfig
-
-    source, b = ragged()
-    cnp = build_cnp(EncoderConfig(latent_dim=4, hidden_dims=[8]), source.dim_theta, source.dim_phi)
-    with pytest.raises(ValueError, match="equal event counts"):
-        evaluate_cnp_validation(cnp, b, n_context=4, n_mc_samples=2)

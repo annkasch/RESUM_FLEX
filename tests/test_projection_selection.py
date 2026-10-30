@@ -13,9 +13,9 @@ def test_defaults_generate_only_requested_predictive_figures(monkeypatch):
         calls.append((settings.quantity, selected_figures(settings)))
         return Path(directory) / settings.quantity
 
-    monkeypatch.setattr("core.count_gp_projections.ensure_count_gp_projections", ensure)
+    monkeypatch.setattr("core.mfgp_projections.ensure_mfgp_projections", ensure)
     settings = ProjectionConfig(enabled=True)
-    paths = ensure_selected_projections("/tmp/run", settings, backend="binomial_laplace")
+    paths = ensure_selected_projections("/tmp/run", settings, backend="mfgp")
     assert calls == [("observed_fraction", ["curves_observed", "planes_observed"])]
     assert [p.name for p in paths] == ["curves_observed.png", "planes_observed.png"]
 

@@ -408,7 +408,6 @@ GP: configurable levels"). It requires the GP dependencies. Large datasets: a le
 `max_voxels` fits the exact GP on a seeded subset of its partition (`index_k` in
 `training_arrays.npz`; one stream per partition/fidelity in order of appearance). Evaluation
 sets and the development map use every voxel, and event-model training is not subsampled.
-The count GP has the same option as `backend.max_training_voxels` (`training_voxel_subset.npy`).
 Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
 validation MAE. The current optical test sets `lf_validation: false`: it uses
 the final CNP checkpoint after all configured steps, without selecting on HF.
@@ -464,8 +463,7 @@ prepared datasets and checkpoints are unaffected.
   constant noise per level, so voxels with smaller N are noisier than the model
   assumes (see `docs/stats_review.md`, finding 3). Observed-fraction projections
   need an explicit `projections.target_events` when validation counts differ.
-- The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`,
-  `evaluate_cnp_validation`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
+- The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
   dataset helpers reject unequal counts with an error; use `core.surrogates`.
 
 ## Data preparation and repository layout
