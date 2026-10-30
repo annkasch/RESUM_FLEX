@@ -74,6 +74,7 @@ See `core/surrogates/datasets.py`.
 
 ## Documentation
 
-- [docs/surrogates.md](docs/surrogates.md): configs, validation metrics, GP levels, outputs
+- [docs/configs.md](docs/configs.md): every config setting with its default
+- [docs/surrogates.md](docs/surrogates.md): validation metrics, GP levels, outputs, background
 - [docs/reference.md](docs/reference.md): install details, data contracts, Python API
 - `scripts/phase*.py`: end-to-end demonstrations on synthetic data

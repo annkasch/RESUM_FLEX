@@ -262,3 +262,27 @@ def test_retired_or_unknown_config_fields_are_rejected() -> None:
         MFGPConfig(n_fidelities=3)  # levels are set per GP, not here
     with pytest.raises(ValidationError):
         CNPConfig(n_context_min=1, n_context_max=2, objective="unknown")
+
+
+def test_every_config_field_is_documented():
+    from pathlib import Path
+
+    from schemas import surrogates as s
+    from schemas.bdt import BDTConfig
+    from schemas.tabular_transformer import TabularTransformerConfig
+
+    text = (Path(__file__).resolve().parents[1] / "docs/configs.md").read_text()
+    models = [
+        s.SurrogateRunConfig, s.NeuralTraining, s.SamplingConfig, s.MixupConfig,
+        s.WeightingConfig, s.RealPlusMixupObjective, s.RandomContext, s.FixedContext,
+        s.LastLayerFineTuning, s.TrainingStage, s.MLPArchitecture, BDTConfig,
+        TabularTransformerConfig, s.MFGPRunConfig, s.ModelMeanLevel, s.ObservedFractionLevel,
+        s.GPEvaluation,
+    ]
+    missing = sorted(
+        f"{m.__name__}.{name}"
+        for m in models
+        for name in m.model_fields
+        if f"`{name}`" not in text and name not in ("kind", "size", "strategy")
+    )
+    assert not missing, f"Document these config fields in docs/configs.md: {missing}"
