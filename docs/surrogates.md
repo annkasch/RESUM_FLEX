@@ -456,7 +456,7 @@ prepared datasets and checkpoints are unaffected.
 - **MFGP**: `training_arrays.npz` stores `events_k` per voxel of level k, and log
   smoothing `(m + a)/(N + 2a)` uses each voxel's own N. The GP still has one
   constant noise per level, so voxels with smaller N are noisier than the model
-  assumes (see `docs/stats_review.md`, finding 3). Observed-fraction projections
+  assumes. Observed-fraction projections
   need an explicit `projections.target_events` when validation counts differ.
 - The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
   dataset helpers reject unequal counts with an error; use `core.surrogates`.
