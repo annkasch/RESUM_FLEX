@@ -73,9 +73,9 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     if fine_tuned:
         from core.mfgp_pipeline import model_mean
         from core.surrogates.checkpoints import load_surrogate
-        from data.optical_pipeline import load_prepared_batch
-        lf = load_prepared_batch(root / "batches/train/lf.npz")
-        hf = load_prepared_batch(root / "batches/train/hf.npz")
+        from core.surrogates.datasets import NpzBatches
+        lf = NpzBatches(root).load("train", "lf")[0]
+        hf = NpzBatches(root).load("train", "hf")[0]
         seed = config.mfgp.seed
 
         def means(checkpoint, batch, stream):

@@ -7,19 +7,18 @@ See [the component API and migration guide](docs/surrogates.md).
 ```bash
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 # 1. Train an event model (data preparation runs automatically from data_config)
-.venv/bin/python -m core.surrogates train config.optical.centered.mlp.yaml
-# 2. Mean predicted p per unlabeled voxel (context-free models)
-.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
+.venv/bin/python -m core.surrogates train TRAINING.yaml
+# 2. Mean predicted p per voxel of a partition (context-free models; labels not needed)
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 # 3. Fit the multi-fidelity GP on its configured levels
-.venv/bin/python -m core.surrogates mfgp config.optical.centered.mfgp.yaml
+.venv/bin/python -m core.surrogates mfgp GP.yaml
 ```
 
-On Perlmutter submit each step with
-`sbatch scripts/slurm/train_surrogate.sbatch CONFIG.yaml [train|mfgp]`.
-
-The maintained configs are `config.optical.centered.*.yaml` (Ian Wang's centered box:
-event models on LF, MLP mean → HF observed fraction GP). See
-[data preparation, validation metrics and the GP levels](docs/surrogates.md).
+RESUM_FLEX is application-independent: runs read data through a dataset provider named in
+the config (`data_provider: package.module:Class`; default `.npz` batches). See
+[datasets, validation metrics and the GP levels](docs/surrogates.md). The LEGEND LAr
+optical map, with its LH5 data handling, configs and Slurm scripts, lives in
+[legend-optical-map-ml](https://github.com/annkasch/legend-optical-map-ml).
 
 # RESUM_FLEX
 
@@ -175,7 +174,6 @@ RESUM_FLEX/
 ├── scripts/           runnable end-to-end demonstrations on synthetic data
 │   ├── phase{1..5}_*.py
 ├── tests/             pytest (no real-data fixtures; everything synthetic)
-├── config.optical.centered.*.yaml  data, event-model and GP configs (centered dataset)
 ├── pyproject.toml     canonical Python deps + uv compatibility groups
 ├── uv.lock            cross-platform Python dependency lock (managed by uv)
 ├── pixi.toml          outer tool/task manifest (Python deps are not repeated)
@@ -278,7 +276,7 @@ Run configurations are YAML files validated by `schemas/surrogates.py`
 
 ```python
 from schemas.surrogates import load_surrogate_config
-cfg = load_surrogate_config("config.optical.centered.cnp.yaml")
+cfg = load_surrogate_config("TRAINING.yaml")
 print(cfg.training.learning_rate)
 ```
 
@@ -302,7 +300,7 @@ Validate updates through the shared training schema:
 
 ```python
 from schemas.surrogates import NeuralTraining
-cfg = load_surrogate_config("config.optical.centered.cnp.yaml")
+cfg = load_surrogate_config("TRAINING.yaml")
 custom_train = NeuralTraining.model_validate({
     **cfg.training.model_dump(), "n_steps": 3000, "learning_rate": 5e-4,
 })

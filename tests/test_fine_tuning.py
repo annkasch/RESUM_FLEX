@@ -86,8 +86,8 @@ def test_frozen_dropout_features_are_deterministic(tmp_path):
 
 @pytest.mark.parametrize("unblind", [False, True])
 def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch, unblind):
+    from core.surrogates.datasets import NpzBatches
     from core.surrogates.models import NeuralSurrogate
-    from data import optical_pipeline
 
     source = for_scenario("S1", seed=0)
     root = tmp_path / "data"
@@ -104,7 +104,7 @@ def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch, unblind):
             labels=batch.labels,
         )
     fitted = False
-    original_fit, original_load = NeuralSurrogate.fit, optical_pipeline.load_prepared_batch
+    original_fit, original_load = NeuralSurrogate.fit, NpzBatches.load
 
     def fit(*args, **kwargs):
         nonlocal fitted
@@ -112,13 +112,13 @@ def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch, unblind):
         fitted = True
         return result
 
-    def load(path):
-        if "/test/" in str(path):
+    def load(self, partition, fidelity, **kwargs):
+        if partition == "test":
             assert fitted and unblind, "blinded test data must never be read"
-        return original_load(path)
+        return original_load(self, partition, fidelity, **kwargs)
 
     monkeypatch.setattr(NeuralSurrogate, "fit", fit)
-    monkeypatch.setattr(optical_pipeline, "load_prepared_batch", load)
+    monkeypatch.setattr(NpzBatches, "load", load)
     out = run_experiment(
         SurrogateRunConfig(
             model=spec("cnp"),

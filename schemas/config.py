@@ -14,8 +14,6 @@ from typing import Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from schemas.optical import OpticalDataConfig
-
 
 class StrictConfigModel(BaseModel):
     """Reject misspelled or retired settings instead of ignoring them."""
@@ -94,7 +92,6 @@ class ScenarioThresholds(StrictConfigModel):
 
 
 class Config(StrictConfigModel):
-    data: OpticalDataConfig | None = None
     seed: int = 42
     encoder: EncoderConfig
     cnp: CNPConfig

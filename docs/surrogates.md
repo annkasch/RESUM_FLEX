@@ -53,19 +53,17 @@ each BDT fit resets the estimator. This is not optimizer-state resume support.
 ```bash
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 # 1. Train an event model (data preparation runs automatically from data_config)
-.venv/bin/python -m core.surrogates train config.optical.centered.mlp.yaml
-# 2. Mean predicted p per unlabeled voxel (context-free models)
-.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
+.venv/bin/python -m core.surrogates train TRAINING.yaml
+# 2. Mean predicted p per voxel of a partition (context-free models; labels not needed)
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 # 3. Fit the multi-fidelity GP on its configured levels
-.venv/bin/python -m core.surrogates mfgp config.optical.centered.mfgp.yaml
+.venv/bin/python -m core.surrogates mfgp GP.yaml
 ```
 
-On Perlmutter submit each step with
-`sbatch scripts/slurm/train_surrogate.sbatch CONFIG.yaml [train|mfgp]`.
-
-The configs for the centered dataset (`config.optical.centered.*.yaml`) are the
-maintained examples: `cnp.data` prepares the data, `cnp`/`mlp`/`cnp.mixup` train event
-models, `mfgp`/`mfgp.log` fit the GP. Change model and training settings using the API
+Data come from a dataset provider (see "Datasets and providers"). Maintained example
+configs for a real application live in
+[legend-optical-map-ml](https://github.com/annkasch/legend-optical-map-ml) (`configs/`).
+Change model and training settings using the API
 options below; BDT fits natural events. `selection` picks the checkpoint metric
 (`bernoulli_log_loss` for natural-event runs, `average_precision` for mixup ablations).
 Change `output_directory` for every new run: existing nonempty runs are never
@@ -349,7 +347,7 @@ To try this objective, set `training.objective` in a training config as above.
 
 ## Legacy two-output CNP
 
-The optical configs use the single-logit `cnp` since 2026-10-02. Under
+Prefer the single-logit `cnp`. Under
 `theory-truth` the two outputs only enter through one effective logit
 `mu_logit / d(sigma)`, so the second channel adds no representable predictions
 and is not identified by binary labels. `legacy_cnp` is kept to reproduce the
@@ -409,9 +407,8 @@ GP: configurable levels"). It requires the GP dependencies. Large datasets: a le
 `training_arrays.npz`; one stream per partition/fidelity in order of appearance). Evaluation
 sets and the development map use every voxel, and event-model training is not subsampled.
 Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
-validation MAE. The current optical test sets `lf_validation: false`: it uses
-the final CNP checkpoint after all configured steps, without selecting on HF.
-LF validation files and diagnostics are skipped; LF training PR and training
+validation. With `lf_validation: false` the run uses the final checkpoint after all
+configured steps, without selecting on HF. LF validation files and diagnostics are skipped; LF training PR and training
 loss history remain available. MFGP hyperparameters use training arrays only.
 HF validation is used for reporting; no test files are loaded.
 
@@ -466,196 +463,50 @@ prepared datasets and checkpoints are unaffected.
 - The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
   dataset helpers reject unequal counts with an error; use `core.surrogates`.
 
-## Data preparation and repository layout
+## Datasets and providers
 
-The current workflow uses library components and the shared CLI. The temporary
-BDT/MLP/transformer/mixup experiment scripts and notebooks have been removed.
-Original synthetic examples under `scripts/phase*` and the original repository
-notebooks remain unchanged.
-
-Prepare optical data using the integrated library, after installing the
-`optical-data` extra and setting the input folders in a data config:
-
-```python
-from schemas.optical import load_optical_config
-from data import prepare_optical_data
-
-config = load_optical_config("config.optical.centered.cnp.data.yaml")
-prepared = prepare_optical_data(config)
-```
-
-This caches new or changed LH5 files (see "Shared event cache"), assigns the split, fits
-normalization and saves a small view plus split metadata; it does not run model training.
-Training and GP configs point at the prepared directory (`data_directory`) and, with
-`data_config`, regenerate it when the data config or raw files change.
-Choose a new output directory for each training run.
-
-## Role sources (event models and GP)
-
-`source.sources` lists folders (`fidelity: lf` by default, or `hf`) and how each folder's
-voxels are divided among the roles `cnp_train`, `cnp_validation`, `cnp_test` (event models),
-`gp_train`, `gp_unlabeled` (inputs only), `gp_validation` and `gp_test` (GP). Each folder
-gives either `fractions` (sum to 1, rounded per folder) or `counts` (file counts; one role may
-take `rest`). Roles left out get no files, so an already split folder is a single role at 1.0:
+Training, inference and the GP stage read data only through a dataset provider
+(`core/surrogates/datasets.py`). A run config names it by import path; without one,
+`NpzBatches` reads `batches/<partition>/<fidelity>.npz` (synthetic data, tests):
 
 ```yaml
-source:
-  sources:
-  - path: /data/lower_cyl/lf
-    fractions: {cnp_train: 0.6, cnp_validation: 0.1, cnp_test: 0.0, gp_train: 0.3}
-  - path: /data/lf_batch2
-    counts: {cnp_train: 5000, cnp_validation: 1000, gp_train: rest}
-  - path: /data/lf_val_only
-    fractions: {cnp_validation: 1.0}
-  - path: /data/hf
-    fidelity: hf
-    fractions: {gp_train: 1.0}
-split:
-  seed: 42
-  manifest: outputs/my_data/splits/voxel_split.json
+data_directory: outputs/my_prepared_data
+data_provider: my_package.provider:MyDataset    # constructed as MyDataset(data_directory)
+data_config: my_data.yaml                        # optional: provider.prepare() rebuilds if outdated
+partitions: {train: train, validation: validation, test: test}   # provider partition names
 ```
 
-Splitting keeps whole voxels together and is seeded per folder; the global split fractions
-are rejected in this layout. A voxel position shared by different roles is an error, except
-between `gp_train` and `gp_unlabeled` (nested multi-fidelity design: HF voxels at positions of
-LF inputs). Normalization is fitted on `cnp_train` and applied to every role and fidelity.
-`python -m core.surrogates train` reads `cnp_train`, `cnp_validation` (with
-`lf_validation: true`) and `cnp_test` (with `test_fidelities: [lf]` and `unblind_test`). Set
-`hf_validation: false`; the HF roles are GP levels and evaluation sets (`mfgp` levels name the
-role partitions directly, e.g. `gp_train`/`hf`).
+A provider implements `partitions()`, `load(partition, fidelity, labels=True)` returning
+`(StandardBatch, provenance)` (with `labels=False` also for inputs without outcomes; the
+labels are then a zero placeholder that is never scored), `theta(partition, fidelity)`
+returning normalized theta and voxel ids, `coordinates(partition, fidelity)` and
+`normalization()`. Optionally a classmethod `prepare(data_config, data_directory)` rebuilds
+the prepared data and returns a record that the run stores in `experiment.json`. GP levels
+and evaluation sets name provider partitions directly. The LEGEND LAr optical map is such
+an application: https://github.com/annkasch/legend-optical-map-ml.
 
-Two settings in the training config make large validation sets cheap.
-`selection_max_voxels: N` selects checkpoints during training on a seeded subset of at most N
-LF validation voxels (seed `validation_seed`); the full validation and test sets are still
-evaluated once after training. `evaluation_threads: N` runs evaluation passes with N torch CPU
-threads and restores the training thread count afterwards; results are identical. Measured:
-2.65 ms per 1000-event voxel on 1 thread, 0.9 ms on 16.
+Two settings make large validation sets cheap. `selection_max_voxels: N` selects
+checkpoints during training on a seeded subset of at most N validation voxels; the full
+validation and test sets are still evaluated once after training. `evaluation_threads: N`
+runs evaluation passes with N torch CPU threads; results are identical.
 
-Set `data_config: <data YAML>` in the training config to keep the prepared data in sync.
-Each `core.surrogates train` run then compares the data YAML with `config.json`, which only
-preparation writes, and the raw files with `source_stamp.json` (path, size and modification
-time of every file). If both match, the raw files are not read. Otherwise the run checks file
-contents and regenerates the prepared data if anything differs, before training starts.
-The data YAML's `output_directory` must be the training `data_directory`. Whether data was
-regenerated is recorded in the run's `experiment.json`.
-
-## Unlabeled inputs and context-free inference
-
-Simulations without optical output (vertex and momentum only, e.g. `LF_primaries`) go into
-the role `gp_unlabeled`. The event cache stores them with `labeled = False`; reading their
-labels or hits raises, and preparation fails if such a file lands in a labeled role. Their
-partition loads only through `OpticalView(dir).load_inputs(partition, fidelity)`, whose
-labels are a zero placeholder for the `StandardBatch` contract and must never be scored.
+## Context-free inference
 
 ```bash
-.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled --threads 8
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION --threads 8
 ```
 
-writes `RUN/inference/best/gp_unlabeled_lf.{npz,json}`: per voxel the file, nominal
-center, normalized theta, event count and `mean_probability` (mean predicted p over the
-voxel's events), plus provenance. Only context-free models (mlp, transformer, bdt) are
-accepted, and the view normalization must equal the checkpoint's. Results are never
+writes `RUN/inference/best/<partition>_<fidelity>.{npz,json}`: per voxel the provider's voxel
+id and coordinates, normalized theta, event count and `mean_probability` (mean predicted p
+over the voxel's events), plus provenance. It uses the provider the checkpoint was trained
+with (`--data-provider` overrides it). Only context-free models (mlp, transformer, bdt) are
+accepted, and the provider normalization must equal the checkpoint's. Results are never
 overwritten. Use voxels the model was not trained on, so no labels can be memorized.
-
-## Shared event cache
-
-Raw LH5 files are read once into a cache shared by all data configs: by default
-`<output_directory parent>/event_cache`, or `cache_directory` in the data YAML. Per file it
-keeps a float32 copy of each event's vertex and momentum (`[n, 6]`), the any-channel label,
-and one hit-list row per (event, detector) with the number of hits. Coordinates and other
-features are computed when a partition is loaded (about 0.2 µs per event), so changing feature
-settings never rewrites the cache.
-
-- `index.npy` has one row per file: folder, name, size, mtime, sha256, voxel centers, event
-  and hit counts, and the largest `n_part`. `cache.json` lists the folders and shards.
-- Each update reads only new or changed files (by size and mtime). Worker processes, one per
-  available CPU, each read a share of the files and write one shard. A changed file goes into
-  a new shard and its old row is marked invalid.
-- `python -m data.event_cache update DATA.yaml [--workers N]` fills the cache without preparing
-  (run it on a compute node for large inputs). `python -m data.event_cache compact CACHE_DIR`
-  merges the shards of many small updates and drops invalid rows.
-- One writer at a time: updates take a `.lock` directory. If a writer crashed, remove the lock
-  by hand.
-
-A prepared dataset is a view on the cache: `view.npy` lists each file's partition, fidelity,
-path and sha256, and `view.json` stores the cache directory, data config and normalization.
-`load_partition(directory, partition, fidelity)` (in `data.optical_pipeline`) builds the
-normalized `StandardBatch` (phi in float32) and returns its provenance: a sha256 over the
-selected files' contents and `view.json`. Loading checks that the cache still holds the same
-file contents. Normalization is fitted with streaming moments over the training files, so
-the training events never need to be in memory at once.
-
-## Multiple raw input folders
-
-A data config can list several folders per
-fidelity under `source.directories.lf` and `source.directories.hf`. Each folder
-must directly contain `.stp.lh5` files; fidelity comes from the configuration,
-so folder names need not be `lf` or `hf`. For example:
-
-```yaml
-source:
-  directories:
-    lf: [/path/to/lf1500_part1, /path/to/lf1500_part2]
-    hf: [/path/to/hf_part1, /path/to/hf_part2]
-```
-
-The previous `source.directory` form (one root containing `lf/` and `hf/`)
-remains supported. Specify one form only. Relative paths are resolved against
-the preparation YAML. Repeated references/symlinks to the same physical file
-are loaded once. Different files with the same fidelity and basename, and the
-same physical file assigned to both fidelities, are rejected as ambiguous.
-Splitting and training-only normalization happen after collecting all folders.
-Event counts may differ between voxels (see "Unequal event counts per voxel");
-mixing primary budgets within LF remains a separate, retired modeling choice.
-
-## Automatic preparation
-
-A training or GP config with `data_config` calls `ensure_prepared_optical_data` before
-loading data. The data config's output directory must equal `data_directory`. The helper checks raw-file fingerprints,
-configuration, manifest, and the view; a missing or outdated view and normalization
-are rebuilt, reading only files missing from the event cache. Unchanged valid inputs are reused. Changes
-in source membership, file contents, or configuration automatically update the
-manifest. Compatible existing assignments are retained; explicit split policies
-take precedence. Invalid inputs and conflicting voxel groups still raise errors.
-
-Preparation matches `stp/optical/evtid` to `vtx/evtid`, making one binary target
-per simulated event: one if any configured detector recorded a hit, zero otherwise.
-Multiple recorded hits for an event count once. This is an observed simulation
-outcome, not a model-assigned label. Current selected inputs all have one primary
-per event (`vtx/n_part == 1`). Theta is the filename center; phi contains vertex
-offsets from that center and momentum components. Standardization is fitted on
-training files only, then applied to both training and validation. Prepared
-arrays, normalization, source fingerprints, split metadata and reports are saved.
-
-
-## Folder names describe simulation statistics
-
-The canonical input layout under
-`/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/by_primaries/` is:
-
-```text
-N500/    nonzero/    zero/
-N750/    nonzero/    zero/
-N1000/   nonzero/    zero/
-N1500/   nonzero/    zero/
-N5000/   nonzero/    zero/
-```
-
-`N` denotes simulated primary count. Each category contains symlinks to the
-original `.stp.lh5` files. Counts (nonzero / zero) are 38/47, 157/70, 146/78,
-159/65 and 56/9 respectively. The root manifest records every source and excludes
-eight failed one-primary simulations. Original source folders are preserved.
-
-Folders have no inherent LF/HF role: `source.directories` assigns that role when
-preparing a dataset. To include zero-hit voxels, list the matching `zero` folder too. Preparation accepts unequal
-event counts per voxel; this layout does not by itself reintroduce training pooled
-across different LF primary counts.
 
 ### Log-space MFGP
 
 `mfgp.output_transform: log` fits all three GP levels to natural logarithms;
 `identity` remains the shared API default and reproduces linear-space behavior.
-The optical configuration enables `log`. No CNP retraining behavior changes.
 Observed-fraction levels use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and each voxel's
 event count. This Beta(1/2,1/2) posterior-mean
 smoothing applies to all HF raw training fractions, including zeros. CNP means
@@ -676,13 +527,13 @@ cannot cover a zero observed fraction: this diagnostic is not a binomial
 posterior-predictive count interval. Lognormal predictions can exceed one.
 Observation noise is learned in log space and is not CNP uncertainty.
 Active-learning acquisition/refitting currently requires identity mode; the
-offline optical-map training and prediction workflow supports both transforms.
+offline training and prediction workflow supports both transforms.
 
 ### Spatial posterior marginalizations
 
 `mfgp.projections.enabled: true` adds highest-fidelity spatial projections after
-GP fitting. The optical notebook also generates them from an existing saved
-model, without retraining or loading current raw data. The implementation follows
+GP fitting; `ensure_selected_projections` also generates them from an existing saved
+model, without retraining or loading raw data. The implementation follows
 [RESOLVE's posterior-draw averaging recipe](https://github.com/annkasch/resolve/blob/4219c8c101d30acc38401465c5dc17ba88dcce1a/resolve/regression_models/bayes_pce_multi_fidelity_visualizer.py#L164),
 not its single-prediction bin-percentile method, whose spread describes spatial
 variation rather than uncertainty in a population average.
@@ -743,8 +594,7 @@ coverage test. Three-sigma tail quantiles are Monte Carlo estimates, not exact.
 
 ### Predictive projections for observed voxel fractions (projection 3)
 
-The optical config now selects `mfgp.projections.quantity: observed_fraction`.
-`latent_mean` remains available for uncertainty in spatial averages. Predictive
+`mfgp.projections.quantity: observed_fraction` selects this mode; `latent_mean` remains available for uncertainty in spatial averages. Predictive
 projections retain variation between locations: for each posterior draw and each
 retained coordinate bin, uniformly select a valid grid location in the omitted
 coordinates, then use a binomial count with its latent probability. The resulting
@@ -752,11 +602,8 @@ coordinates, then use a binomial count with its latent probability. The resultin
 spatial averaging occurs before these quantiles. The central curve remains the
 population mean. Both 1D and plane projections support this mode.
 
-`target_events: null` (default) recovers N from the saved HF validation artifact.
-New runs store it explicitly. For older runs, recovery uses the fingerprint-checked
-prepared validation batch and saved context count, or requires an explicit
-`target_events` override if those inputs are unavailable. Current optical settings
-use 5000 - 64 = 4936, not 5000. A different N describes a different simulation
+`target_events: null` (default) recovers N from the saved evaluation set when all its
+voxels have the same event count; otherwise set it explicitly. A different N describes a different simulation
 budget and should not be interpreted as matched to the overlaid measurements.
 
 Only latent GP uncertainty is sampled; fitted Gaussian observation noise is not
