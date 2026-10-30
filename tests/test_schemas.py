@@ -264,13 +264,18 @@ def test_retired_or_unknown_config_fields_are_rejected() -> None:
         CNPConfig(n_context_min=1, n_context_max=2, objective="unknown")
 
 
-def test_optical_configs_use_single_logit_cnp():
+def test_repository_configs_load():
     from pathlib import Path
 
-    from schemas.surrogates import load_surrogate_config
+    from schemas.optical import load_optical_config
+    from schemas.surrogates import load_mfgp_config, load_surrogate_config
 
     root = Path(__file__).resolve().parents[1]
-    for name in ("config.optical.resum.yaml", "config.optical.fine_tuning.yaml"):
-        config = load_surrogate_config(root / name)
-        assert config.model.kind == "cnp"
-        assert config.training.loss == "bernoulli"
+    load_optical_config(root / "config.optical.centered.cnp.data.yaml")
+    kinds = {
+        name: load_surrogate_config(root / f"config.optical.centered.{name}.yaml").model.kind
+        for name in ("cnp", "cnp.mixup", "mlp")
+    }
+    assert kinds == {"cnp": "cnp", "cnp.mixup": "cnp", "mlp": "mlp"}
+    for name in ("mfgp", "mfgp.log"):
+        assert len(load_mfgp_config(root / f"config.optical.centered.{name}.yaml").levels) == 2

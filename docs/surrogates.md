@@ -51,15 +51,25 @@ each BDT fit resets the estimator. This is not optimizer-state resume support.
 ## One experiment entry point
 
 ```bash
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  .venv/bin/python -m core.surrogates train config.optical.resum.yaml
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+# 1. Train an event model (data preparation runs automatically from data_config)
+.venv/bin/python -m core.surrogates train config.optical.centered.mlp.yaml
+# 2. Mean predicted p per unlabeled voxel (context-free models)
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
+# 3. Fit the multi-fidelity GP on its configured levels
+.venv/bin/python -m core.surrogates mfgp config.optical.centered.mfgp.yaml
 ```
 
-Only `config.optical.resum.yaml` is retained as a run configuration. Change its
-model and training settings using the API options below; BDT fits natural events. Change `selection` to `average_precision` to select
-for event discrimination, or `bernoulli_log_loss` for event BCE. The default is
-`voxel_rate_mae`. Change `output_directory` for every new run: existing nonempty
-runs are never overwritten. Data/output paths resolve relative to the YAML file.
+On Perlmutter submit each step with
+`sbatch scripts/slurm/train_surrogate.sbatch CONFIG.yaml [train|mfgp]`.
+
+The configs for the centered dataset (`config.optical.centered.*.yaml`) are the
+maintained examples: `cnp.data` prepares the data, `cnp`/`mlp`/`cnp.mixup` train event
+models, `mfgp`/`mfgp.log` fit the GP. Change model and training settings using the API
+options below; BDT fits natural events. `selection` picks the checkpoint metric
+(`bernoulli_log_loss` for natural-event runs, `average_precision` for mixup ablations).
+Change `output_directory` for every new run: existing nonempty runs are never
+overwritten. Data/output paths resolve relative to the YAML file.
 
 The runner loads prepared LF training and LF/HF validation batches. Inputs must
 already have the training-only normalization applied. It never reads test data.
@@ -236,7 +246,7 @@ training:
     strategy: none
 ```
 
-Run `python -m core.surrogates train config.optical.resum.yaml`.
+Run `python -m core.surrogates train CONFIG.yaml` with these settings.
 Change the model kind for MLP or transformer. Only CNP uses context observations;
 other neural models use the same mixed targets. The context size follows `training.context`
 (see "Episode building" below). Mixup defaults to real context.
@@ -335,8 +345,7 @@ real positive counts and total target predictions. Validation still uses real
 binary events. This is an experimental augmentation objective, not an unbiased
 probability correction or an established performance improvement.
 
-To try this objective, edit `training.objective` in `config.optical.resum.yaml`
-using the settings above before running it.
+To try this objective, set `training.objective` in a training config as above.
 
 ## Legacy two-output CNP
 
@@ -387,41 +396,12 @@ Validation labels stay real and binary even with the Gaussian training loss.
 The common `bernoulli_log_loss` metric remains Bernoulli log loss for comparison;
 it is not the Gaussian training objective.
 
-The retained `config.optical.resum.yaml` uses the legacy model with standard
-mixup. Select the combined objective explicitly using the settings above.
-
-Run it with `python -m core.surrogates train config.optical.resum.yaml`. New checkpoints
+Select the combined objective explicitly using the settings above. New checkpoints
 roundtrip both output channels through the standard loader. Importing historical
 two-output checkpoint files still uses `core.training.load_checkpoint`; the
 single-logit legacy importer does not silently convert those files.
 
-## Full optical RESuM pipeline
-
-`config.optical.resum.yaml` trains the single-logit CNP (`kind: cnp`) on prepared LF
-non-zero-hit voxels using standard class-aware mixup (`mix_context: true`),
-Bernoulli NLL and the single-branch objective. It then fits the
-existing three-level MFGP on training data only: LF CNP means, HF CNP means,
-and HF raw target fractions. Zero-hit LF and HF voxels are excluded. Of the
-56 retained HF voxels, 10 are selected for training with seed 42 and 46 are
-assigned to validation, including former HF test voxels. There is no separate
-HF test set. The current all-LF test uses all 159 retained LF voxels for training
-and skips LF validation/test. Validation represents the non-zero-hit
-subset, not the full spatial population.
-
-The prepared dataset is `outputs/optical_data_alllf_hf10_nonzero`. Its
-`split_policy.json` records the selection and excluded files; `config.json`
-and `splits/voxel_split.json` allow reconstruction via `prepare_optical_data`
-with the saved assignments. Normalization is refitted using training files only.
-The previous prepared dataset and model outputs are retained.
-The notebook automatically checks/prepares these inputs before training; it
-reuses valid cached arrays. `split.lf_train_only: true` and
-`split.hf_train_count: 10` make the split reproducible even if the outputs and
-manifest are missing. Fractional targets apply only where no explicit rule is set.
-
-```bash
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  python -m core.surrogates train config.optical.resum.yaml
-```
+## GP stage after training
 
 The optional `mfgp` run-config section enables this second stage (levels: see "Multi-fidelity
 GP: configurable levels"). It requires the GP dependencies. Large datasets: a level's
@@ -492,43 +472,25 @@ prepared datasets and checkpoints are unaffected.
 
 The current workflow uses library components and the shared CLI. The temporary
 BDT/MLP/transformer/mixup experiment scripts and notebooks have been removed.
-Saved outputs remain available locally. Original synthetic examples under
-`scripts/phase*` and the original repository notebooks remain unchanged.
+Original synthetic examples under `scripts/phase*` and the original repository
+notebooks remain unchanged.
 
 Prepare optical data using the integrated library, after installing the
-`optical-data` extra and setting the input folders in `config.optical.data.yaml`:
+`optical-data` extra and setting the input folders in a data config:
 
 ```python
 from schemas.optical import load_optical_config
 from data import prepare_optical_data
 
-config = load_optical_config("config.optical.data.yaml")
+config = load_optical_config("config.optical.centered.cnp.data.yaml")
 prepared = prepare_optical_data(config)
 ```
 
 This caches new or changed LH5 files (see "Shared event cache"), assigns the split, fits
-normalization and saves a small view plus split metadata; it does not run model training. To use an existing prepared dataset, point a
-`config.surrogate.*.yaml` file or `config.optical.resum.yaml` at its directory.
+normalization and saves a small view plus split metadata; it does not run model training.
+Training and GP configs point at the prepared directory (`data_directory`) and, with
+`data_config`, regenerate it when the data config or raw files change.
 Choose a new output directory for each training run.
-
-## Full optical notebook
-
-`notebooks/lar_optical_map.ipynb` is the single maintained optical workflow
-notebook. It calls the shared `run_experiment` API using
-`config.optical.resum.yaml`, without duplicating model or training code.
-
-Use the repository Python environment as the kernel. Run All trains from scratch
-by default, with a timestamped output directory. `RUN_TRAINING = False` loads
-`EXISTING_RUN` instead and displays that run's saved configuration. The default
-is a single-logit CNP, Bernoulli NLL, standard class-aware mixup, mixed context,
-and the three-fidelity MFGP. `LEGACY_LOSS = "theory-truth"` or `"practice-truth"`
-selects the legacy two-output CNP for a new run. No real-plus-mixup auxiliary objective is enabled.
-
-The notebook prepares/checks non-zero-hit LF/HF batches, uses 10 HF modeling voxels,
-shows CNP metrics/PR and MFGP coverage bands, displays the development-coordinate
-map, and leaves all checkpoints and prediction arrays in the run directory. It does
-not read test files, regenerate simulation data, or submit a Slurm job.
-
 
 ## Role sources (event models and GP)
 
@@ -627,7 +589,7 @@ the training events never need to be in memory at once.
 
 ## Multiple raw input folders
 
-`config.optical.data.yaml` controls preparation and accepts lists of folders per
+A data config can list several folders per
 fidelity under `source.directories.lf` and `source.directories.hf`. Each folder
 must directly contain `.stp.lh5` files; fidelity comes from the configuration,
 so folder names need not be `lf` or `hf`. For example:
@@ -648,39 +610,15 @@ Splitting and training-only normalization happen after collecting all folders.
 Event counts may differ between voxels (see "Unequal event counts per voxel");
 mixing primary budgets within LF remains a separate, retired modeling choice.
 
-The earlier raw-data views remain available under
-`/global/cfs/cdirs/m2676/users/aschuetz/data/lar_optical_map/`:
+## Automatic preparation
 
-- `lf1500_hf_nonzero/`: 159 LF1500 + 56 HF files with optical hits.
-- `lf1500_hf_all/`: 224 LF1500 + 65 HF files, including zero-hit simulations.
-
-Both contain `lf/` and `hf/` symlink folders and a `manifest.json`. Seven failed
-HF simulations with only one primary event are excluded and listed in each
-manifest. Original files are preserved. The supplied preparation config now uses the count-based folders described
-below and reuses the existing LF1500/HF10 split manifest.
-The notebook automatically updates its manifest when configured sources change.
-Direct `prepare_optical_data` calls retain the explicit `update_manifest` option.
-
-`config.optical.resum.yaml` remains the training configuration: its
-`data_directory` points to one prepared dataset, not a list of raw folders.
-No data preparation or training is triggered merely by editing either YAML.
-
-
-## Automatic notebook preparation
-
-Before showing data counts, the notebook loads `config.optical.data.yaml` and
-calls `ensure_prepared_optical_data`. Its output directory must equal the
-training config's `data_directory`. The helper checks raw-file fingerprints,
+A training or GP config with `data_config` calls `ensure_prepared_optical_data` before
+loading data. The data config's output directory must equal `data_directory`. The helper checks raw-file fingerprints,
 configuration, manifest, and the view; a missing or outdated view and normalization
 are rebuilt, reading only files missing from the event cache. Unchanged valid inputs are reused. Changes
 in source membership, file contents, or configuration automatically update the
 manifest. Compatible existing assignments are retained; explicit split policies
 take precedence. Invalid inputs and conflicting voxel groups still raise errors.
-
-The optical config explicitly sets all LF files to training and selects 10 HF
-files from sorted filenames without replacement using seed 42. Other HF files
-are validation. Conflicting split requests for a shared voxel are rejected.
-This is independent of the training-time context/target split and mixup.
 
 Preparation matches `stp/optical/evtid` to `vtx/evtid`, making one binary target
 per simulated event: one if any configured detector recorded a hit, zero otherwise.
@@ -711,11 +649,7 @@ original `.stp.lh5` files. Counts (nonzero / zero) are 38/47, 157/70, 146/78,
 eight failed one-primary simulations. Original source folders are preserved.
 
 Folders have no inherent LF/HF role: `source.directories` assigns that role when
-preparing a dataset. The default selects `N1500/nonzero` for LF and
-`N5000/nonzero` for HF, preserving the current data and split. To include zeros,
-list the matching `zero` folder too; notebook preparation automatically updates
-the prepared dataset and split manifest. The notebook reports zero counts without rejecting
-those voxels, and does not hard-code an LF event count. Preparation accepts unequal
+preparing a dataset. To include zero-hit voxels, list the matching `zero` folder too. Preparation accepts unequal
 event counts per voxel; this layout does not by itself reintroduce training pooled
 across different LF primary counts.
 
@@ -766,7 +700,7 @@ integral. Posterior quantiles of the averaged draws define 68.27%, 95.45%, and
 moments averaged with the same weights. It is not the median. Observation-predictive
 coverage plots remain separate and retain their previous noise convention.
 
-Defaults in `config.optical.resum.yaml`:
+Example projection settings (`mfgp.projections`):
 
 ```yaml
 mfgp:

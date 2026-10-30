@@ -1,4 +1,4 @@
-"""Run: python -m core.surrogates train config.optical.resum.yaml
+"""Run: python -m core.surrogates train config.optical.centered.cnp.yaml
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
 python -m core.surrogates mfgp config.optical.centered.mfgp.yaml"""
 

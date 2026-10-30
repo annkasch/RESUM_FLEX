@@ -5,24 +5,21 @@ fitting, prediction, evaluation, checkpointing and MFGP preparation.
 See [the component API and migration guide](docs/surrogates.md).
 
 ```bash
-OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-  .venv/bin/python -m core.surrogates train config.optical.resum.yaml
+export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
+# 1. Train an event model (data preparation runs automatically from data_config)
+.venv/bin/python -m core.surrogates train config.optical.centered.mlp.yaml
+# 2. Mean predicted p per unlabeled voxel (context-free models)
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR gp_unlabeled
+# 3. Fit the multi-fidelity GP on its configured levels
+.venv/bin/python -m core.surrogates mfgp config.optical.centered.mfgp.yaml
 ```
 
-The only retained run config is `config.optical.resum.yaml`, for the full optical
-CNP → MFGP pipeline. Model alternatives are documented in the component guide.
+On Perlmutter submit each step with
+`sbatch scripts/slurm/train_surrogate.sbatch CONFIG.yaml [train|mfgp]`.
 
-For the complete optical CNP → MFGP pipeline, use `config.optical.resum.yaml`
-with the same command. See [data preparation and training](docs/surrogates.md).
-Experimental BDT/MLP/transformer notebooks and standalone runners have been
-removed; use this shared entry point for model comparisons.
-
-Raw input folder lists are configured in [config.optical.data.yaml](config.optical.data.yaml).
-The training configuration points to the resulting prepared dataset.
-
-For one maintained notebook covering the full LAr optical-map workflow, open
-[notebooks/lar_optical_map.ipynb](notebooks/lar_optical_map.ipynb).
-Run All trains a fresh CNP and MFGP; set `RUN_TRAINING = False` to inspect a saved run.
+The maintained configs are `config.optical.centered.*.yaml` (Ian Wang's centered box:
+event models on LF, MLP mean → HF observed fraction GP). See
+[data preparation, validation metrics and the GP levels](docs/surrogates.md).
 
 # RESUM_FLEX
 
@@ -178,7 +175,7 @@ RESUM_FLEX/
 ├── scripts/           runnable end-to-end demonstrations on synthetic data
 │   ├── phase{1..5}_*.py
 ├── tests/             pytest (no real-data fixtures; everything synthetic)
-├── config.optical.resum.yaml  full optical pipeline configuration
+├── config.optical.centered.*.yaml  data, event-model and GP configs (centered dataset)
 ├── pyproject.toml     canonical Python deps + uv compatibility groups
 ├── uv.lock            cross-platform Python dependency lock (managed by uv)
 ├── pixi.toml          outer tool/task manifest (Python deps are not repeated)
@@ -276,12 +273,12 @@ Target Gaussian rates: 68.27 / 95.45 / 99.73 %.
 
 ## Configuration
 
-The retained run configuration is **`config.optical.resum.yaml`**. It uses the
-shared schema in `schemas/surrogates.py` and runs CNP training followed by MFGP.
+Run configurations are YAML files validated by `schemas/surrogates.py`
+(training: `load_surrogate_config`; standalone GP: `load_mfgp_config`).
 
 ```python
 from schemas.surrogates import load_surrogate_config
-cfg = load_surrogate_config("config.optical.resum.yaml")
+cfg = load_surrogate_config("config.optical.centered.cnp.yaml")
 print(cfg.training.learning_rate)
 ```
 
@@ -305,7 +302,7 @@ Validate updates through the shared training schema:
 
 ```python
 from schemas.surrogates import NeuralTraining
-cfg = load_surrogate_config("config.optical.resum.yaml")
+cfg = load_surrogate_config("config.optical.centered.cnp.yaml")
 custom_train = NeuralTraining.model_validate({
     **cfg.training.model_dump(), "n_steps": 3000, "learning_rate": 5e-4,
 })
@@ -727,9 +724,9 @@ pytest tests/test_mfgp_recovery.py -v   # MFGP coverage gate, ~2 min
 
 ## Optical map directly from simulation counts
 
-Run `notebooks/lar_optical_map_binomial_gp.ipynb` with
-`config.optical.binomial.yaml` to fit a shared spatial probability function to
-simulations with identical physics and different primary counts. This separate
+The binomial count GP (`core/count_gp_experiment.py`, schema `schemas/count_gp.py`) fits a
+shared spatial probability function to simulations with identical physics and different
+primary counts; no example config is kept. This separate
 workflow requires the `gp` and `optical-data` extras. It does not use a CNP.
 
 The input is the voxel center `(x, y, z)`; observations are integer hit-producing
