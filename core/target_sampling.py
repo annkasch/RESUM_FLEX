@@ -1,7 +1,5 @@
 """Real-event target oversampling with per-voxel sampling corrections."""
 import numpy as np
-import torch
-from torch.nn import functional as F
 from schemas.data_models import StandardBatch
 
 
@@ -83,11 +81,3 @@ class RealTargetSampler:
                 phi=None if b.phi is None else b.phi[trials[:, None], indices],
                 labels=b.labels[trials[:, None], indices])
         return gather(contexts), gather(targets), np.asarray(weights)
-
-
-def sampling_corrected_bce(probability, labels, weights):
-    """Average importance-weighted BCE, without rebalancing the true prevalence."""
-    labels = torch.as_tensor(labels, dtype=probability.dtype, device=probability.device)
-    weights = torch.as_tensor(weights, dtype=probability.dtype, device=probability.device)
-    losses = F.binary_cross_entropy(probability.clamp(1e-6, 1-1e-6), labels, reduction='none')
-    return (weights * losses).mean()

@@ -12,12 +12,12 @@ from core.surrogates.evaluation import evaluate_surrogate, evaluation_threads
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import SurrogateRunConfig
 
-# Role-based prepared data (LF only) stores these splits under CNP role names.
+# Role-based prepared data stores the event-model splits under CNP role names.
 ROLE_PARTITIONS = {"train": "cnp_train", "validation": "cnp_validation", "test": "cnp_test"}
 
 
 def role_based(root) -> bool:
-    """Prepared data uses the CNP role names (LF only) instead of train/validation/test."""
+    """Prepared data uses role names (cnp_*, gp_*) instead of train/validation/test."""
     from data.optical_pipeline import prepared_partitions
 
     return "cnp_train" in prepared_partitions(root)

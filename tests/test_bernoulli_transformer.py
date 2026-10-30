@@ -2,11 +2,7 @@ import pytest
 import torch
 
 from core.bernoulli_cnp import evaluate_bernoulli
-from core.bernoulli_transformer import (
-    BernoulliTransformer,
-    load_transformer_checkpoint,
-    save_transformer_checkpoint,
-)
+from core.bernoulli_transformer import BernoulliTransformer
 from core.binary_losses import binary_focal_loss_with_logits
 from core.surrogate_cnp import split_context_target
 from data.pseudo_generator import for_scenario
@@ -15,7 +11,7 @@ from schemas.tabular_transformer import TabularTransformerConfig
 
 @pytest.mark.parametrize("architecture", ["legacy", "ft_transformer"])
 @pytest.mark.parametrize("scenario", [f"S{i}" for i in range(1, 9)])
-def test_single_output_and_checkpoint(scenario, tmp_path, architecture):
+def test_single_output(scenario, architecture):
     source = for_scenario(scenario, seed=0)
     batch = source.generate(n_trials=3, n_events=24)
     context, target = split_context_target(batch, 8, seed=2)
@@ -36,18 +32,6 @@ def test_single_output_and_checkpoint(scenario, tmp_path, architecture):
     assert model.training
     assert arrays["predicted"].shape == (3,)
     assert summary["bernoulli_log_loss"] >= 0
-    path = tmp_path / "cnp.ckpt"
-    save_transformer_checkpoint(
-        path,
-        model,
-        encoder_config=config,
-        dim_theta=source.dim_theta,
-        dim_phi=source.dim_phi,
-        metadata={"step": 2},
-    )
-    loaded, payload = load_transformer_checkpoint(path)
-    torch.testing.assert_close(loaded(context, target), logits)
-    assert payload["metadata"]["step"] == 2
 
 
 def test_attention_is_within_events_and_inference_chunks_agree():

@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 import torch
 
-from core.mixup import SoftTargetBatch, mixup_targets
+from core.mixup import SoftTargetBatch
 from core.surrogate_cnp import CnpOutput, build_cnp, theory_truth_loss
 from core.training import train_cnp
 from data.batch_source import FixedBatchSource
@@ -20,24 +20,13 @@ def batch():
     )
 
 
-def test_mixup_alignment_zero_files_and_binary_contract():
+def test_soft_target_batch_rejects_invalid_labels():
     original = batch()
-    mixed = mixup_targets(original, alpha=0.2, rng=np.random.default_rng(4))
-    np.testing.assert_allclose(mixed.phi[..., 0], mixed.labels)
-    # Independent pair weights allow the realized batch mean to fluctuate.
-    assert not np.isclose(mixed.labels[1].mean(), original.labels[1].mean())
-    np.testing.assert_array_equal(mixed.theta, original.theta)
-    np.testing.assert_array_equal(mixed.labels[0], 0)
-    assert np.any((mixed.labels > 0) & (mixed.labels < 1))
-    np.testing.assert_array_equal(original.labels, [[0, 0, 0, 0], [0, 0, 1, 1]])
-    with pytest.raises(ValueError, match="binary"):
-        StandardBatch(mode=mixed.mode, theta=mixed.theta, phi=mixed.phi, labels=mixed.labels)
     with pytest.raises(ValueError):
         SoftTargetBatch(
-            mode=mixed.mode, theta=mixed.theta, phi=mixed.phi, labels=np.full((2, 4), np.nan)
+            mode=original.mode, theta=original.theta, phi=original.phi,
+            labels=np.full((2, 4), np.nan),
         )
-    again = mixup_targets(original, alpha=0.2, rng=np.random.default_rng(4))
-    np.testing.assert_array_equal(mixed.labels, again.labels)
 
 
 def test_soft_cross_entropy_matches_weighted_binary_losses():

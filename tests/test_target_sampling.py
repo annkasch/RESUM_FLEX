@@ -1,7 +1,6 @@
 import numpy as np
 import pytest
-import torch
-from core.target_sampling import RealTargetSampler, sampling_corrected_bce
+from core.target_sampling import RealTargetSampler
 from schemas.data_models import StandardBatch, InputMode
 
 
@@ -31,18 +30,6 @@ def test_matching_real_contexts_and_disjoint_targets():
             np.testing.assert_array_equal(targets.labels[j], b.labels[trial,ti])
             np.testing.assert_allclose((weights[j]*targets.labels[j]).mean(),
                                        provenance['pool_positive_fraction'])
-
-
-def test_weighted_loss_and_gradient_equal_population_for_class_constant_predictions():
-    p, q = .03, .25
-    y = np.array([[1]*25+[0]*75])
-    w = np.where(y, p/q, (1-p)/(1-q))
-    logit = torch.tensor(-2., dtype=torch.float64, requires_grad=True)
-    loss = sampling_corrected_bce(logit.sigmoid().expand(1,100), y, w)
-    loss.backward()
-    expected = -p*np.log(torch.sigmoid(logit).item())-(1-p)*np.log(1-torch.sigmoid(logit).item())
-    assert loss.item() == pytest.approx(expected)
-    assert logit.grad.item() == pytest.approx(torch.sigmoid(logit).item()-p)
 
 
 @pytest.mark.parametrize('fraction', [0, 1, -.1, float('nan')])

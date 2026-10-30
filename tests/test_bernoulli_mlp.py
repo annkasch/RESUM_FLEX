@@ -1,14 +1,14 @@
 import pytest
 import torch
 from core.bernoulli_cnp import evaluate_bernoulli
-from core.bernoulli_mlp import (BernoulliMLP, save_mlp_checkpoint, load_mlp_checkpoint)
+from core.bernoulli_mlp import BernoulliMLP
 from core.surrogate_cnp import split_context_target
 from core.binary_losses import binary_focal_loss_with_logits
 from data.pseudo_generator import for_scenario
 from schemas.config import EncoderConfig
 
 @pytest.mark.parametrize('scenario',[f'S{i}' for i in range(1,9)])
-def test_single_output_and_checkpoint(scenario,tmp_path):
+def test_single_output(scenario):
     source=for_scenario(scenario,seed=0)
     batch=source.generate(n_trials=3,n_events=24)
     context,target=split_context_target(batch,8,seed=2)
@@ -27,9 +27,3 @@ def test_single_output_and_checkpoint(scenario,tmp_path):
     assert model.training
     assert arrays['predicted'].shape==(3,)
     assert summary['bernoulli_log_loss']>=0
-    path=tmp_path/'cnp.ckpt'
-    save_mlp_checkpoint(path,model,encoder_config=config,dim_theta=source.dim_theta,
-                             dim_phi=source.dim_phi,metadata={'step':2})
-    loaded,payload=load_mlp_checkpoint(path)
-    torch.testing.assert_close(loaded(context,target),logits)
-    assert payload['metadata']['step']==2

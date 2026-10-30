@@ -13,28 +13,6 @@ class SoftTargetBatch(StandardBatch):
             raise ValueError("Soft mixup targets must be finite and lie in [0, 1]")
 
 
-def mixup_targets(batch: StandardBatch, *, alpha: float, rng: np.random.Generator):
-    """Mix within each trial after context/target partitioning.
-
-    Independent Beta(alpha, alpha) weights per event pair preserve the mean
-    target label in expectation, not exactly per batch. Pairing stays within
-    each trial. Theta is unchanged. All-negative trials
-    remain negative. Convex feature combinations are augmentation, not new physics
-    simulations (in particular mixed momenta need not preserve photon energy).
-    """
-    if not np.isfinite(alpha) or alpha <= 0:
-        raise ValueError("Mixup alpha must be positive and finite")
-    perm = np.stack([rng.permutation(batch.n_events) for _ in range(batch.batch_size)])
-    weight = rng.beta(alpha, alpha, size=(batch.batch_size, batch.n_events))
-    paired = np.take_along_axis(batch.labels, perm, axis=1)
-    labels = weight * batch.labels + (1 - weight) * paired
-    phi = None
-    if batch.phi is not None:
-        paired_phi = np.take_along_axis(batch.phi, perm[..., None], axis=1)
-        phi = weight[..., None] * batch.phi + (1 - weight[..., None]) * paired_phi
-    return SoftTargetBatch(mode=batch.mode, theta=batch.theta, phi=phi, labels=labels)
-
-
 class ClassAwareMixupSource:
     """Fresh, label-independent source split for each voxel in every batch.
 

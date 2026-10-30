@@ -1,9 +1,7 @@
 """Event MLP with one raw Bernoulli logit; no context conditioning."""
-from pathlib import Path
 import torch
 from torch import nn
 from core.networks import MLPEncoder
-from schemas.config import EncoderConfig
 
 
 class BernoulliMLP(nn.Module):
@@ -36,21 +34,3 @@ class BernoulliMLP(nn.Module):
 
     def predict_beta(self, context, target):
         return self(context, target).sigmoid()
-
-
-def save_mlp_checkpoint(path, model, *, encoder_config, dim_theta, dim_phi, metadata):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(dict(model_kind='bernoulli_mlp_single_logit', model_state=model.state_dict(),
-                    encoder_config=encoder_config.model_dump(), dim_theta=dim_theta,
-                    dim_phi=dim_phi, metadata=metadata), path)
-
-
-def load_mlp_checkpoint(path):
-    payload = torch.load(path, map_location='cpu', weights_only=False)
-    if payload.get('model_kind') != 'bernoulli_mlp_single_logit':
-        raise ValueError('Expected a single-logit Bernoulli MLP checkpoint')
-    model = BernoulliMLP(EncoderConfig(**payload['encoder_config']),
-                         payload['dim_theta'], payload['dim_phi'])
-    model.load_state_dict(payload['model_state'])
-    return model, payload

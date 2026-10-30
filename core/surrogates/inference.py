@@ -16,10 +16,11 @@ from core.surrogates.checkpoints import load_surrogate
 from core.surrogates.evaluation import _predict, evaluation_threads
 
 
-def _same_normalization(saved: dict | None, view: dict) -> bool:
-    if saved is None:
+def normalization_matches(saved: dict | None, current: dict | None) -> bool:
+    """True when both normalizations exist and agree on theta and phi."""
+    if saved is None or current is None:
         return False
-    return all(saved.get(key) == view.get(key) for key in ("theta", "phi"))
+    return all(saved.get(key) == current.get(key) for key in ("theta", "phi"))
 
 
 def predict_partition(checkpoint, data_directory, partition, fidelity="lf", *, threads=1):
@@ -39,7 +40,7 @@ def predict_partition(checkpoint, data_directory, partition, fidelity="lf", *, t
             "a context-free model (mlp, transformer, bdt)"
         )
     view = OpticalView(data_directory)
-    if not _same_normalization(
+    if not normalization_matches(
         model.metadata.get("normalization.json"), view.meta["normalization"]
     ):
         raise ValueError(

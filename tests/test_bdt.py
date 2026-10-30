@@ -2,7 +2,7 @@ import numpy as np
 import pytest
 from schemas.bdt import BDTConfig
 from schemas.data_models import StandardBatch,InputMode
-from core.surrogate_bdt import event_features,build_bdt,score_bdt,save_bdt,load_bdt
+from core.surrogate_bdt import event_features,build_bdt,score_bdt
 
 
 def test_features_exclude_labels_and_preserve_voxel_event_order():
@@ -15,7 +15,7 @@ def test_features_exclude_labels_and_preserve_voxel_event_order():
     np.testing.assert_array_equal(event_features(b),expected)
 
 
-def test_fit_and_roundtrip(tmp_path):
+def test_fit_and_score():
     pytest.importorskip('sklearn')
     rng=np.random.default_rng(42)
     phi=rng.normal(size=(4,100,2));labels=(phi[...,0]>.5).astype(int)
@@ -25,8 +25,3 @@ def test_fit_and_roundtrip(tmp_path):
     metrics,arrays=score_bdt(model,b)
     assert metrics['average_precision']>.95
     assert arrays['predicted'].shape==(4,)
-    path=tmp_path/'model.joblib'
-    save_bdt(path,model,{'feature_order':['phi0','phi1']})
-    loaded,payload=load_bdt(path)
-    np.testing.assert_array_equal(loaded.predict_proba(event_features(b)),model.predict_proba(event_features(b)))
-    assert payload['metadata']['feature_order']==['phi0','phi1']

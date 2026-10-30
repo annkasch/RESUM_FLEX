@@ -1,11 +1,9 @@
 """Mean-only CNP with one Bernoulli logit per target event."""
-from pathlib import Path
 import numpy as np
 import torch
 from torch.nn import functional as F
 from core.networks import MLPEncoder, build_encoder
 from core.surrogate_cnp import ConditionalNeuralProcess, ContextPointEncoder
-from schemas.config import EncoderConfig
 
 
 class BernoulliCNP(ConditionalNeuralProcess):
@@ -59,20 +57,3 @@ def evaluate_bernoulli(model, context, target):
     finally:
         model.train(was_training)
     return summary, dict(observed=observed,predicted=predicted)
-
-
-def save_bernoulli_checkpoint(path, model, *, encoder_config, dim_theta, dim_phi, metadata):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(dict(model_kind='bernoulli_cnp_single_logit', model_state=model.state_dict(),
-        encoder_config=encoder_config.model_dump(), dim_theta=dim_theta, dim_phi=dim_phi,
-        metadata=metadata),path)
-
-
-def load_bernoulli_checkpoint(path):
-    payload = torch.load(path,map_location='cpu',weights_only=False)
-    if payload.get('model_kind') != 'bernoulli_cnp_single_logit':
-        raise ValueError('Expected a single-logit Bernoulli CNP checkpoint')
-    model = BernoulliCNP(EncoderConfig(**payload['encoder_config']),payload['dim_theta'],payload['dim_phi'])
-    model.load_state_dict(payload['model_state'])
-    return model,payload

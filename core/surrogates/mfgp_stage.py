@@ -34,16 +34,6 @@ def _model_mean(model, batch, *, n_context, seed):
                       seed=seed)
 
 
-def _same_normalization(model, root):
-    """True when the model was trained on data normalized like ``root`` (or can't tell)."""
-    saved = getattr(model, "metadata", {}).get("normalization.json")
-    path = Path(root) / "normalization.json"
-    if saved is None or not path.exists():
-        return True
-    current = json.loads(path.read_text())
-    return all(saved.get(key) == current.get(key) for key in ("theta", "phi"))
-
-
 class _Data:
     """Prepared partitions of one data directory, each loaded once."""
 
@@ -95,8 +85,16 @@ def _level_arrays(level, stream, data, cfg, model):
         return _inference_arrays(level, stream, data, cfg)
     if model is None:
         raise ValueError("model_mean level without inference file needs an event model")
-    if not _same_normalization(model, data.root):
-        raise ValueError(f"Event model was trained with another normalization than {data.root}")
+    path = data.root / "normalization.json"
+    if path.exists():  # unnormalized synthetic batches have none
+        from core.surrogates.inference import normalization_matches
+
+        saved = getattr(model, "metadata", {}).get("normalization.json")
+        if not normalization_matches(saved, json.loads(path.read_text())):
+            raise ValueError(
+                f"Event model was trained with another normalization than {data.root} "
+                "(or does not record it)"
+            )
     load = data.labeled if model.uses_context else data.inputs
     batch, provenance = load(level.partition, level.fidelity)
     index = subsample_voxels(batch.batch_size, level.max_voxels, cfg.seed, stream)
@@ -168,9 +166,10 @@ def run_mfgp(
             {f"X_{k}": X, f"Y_{k}": Y[:, None], f"events_{k}": events[:, None], f"index_{k}": index}
         )
         fit[f"X_{k}"], fit[f"Y_{k}"] = X, _fit_targets(level, Y, events, cfg)[:, None]
-        records.append(
-            dict(level=k, **level.model_dump(mode="json"), voxels=len(Y), data=provenance)
-        )
+        record = dict(level=k, **level.model_dump(mode="json"), voxels=len(Y), data=provenance)
+        if cfg.output_transform == "log" and level.source == "model_mean":
+            record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
+        records.append(record)
     np.savez_compressed(directory / "training_arrays.npz", **arrays)
     np.savez_compressed(directory / "fit_arrays.npz", **fit)
     np.savez_compressed(

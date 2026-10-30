@@ -165,60 +165,6 @@ def test_checkpoint_version_rejected(tmp_path):
         load_surrogate(tmp_path)
 
 
-@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer", "bdt"])
-def test_legacy_import_preserves_predictions(kind, tmp_path):
-    from core.surrogates import import_legacy_surrogate
-
-    source = for_scenario("S1", seed=0)
-    batch = source.generate(n_trials=3, n_events=24)
-    batch.labels[0, 0] = 0
-    batch.labels[0, 1] = 1
-    context, target = split_context_target(batch, 4, seed=2)
-    model = build_surrogate(spec(kind), source.dim_theta, source.dim_phi)
-    model.fit(batch, training(kind))
-    if kind == "bdt":
-        from core.surrogate_bdt import save_bdt
-
-        path = tmp_path / "old.joblib"
-        save_bdt(path, model.estimator, {})
-    else:
-        from core.bernoulli_cnp import save_bernoulli_checkpoint
-        from core.bernoulli_mlp import save_mlp_checkpoint
-        from core.bernoulli_transformer import save_transformer_checkpoint
-
-        save = {
-            "cnp": save_bernoulli_checkpoint,
-            "mlp": save_mlp_checkpoint,
-            "transformer": save_transformer_checkpoint,
-        }[kind]
-        from schemas.config import EncoderConfig
-
-        encoder = (
-            EncoderConfig(type="mlp", latent_dim=1, **model.config.architecture.model_dump())
-            if kind == "mlp"
-            else getattr(model.config, "encoder", None)
-        )
-        path = tmp_path / "old.ckpt"
-        save(
-            path,
-            model.module,
-            encoder_config=encoder,
-            dim_theta=source.dim_theta,
-            dim_phi=source.dim_phi,
-            metadata={},
-        )
-    imported = import_legacy_surrogate(path, dim_theta=source.dim_theta, dim_phi=source.dim_phi)
-    np.testing.assert_array_equal(
-        imported.predict(target, context=context).logits,
-        model.predict(target, context=context).logits,
-    )
-    imported.save(tmp_path / "new")
-    np.testing.assert_array_equal(
-        load_surrogate(tmp_path / "new").predict(target, context=context).logits,
-        model.predict(target, context=context).logits,
-    )
-
-
 @pytest.mark.parametrize(
     "kind,mixup",
     [

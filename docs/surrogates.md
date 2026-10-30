@@ -204,20 +204,6 @@ fits them; the active-learning loop takes the same lists plus `observed_levels` 
 levels a new simulation extends). GP fitting needs GPy/Emukit; event models don't. Classifier uncertainty
 is not substituted for the GP posterior uncertainty.
 
-## Existing trained models
-
-```python
-from core.surrogates import import_legacy_surrogate
-model = import_legacy_surrogate("outputs/bce_5percent/seed0/stable_bce/best.ckpt")
-model.save("outputs/imported_cnp")
-```
-
-Single-logit CNP/MLP/transformer `.ckpt` files and BDT `.joblib` files can be
-adapted without retraining. Trees without saved feature metadata require explicit
-`dim_theta` and `dim_phi`. Old two-output Gaussian CNP checkpoints keep their
-existing `core.training.load_checkpoint` API; they are not silently converted.
-All checkpoint loaders are for trusted local files.
-
 Use the component API or the common runner for training and evaluation. Shared configuration and
 metrics improve reproducibility but do not make context-conditioned CNP and
 context-free models identical comparisons, or eliminate validation-selection bias.
@@ -493,7 +479,7 @@ prepared datasets and checkpoints are unaffected.
 - **Voxel means** (`EventPrediction.mean`, `StandardBatch.voxel_mean`, observed
   `m/N`) divide by each voxel's own count. Event-level metrics (log loss, Brier,
   AP) use valid events only.
-- **MFGP**: `training_arrays.npz` stores `hf_target_events` per HF voxel, and log
+- **MFGP**: `training_arrays.npz` stores `events_k` per voxel of level k, and log
   smoothing `(m + a)/(N + 2a)` uses each voxel's own N. The GP still has one
   constant noise per level, so voxels with smaller N are noisier than the model
   assumes (see `docs/stats_review.md`, finding 3). Observed-fraction projections
@@ -738,14 +724,15 @@ across different LF primary counts.
 `mfgp.output_transform: log` fits all three GP levels to natural logarithms;
 `identity` remains the shared API default and reproduces linear-space behavior.
 The optical configuration enables `log`. No CNP retraining behavior changes.
-HF training fractions use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and the actual
-HF target-event count (excluding context). This Beta(1/2,1/2) posterior-mean
+Observed-fraction levels use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and each voxel's
+event count. This Beta(1/2,1/2) posterior-mean
 smoothing applies to all HF raw training fractions, including zeros. CNP means
 are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
 
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
 adjusted original-scale targets, `transformed_training_arrays.npz` records
-exact logged targets, and `transform.json` records smoothing and floor counts.
+exact logged targets, and `levels.json` records per model-mean level how many values hit
+the floor (`log_floored`).
 `MultiFidelityGP.predict` returns original-scale lognormal mean and variance;
 `predict_transformed` returns Gaussian log-space moments. `predict_interval`
 returns asymmetric equal-tail bounds. Save/load preserves these semantics;

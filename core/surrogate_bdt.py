@@ -1,5 +1,4 @@
 """Boosted binary classifier over voxel coordinates and event features."""
-from pathlib import Path
 import numpy as np
 from scipy.special import expit
 from core.precision_recall import precision_recall
@@ -51,19 +50,3 @@ def score_bdt(model,batch):
     arrays=dict(logits=scores,labels=labels,observed=observed,predicted=predicted,
                 precision=pr['precision'],recall=pr['recall'],logit_threshold=pr['logit_threshold'])
     return metrics,arrays
-
-
-def save_bdt(path,model,metadata):
-    import joblib
-    import sklearn
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    joblib.dump(dict(model_kind='hist_gradient_boosted_detection',model=model,
-                     sklearn_version=sklearn.__version__,metadata=metadata),path)
-
-
-def load_bdt(path):
-    import joblib
-    payload=joblib.load(path)
-    if payload.get('model_kind')!='hist_gradient_boosted_detection':
-        raise ValueError('Expected a boosted detection model')
-    return payload['model'],payload
