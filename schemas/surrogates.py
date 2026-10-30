@@ -408,7 +408,9 @@ class MFGPRunConfig(MFGPStageConfig):
     """Standalone MFGP fit on prepared data, independent of event-model training."""
 
     data_directory: Path
-    # Optional data-preparation YAML; prepared data is regenerated when it differs.
+    # Dataset provider 'module:Class' (core.surrogates.datasets); None reads .npz batches.
+    data_provider: str | None = None
+    # Optional data-preparation YAML for the provider; data are rebuilt when outdated.
     data_config: Path | None = None
     # Event model for model_mean levels without an inference file.
     checkpoint: Path | None = None
@@ -451,8 +453,14 @@ class SurrogateRunConfig(SurrogateConfig):
     mfgp_checkpoint: str = "best"
     mfgp: MFGPStageConfig | None = None
     data_directory: Path
-    # Optional data-preparation YAML. When set, each run first compares it with the settings
-    # stored in data_directory and regenerates the prepared data if they differ.
+    # Dataset provider 'module:Class' (core.surrogates.datasets); None reads .npz batches.
+    data_provider: str | None = None
+    # Provider partitions holding the event-model train/validation/test sets.
+    partitions: dict[Literal["train", "validation", "test"], str] = Field(
+        default_factory=lambda: {"train": "train", "validation": "validation", "test": "test"}
+    )
+    # Optional data-preparation YAML for the provider. When set, each run first lets the
+    # provider rebuild data_directory if its settings or raw inputs changed.
     data_config: Path | None = None
     output_directory: Path
     validation_context_events: int = Field(default=64, gt=0)
@@ -477,6 +485,12 @@ class SurrogateRunConfig(SurrogateConfig):
         sweep = self.validation_context_sweep
         if any(n <= 0 for n in sweep) or len(set(sweep)) != len(sweep):
             raise ValueError("validation_context_sweep needs unique positive sizes")
+        return self
+
+    @model_validator(mode="after")
+    def complete_partitions(self):
+        defaults = {"train": "train", "validation": "validation", "test": "test"}
+        self.partitions = {**defaults, **self.partitions}
         return self
 
     @model_validator(mode="after")

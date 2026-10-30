@@ -21,6 +21,10 @@ def main():
     predict.add_argument("partition")
     predict.add_argument("--fidelity", default="lf", choices=["lf", "hf"])
     predict.add_argument("--threads", type=int, default=1)
+    predict.add_argument(
+        "--data-provider", default="checkpoint",
+        help="'module:Class' of the dataset provider (default: the one the model was trained on)",
+    )
     mfgp = commands.add_parser("mfgp", help="Fit a standalone multi-fidelity GP")
     mfgp.add_argument("config")
     args = parser.parse_args()
@@ -45,6 +49,7 @@ def main():
                 args.partition,
                 args.fidelity,
                 threads=args.threads,
+                data_provider=args.data_provider,
             ),
             flush=True,
         )

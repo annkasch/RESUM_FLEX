@@ -12,49 +12,15 @@ from core.surrogates.evaluation import evaluate_surrogate, evaluation_threads
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import SurrogateRunConfig
 
-# Role-based prepared data stores the event-model splits under CNP role names.
-ROLE_PARTITIONS = {"train": "cnp_train", "validation": "cnp_validation", "test": "cnp_test"}
 
+def prepare_and_open(config):
+    """(provider, preparation record) for a run config; rebuilds data from data_config first."""
+    from core.surrogates.datasets import load_provider, prepare_data
 
-def role_based(root) -> bool:
-    """Prepared data uses role names (cnp_*, gp_*) instead of train/validation/test."""
-    from data.optical_pipeline import prepared_partitions
-
-    return "cnp_train" in prepared_partitions(root)
-
-
-def partition_name(root, split):
-    """Prepared partition holding a split, in either the split or the role-based layout."""
-    return ROLE_PARTITIONS[split] if role_based(root) else split
-
-
-def load_split(root, split, fidelity):
-    """(batch, provenance) of a split; optical_pipeline is looked up at call time."""
-    from data import optical_pipeline
-
-    return optical_pipeline.load_partition(root, partition_name(root, split), fidelity)
-
-
-def ensure_matching_data(data_config, data_directory):
-    """Regenerate prepared data whose stored settings or raw inputs differ from data_config."""
-    from data.optical_pipeline import ensure_prepared_optical_data
-    from schemas.optical import load_optical_config
-
-    preparation = load_optical_config(data_config)
-    if preparation.output_directory != data_directory.resolve():
-        raise ValueError(
-            f"data_config writes to {preparation.output_directory}, "
-            f"but data_directory is {data_directory}"
-        )
-    # config.json is written only by a full preparation.
-    saved = data_directory / "config.json"
-    before = saved.stat().st_mtime_ns if saved.exists() else None
-    ensure_prepared_optical_data(preparation)
-    regenerated = before != saved.stat().st_mtime_ns
-    print(f"Prepared data {'regenerated' if regenerated else 'up to date'}: {data_directory}",
-          flush=True)
-    return dict(path=str(data_config), regenerated=regenerated,
-                settings=preparation.model_dump(mode="json"))
+    record = None
+    if config.data_config is not None:
+        record = prepare_data(config.data_provider, config.data_config, config.data_directory)
+    return load_provider(config.data_provider, config.data_directory), record
 
 
 def run_experiment(config: SurrogateRunConfig):
@@ -65,17 +31,14 @@ def run_experiment(config: SurrogateRunConfig):
     Output must be empty, preventing accidental overwriting of prior runs.
     """
     config = SurrogateRunConfig.model_validate(config)
-    root, output = config.data_directory, config.output_directory
+    output = config.output_directory
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
-    data_check = None
-    if config.data_config is not None:
-        data_check = ensure_matching_data(config.data_config, root)
-    if role_based(root) and (config.hf_validation or "hf" in config.test_fidelities):
-        raise ValueError(
-            "Event models train on LF roles of role-based data; set hf_validation: false "
-            "and no hf in test_fidelities (HF roles are for the GP)"
-        )
+    provider, data_check = prepare_and_open(config)
+
+    def load_split(split, fidelity):
+        return provider.load(config.partitions[split], fidelity)
+
     batches, provenance = {}, {}
     partitions = [("train", "lf")]
     if config.hf_validation:
@@ -83,9 +46,7 @@ def run_experiment(config: SurrogateRunConfig):
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
     for split, fidelity in partitions:
-        batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(
-            root, split, fidelity
-        )
+        batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(split, fidelity)
     episodes = {
         key: Episode(
             *split_context_target(
@@ -131,9 +92,9 @@ def run_experiment(config: SurrogateRunConfig):
         training_pr="In-sample",
         score_weights="Uniform natural events; no resampling during evaluation",
     )
-    for name in ("normalization.json", "manifest_snapshot.json", "metadata.json"):
-        if (root / name).exists():
-            metadata[name] = json.loads((root / name).read_text())
+    # Inference and the GP stage check that new data carry the same normalization.
+    metadata["normalization.json"] = provider.normalization()
+    metadata["data_provider"] = config.data_provider
     if hasattr(model, "module"):
         metadata["parameter_count"] = sum(p.numel() for p in model.module.parameters())
     model.metadata = metadata
@@ -159,7 +120,7 @@ def run_experiment(config: SurrogateRunConfig):
             {"status": "blinded", "fidelities": config.test_fidelities}, indent=2
         ))
     for fidelity in config.test_fidelities if config.unblind_test else []:
-        batch, test_provenance[fidelity] = load_split(root, "test", fidelity)
+        batch, test_provenance[fidelity] = load_split("test", fidelity)
         batches["test", fidelity] = batch
         if (
             batch.theta is not None

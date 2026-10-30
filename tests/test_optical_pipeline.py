@@ -554,8 +554,8 @@ def test_role_manifest_keeps_assignments_and_detects_changes(tmp_path):
     assert kept == {r["file"]: r["split"] for r in first["files"] if r["file"] in kept}
 
 
-def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
-    from core.surrogates.experiment import partition_name, run_experiment
+def test_cnp_run_on_role_data_rejects_missing_hf(tmp_path):
+    from core.surrogates.experiment import run_experiment
     from schemas.surrogates import SurrogateRunConfig
 
     folder = role_folder(tmp_path / "a", 6)
@@ -563,9 +563,8 @@ def test_cnp_run_on_role_data_rejects_hf_requests(tmp_path):
         "cnp_train": 0.5, "cnp_validation": 0.25, "cnp_test": 0.25}}])
     prepare_optical_data(c)
     root = c.output_directory
-    assert partition_name(root, "validation") == "cnp_validation"
     base = yaml_safe_config(root, tmp_path / "run")
-    with pytest.raises(ValueError, match="HF roles are for the GP"):
+    with pytest.raises(FileNotFoundError, match="no hf files in cnp_validation"):
         run_experiment(SurrogateRunConfig.model_validate({**base, "hf_validation": True}))
 
 
@@ -576,6 +575,8 @@ def yaml_safe_config(data, output):
         "training": {"backend": "neural", "n_steps": 1, "eval_every": 1, "batch_size": 1,
                      "n_events": 4, "n_context_min": 1, "n_context_max": 2},
         "data_directory": str(data),
+        "data_provider": "data.optical_provider:OpticalDataset",
+        "partitions": {"train": "cnp_train", "validation": "cnp_validation", "test": "cnp_test"},
         "output_directory": str(output),
         "validation_context_events": 2,
     }
@@ -615,8 +616,10 @@ def test_fast_check_skips_reading_and_detects_config_and_file_changes(tmp_path, 
 def test_cnp_run_regenerates_stale_data_from_data_config(tmp_path):
     import yaml
 
-    from core.surrogates.experiment import ensure_matching_data
+    from data.optical_provider import OpticalDataset
     from schemas.surrogates import load_surrogate_config
+
+    ensure_matching_data = OpticalDataset.prepare
 
     folder = role_folder(tmp_path / "a", 6)
     data_yaml = tmp_path / "data.yaml"

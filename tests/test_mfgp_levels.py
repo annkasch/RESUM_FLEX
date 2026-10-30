@@ -152,6 +152,7 @@ def test_inference_file_level_matches_prepared_voxels(tmp_path):
         evaluation=[{"partition": "cnp_validation", "fidelity": "lf"}],
         n_restarts=1,
         data_directory=c.output_directory,
+        data_provider="data.optical_provider:OpticalDataset",
         output_directory=tmp_path / "gp",
     )
     out = run_mfgp_config(config)

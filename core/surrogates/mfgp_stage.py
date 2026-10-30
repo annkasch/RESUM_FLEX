@@ -35,37 +35,28 @@ def _model_mean(model, batch, *, n_context, seed):
 
 
 class _Data:
-    """Prepared partitions of one data directory, each loaded once."""
+    """Partitions of one dataset provider, each loaded once."""
 
-    def __init__(self, root):
-        self.root = Path(root)
-        self._labeled, self._inputs = {}, {}
-
-    def name(self, partition):
-        from core.surrogates.experiment import ROLE_PARTITIONS, partition_name
-
-        return partition_name(self.root, partition) if partition in ROLE_PARTITIONS else partition
+    def __init__(self, provider):
+        self.provider = provider
+        self.root = provider.root
+        self._cache = {}
 
     def labeled(self, partition, fidelity):
         """(batch, provenance) with labels."""
-        from data.optical_pipeline import load_partition
-
-        key = self.name(partition), fidelity
-        if key not in self._labeled:
-            self._labeled[key] = load_partition(self.root, *key)
-        return self._labeled[key]
+        key = partition, fidelity, True
+        if key not in self._cache:
+            self._cache[key] = self.provider.load(partition, fidelity)
+        return self._cache[key]
 
     def inputs(self, partition, fidelity):
         """(batch, provenance) for context-free predictions; labels may be a placeholder."""
-        from data.optical_view import OpticalView
-
-        key = self.name(partition), fidelity
-        if key in self._labeled or not (self.root / "view.json").is_file():
-            return self.labeled(partition, fidelity)
-        if key not in self._inputs:
-            view = OpticalView(self.root)
-            self._inputs[key] = view.load_inputs(*key)[0], view.provenance(*key)
-        return self._inputs[key]
+        if (partition, fidelity, True) in self._cache:
+            return self._cache[partition, fidelity, True]
+        key = partition, fidelity, False
+        if key not in self._cache:
+            self._cache[key] = self.provider.load(partition, fidelity, labels=False)
+        return self._cache[key]
 
 
 def _level_arrays(level, stream, data, cfg, model):
@@ -85,12 +76,12 @@ def _level_arrays(level, stream, data, cfg, model):
         return _inference_arrays(level, stream, data, cfg)
     if model is None:
         raise ValueError("model_mean level without inference file needs an event model")
-    path = data.root / "normalization.json"
-    if path.exists():  # unnormalized synthetic batches have none
+    current = data.provider.normalization()
+    if current is not None:  # unnormalized synthetic batches have none
         from core.surrogates.inference import normalization_matches
 
         saved = getattr(model, "metadata", {}).get("normalization.json")
-        if not normalization_matches(saved, json.loads(path.read_text())):
+        if not normalization_matches(saved, current):
             raise ValueError(
                 f"Event model was trained with another normalization than {data.root} "
                 "(or does not record it)"
@@ -109,21 +100,19 @@ def _level_arrays(level, stream, data, cfg, model):
 def _inference_arrays(level, stream, data, cfg):
     """Level from a saved inference file, checked against the prepared partition."""
     from core.gp_subsample import subsample_voxels
-    from data.optical_view import OpticalView
 
     path = Path(level.inference)
     meta = json.loads(path.with_suffix(".json").read_text())
-    if (meta["partition"], meta["fidelity"]) != (data.name(level.partition), level.fidelity):
+    if (meta["partition"], meta["fidelity"]) != (level.partition, level.fidelity):
         raise ValueError(
             f"{path} holds {meta['partition']}/{meta['fidelity']}, not "
             f"{level.partition}/{level.fidelity}"
         )
-    view = OpticalView(data.root)
-    theta, paths = view.load_theta(data.name(level.partition), level.fidelity)
+    theta, ids = data.provider.theta(level.partition, level.fidelity)
     with np.load(path) as arrays:
-        files, saved_theta = arrays["files"].tolist(), arrays["theta"]
+        saved_ids, saved_theta = arrays["voxel_ids"].tolist(), arrays["theta"]
         mean, events = arrays["mean_probability"], arrays["event_counts"].astype(float)
-    if files != paths or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
+    if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
         raise ValueError(f"{path} does not match the voxels or normalization of {data.root}")
     index = subsample_voxels(len(mean), level.max_voxels, cfg.seed, stream)
     provenance = dict(
@@ -145,7 +134,7 @@ def _fit_targets(level, values, events, cfg):
 
 
 def run_mfgp(
-    cfg, *, data_directory, output_directory, model=None, metrics_seed=None, extra_metadata=None
+    cfg, *, provider, output_directory, model=None, metrics_seed=None, extra_metadata=None
 ):
     """Fit the configured levels, score the evaluation sets and write the output directory."""
     from core.mfgp_pipeline import fit_mfgp, observed_fraction
@@ -153,7 +142,7 @@ def run_mfgp(
 
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=False)
-    data = _Data(data_directory)
+    data = _Data(provider)
     metrics_seed = cfg.seed if metrics_seed is None else metrics_seed
     streams = {}  # one voxel subset per (partition, fidelity), shared by its levels
     arrays, fit, records = {}, {}, []
@@ -271,9 +260,8 @@ def run_mfgp(
     theta = np.unique(np.concatenate(thetas), axis=0)
     mean, variance = gp.predict(theta, fidelity=n - 1)
     physical = theta
-    normalization = data.root / "normalization.json"
-    if normalization.exists():
-        norm = json.loads(normalization.read_text())
+    norm = data.provider.normalization()
+    if norm is not None:
         (directory / "normalization.json").write_text(json.dumps(norm, indent=2))
         physical = theta * np.asarray(norm["theta"]["scale"]) + np.asarray(norm["theta"]["offset"])
     np.savez_compressed(
@@ -295,10 +283,12 @@ def run_mfgp(
 
 def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
     """Combined mode: the GP of a training run, with the freshly trained event model."""
+    from core.surrogates.datasets import load_provider
+
     checkpoint = checkpoint_path or config.output_directory / "checkpoints/best"
     return run_mfgp(
         config.mfgp,
-        data_directory=config.data_directory,
+        provider=load_provider(config.data_provider, config.data_directory),
         output_directory=config.output_directory / "mfgp",
         model=surrogate,
         metrics_seed=config.validation_seed,
@@ -308,10 +298,9 @@ def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
 
 def run_mfgp_config(config):
     """Standalone mode: a saved checkpoint and/or inference files on prepared data."""
-    if config.data_config is not None:
-        from core.surrogates.experiment import ensure_matching_data
+    from core.surrogates.experiment import prepare_and_open
 
-        ensure_matching_data(config.data_config, config.data_directory)
+    provider, _ = prepare_and_open(config)
     model = None
     if config.checkpoint is not None:
         from core.surrogates.checkpoints import load_surrogate
@@ -319,7 +308,7 @@ def run_mfgp_config(config):
         model = load_surrogate(config.checkpoint)
     return run_mfgp(
         config,
-        data_directory=config.data_directory,
+        provider=provider,
         output_directory=config.output_directory,
         model=model,
         extra_metadata=dict(

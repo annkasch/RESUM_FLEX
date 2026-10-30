@@ -104,7 +104,11 @@ def _checkpoint(tmp_path, kind, normalization):
         else {"kind": "cnp", "encoder": {"type": "mlp", "latent_dim": 4, "hidden_dims": [8]}}
     )
     model = build_surrogate(spec, 3, 6, seed=0)
-    model.metadata = {"normalization.json": normalization, "step": 7}
+    model.metadata = {
+        "normalization.json": normalization,
+        "step": 7,
+        "data_provider": "data.optical_provider:OpticalDataset",
+    }
     path = tmp_path / f"run_{kind}" / "checkpoints" / "best"
     save_surrogate(path, model)
     return path, model
@@ -120,7 +124,7 @@ def test_inference_writes_mean_probability_per_voxel(tmp_path):
     batch, _ = OpticalView(c.output_directory).load_inputs("gp_unlabeled", "lf")
     with np.load(path) as arrays:
         np.testing.assert_allclose(arrays["mean_probability"], model.predict(batch).mean)
-        assert arrays["nominal_center"].shape == (4, 3)
+        assert arrays["coordinates"].shape == (4, 3)
         assert (arrays["event_counts"] == 8).all()
     meta = json.loads(path.with_suffix(".json").read_text())
     assert meta["step"] == 7 and meta["voxels"] == 4
@@ -199,6 +203,7 @@ def test_two_level_gp_from_inference_and_hf(tmp_path):
         ],
         n_restarts=1,
         data_directory=c.output_directory,
+        data_provider="data.optical_provider:OpticalDataset",
         output_directory=tmp_path / "gp",
     )
     with pytest.raises(ValueError, match="blinded"):

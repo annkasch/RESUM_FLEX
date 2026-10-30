@@ -16,5 +16,6 @@ kernel: rbf
 n_restarts: 5
 seed: 0
 data_directory: outputs/optical_centered_cnp_v0
+data_provider: data.optical_provider:OpticalDataset
 data_config: config.optical.centered.cnp.data.yaml
 output_directory: outputs/optical_mfgp/centered_mlp_v1_hf/seed0
