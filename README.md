@@ -23,7 +23,7 @@ Run tests and jobs with `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREAD
 .venv/bin/python -m core.surrogates mfgp gp.yaml
 ```
 
-`training.yaml`:
+`training.yaml` ([all settings](docs/configs.md#training-config)):
 
 ```yaml
 model: {kind: mlp, architecture: {hidden_dims: [256, 256, 256]}}
@@ -40,7 +40,7 @@ data_directory: prepared
 output_directory: runs/mlp
 ```
 
-`gp.yaml`:
+`gp.yaml` ([all settings](docs/configs.md#gp-config), [GP levels](docs/surrogates.md#multi-fidelity-gp-configurable-levels)):
 
 ```yaml
 levels:
@@ -52,12 +52,13 @@ data_directory: prepared
 output_directory: runs/gp
 ```
 
-Test partitions are only evaluated with `unblind_test: true`.
+Test partitions are only evaluated with `unblind_test: true`. What a run writes and the
+validation metrics are described in [docs/surrogates.md](docs/surrogates.md#validation-metrics).
 
 ## Your own data
 
 By default, data are read from `<data_directory>/batches/<partition>/<fidelity>.npz`
-(the arrays of a `StandardBatch`). For other formats, write a dataset provider and name it
+(the arrays of a [`StandardBatch`](docs/reference.md#input--standardbatch)). For other formats, write a dataset provider and name it
 in the config with `data_provider: my_package.module:MyDataset`:
 
 ```python
@@ -70,7 +71,8 @@ class MyDataset:
     def normalization(self): ...
 ```
 
-See `core/surrogates/datasets.py`.
+See [Datasets and providers](docs/surrogates.md#datasets-and-providers) and
+`core/surrogates/datasets.py`.
 
 ## Documentation
 
