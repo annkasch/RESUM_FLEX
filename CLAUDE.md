@@ -1,6 +1,6 @@
 ## Project Context
 
-**RESUM_FLEX** is a modular refactor of the original RESuM framework (located at `/home/yuema137/resum`, reference paper: [openreview lqTILjL6lP](https://openreview.net/pdf?id=lqTILjL6lP)). RESuM solves the **Rare Event Design (RED)** problem in physics simulations (e.g. NLDBD experiments) where the design metric `y = m/N` is a discrete count with high variance.
+**RESUM_FLEX** is a modular refactor of the original RESuM framework (reference paper: [openreview lqTILjL6lP](https://openreview.net/pdf?id=lqTILjL6lP)). RESuM solves **Rare Event Design (RED)** problems in simulation, where the design metric `y = m/N` is a discrete count with high variance.
 
 The pipeline has three stages:
 1. **CNP** denoises discrete counts by reconstructing the underlying Bernoulli parameter `p` (continuous score `β ∈ [0,1]`).
@@ -225,7 +225,7 @@ Each phase ships in small, reviewable commits — never one mega-commit. Plot ar
 
 ### Phase 3 — CNP
 - [x] `feat(core): CNP forward + Bernoulli-NLL loss` — core/surrogate_cnp.py (NOT BCE on X — see Math section)
-- [~] `feat(core): mixup augmentation` — **DEFERRED until real LEGEND data** (see decision note below)
+- [~] `feat(core): mixup augmentation` — deferred pending evaluation on representative rare-event data (see decision note below)
 - [x] `feat: training loop & checkpoint format`
 - [x] `test(core): MAE(β, p) below per-scenario threshold` — pseudo-data driven
 - [x] `chore: Phase 3 reconstruction plots` — viz_output/phase3_cnp/cnp_reconstruction_S{1..8}.png
@@ -246,7 +246,7 @@ Each phase ships in small, reviewable commits — never one mega-commit. Plot ar
 
 ### Deferred decisions
 
-- **Mixup augmentation** (originally Phase 3). Skipped on synthetic data because our `t_max≈0.4` setup gives ~10–30 % positives — nothing like the paper's ~1:5·10⁴ imbalance — and all 8 scenarios already converge to MAE 0.002–0.021 vs thresholds 0.05–0.12 without it. Implementing it cleanly requires either continuous labels in `StandardBatch` (breaks Phase 0 contract) or a separate tensor-level loss path. Re-open when wiring real LEGEND data: `core/training.py`'s step is the integration point.
+- **Mixup augmentation** (originally Phase 3). Skipped on the synthetic examples because their positive rates are much higher than the rare-event regime targeted by the original paper. Implementing it cleanly requires either continuous labels in `StandardBatch` or a separate tensor-level loss path. Revisit when evaluating on representative rare-event data; `core/training.py` is the integration point.
 
 ## Math & Concepts (load-bearing for implementation)
 
