@@ -1,36 +1,139 @@
-## Interchangeable models
-
-CNP, MLP, tabular transformer and BDT now share `core.surrogates` for building,
-fitting, prediction, evaluation, checkpointing and MFGP preparation.
-See [the component API and migration guide](docs/surrogates.md).
-
-```bash
-export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
-# 1. Train an event model (data preparation runs automatically from data_config)
-.venv/bin/python -m core.surrogates train TRAINING.yaml
-# 2. Mean predicted p per voxel of a partition (context-free models; labels not needed)
-.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
-# 3. Fit the multi-fidelity GP on its configured levels
-.venv/bin/python -m core.surrogates mfgp GP.yaml
-```
-
-RESUM_FLEX is application-independent: runs read data through a dataset provider named in
-the config (`data_provider: package.module:Class`; default `.npz` batches). See
-[datasets, validation metrics and the GP levels](docs/surrogates.md). The LEGEND LAr
-optical map, with its LH5 data handling, configs and Slurm scripts, lives in
-[legend-optical-map-ml](https://github.com/annkasch/legend-optical-map-ml).
-
 # RESUM_FLEX
 
 A modular refactor of **RESuM** (Rare Event Surrogate Model) — a physics-ML
 pipeline for **Rare Event Design (RED)** problems where the design metric
-`y = m/N` is a discrete count with high variance. The framework denoises
-binary observations with a Conditional Neural Process (CNP), then fuses
-multi-fidelity scores with a Multi-Fidelity Gaussian Process (MFGP), and
-selects new design points by Integrated Variance Reduction (IVR) or
-Expected Improvement (EI).
+`y = m/N` is a discrete count with high variance. Event models (CNP, MLP, tabular
+transformer or BDT) learn per-event hit probabilities from binary outcomes; a
+multi-fidelity Gaussian process (MFGP) fuses their predictions with simulated rates
+across fidelity levels; new design points are selected by Integrated Variance
+Reduction (IVR) or Expected Improvement (EI).
+
+RESUM_FLEX is application-independent. Applications plug in their data through a
+dataset provider (see "Bring your own data") and keep their own configs.
 
 Reference paper: [RESuM: A Rare Event Surrogate Model](https://openreview.net/pdf?id=lqTILjL6lP).
+
+## Getting started
+
+### 1. Install
+
+```bash
+git clone https://github.com/annkasch/RESUM_FLEX.git
+cd RESUM_FLEX
+uv sync --extra gp          # .venv with RESUM_FLEX, PyTorch (CPU) and GPy/Emukit
+.venv/bin/python -m pytest -q
+```
+
+Without `uv` on your PATH, use the pinned copy from [pixi](https://pixi.sh):
+`pixi run uv sync --extra gp`. Details on extras and the NumPy 1/2 environments are in
+"Install details" below. Set `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`
+for tests and runs; BLAS oversubscribes on small GP matrices.
+
+### 2. Run the pipeline
+
+Three commands, each driven by a YAML file (paths resolve relative to the YAML):
+
+```bash
+# Train an event model on the train partition, select the checkpoint on validation
+.venv/bin/python -m core.surrogates train training.yaml
+# Mean predicted hit probability per voxel of any partition (context-free models)
+.venv/bin/python -m core.surrogates predict runs/mlp/seed0/checkpoints/best prepared unlabeled
+# Fit the multi-fidelity GP on its configured levels
+.venv/bin/python -m core.surrogates mfgp gp.yaml
+```
+
+A training config (`schemas.surrogates.SurrogateRunConfig`):
+
+```yaml
+model:
+  kind: mlp                       # or cnp, transformer, bdt
+  architecture: {hidden_dims: [256, 256, 256]}
+training:
+  backend: neural
+  loss: bernoulli
+  n_passes: 10                    # passes over the training events (or n_steps)
+  eval_every: 100
+  learning_rate: 0.001
+  batch_size: 16                  # voxels per step
+  n_events: 750                   # events per voxel per step
+  sampling: {strategy: natural}   # real event proportions -> calibrated probabilities
+  seed: 0
+selection: bernoulli_log_loss     # checkpoint with the lowest validation log loss
+hf_validation: false
+test_fidelities: [lf]             # blinded until unblind_test: true
+data_directory: prepared          # read by the dataset provider
+output_directory: runs/mlp/seed0  # must be new or empty
+validation_context_events: 200
+```
+
+A standalone GP config (`schemas.surrogates.MFGPRunConfig`); here the MLP prediction on
+unlabeled voxels is the low-fidelity level and the simulated HF hit fraction the target:
+
+```yaml
+levels:                           # lowest fidelity first; the last level is the target
+- {source: model_mean, partition: unlabeled, fidelity: lf,
+   inference: runs/mlp/seed0/inference/best/unlabeled_lf.npz}
+- {source: observed_fraction, partition: train, fidelity: hf}
+evaluation:
+- {partition: validation, fidelity: hf}
+output_transform: identity        # or log
+kernel: rbf
+n_restarts: 5
+data_directory: prepared
+output_directory: runs/gp/seed0
+```
+
+The same GP can run directly after training with an `mfgp:` block in the training config.
+Full option lists: [docs/surrogates.md](docs/surrogates.md).
+
+### 3. Bring your own data
+
+Runs read data only through a **dataset provider** named in the config by import path:
+
+```yaml
+data_provider: my_package.provider:MyDataset   # constructed as MyDataset(data_directory)
+data_config: my_data.yaml                       # optional: MyDataset.prepare() rebuilds if outdated
+partitions: {train: my_train, validation: my_val, test: my_test}   # event-model partitions
+```
+
+Without `data_provider`, the built-in `NpzBatches` reads one file per partition and
+fidelity, `<data_directory>/batches/<partition>/<fidelity>.npz`, with the arrays of a
+`StandardBatch` (`mode`, `theta`, `phi`, `labels`, optional `event_counts`). A provider
+for your own format implements five methods:
+
+```python
+class MyDataset:
+    def __init__(self, root): ...
+    def partitions(self) -> list[str]: ...
+    def load(self, partition, fidelity, *, labels=True):
+        """(StandardBatch, provenance dict); labels=False must work for inputs without outcomes."""
+    def theta(self, partition, fidelity):
+        """(normalized theta [B, D], voxel ids [B]) without reading events."""
+    def coordinates(self, partition, fidelity):
+        """Physical voxel coordinates [B, D]."""
+    def normalization(self):
+        """Input normalization dict, or None for unnormalized data."""
+    @classmethod
+    def prepare(cls, data_config, data_directory):   # optional
+        """Rebuild data_directory from data_config when outdated; return a record dict."""
+```
+
+Inputs must already be normalized with statistics from the training partition only. The
+interface is defined in `core/surrogates/datasets.py`.
+
+### 4. What a run writes
+
+- Training (`output_directory`): `experiment.json` (resolved config, data provenance),
+  `checkpoints/{best,final}/`, `history.json`, `metrics.json` (validation metrics of both
+  checkpoints, with bootstrap intervals and noise ceilings), `context_sweep.json` for context
+  models, and plots: validation history, per-voxel z-scores, calibration, precision-recall.
+- GP: `levels.json`, `training_arrays.npz`, `model.pkl`, `metrics.json` and per evaluation set
+  `evaluation_<e>.npz`, coverage and z-score plots.
+- Test partitions stay **blinded**: they are evaluated only with `unblind_test: true`, so all
+  model choices are made on validation.
+
+Validation metrics, the GP levels and all output files are described in
+[docs/surrogates.md](docs/surrogates.md).
 
 ## Status
 
@@ -43,18 +146,9 @@ Reference paper: [RESuM: A Rare Event Surrogate Model](https://openreview.net/pd
 | 4 | MFGP co-kriging via Emukit/GPy + held-out coverage gate | ✅ |
 | 5 | Active learning — IVR (exploration) + EI (exploitation) | ✅ |
 
-The full test suite passes on both NumPy 1.26 and NumPy 2.x. See `CLAUDE.md` for the full
-architecture brief and math reference.
+See `CLAUDE.md` for the original architecture brief and math reference.
 
-## Install
-
-```bash
-git clone <this repo>
-cd RESUM_FLEX
-
-uv sync --extra gp                 # locked NumPy 2 + GP + dev environment
-uv run pytest -q
-```
+## Install details
 
 Python 3.11–3.12 is supported; `.python-version` selects 3.12 for local
 development. PyTorch is a hard dependency. The `gp` extra installs
@@ -157,28 +251,33 @@ the explicitly isolated `gp-numpy1` legacy extra.
 
 ```
 RESUM_FLEX/
-├── schemas/           pydantic data contracts (numpy-only, no torch / GPy)
-│   ├── data_models.py     StandardBatch, ModelPrediction (+ DesignPoint, EventBatch)
-│   └── config.py          Typed YAML config tree (load_config)
+├── schemas/           pydantic contracts and YAML loaders (numpy-only, no torch / GPy)
+│   ├── data_models.py     StandardBatch, ModelPrediction
+│   ├── surrogates.py      run configs: event models, training, GP levels, evaluation
+│   └── config.py          typed config of the synthetic phase pipeline
 ├── core/              compute modules
-│   ├── networks.py        Universal encoder + null embeddings (PyTorch)
-│   ├── surrogate_cnp.py   CNP forward, Bernoulli-NLL loss, ctx/target split
-│   ├── surrogate_mfgp.py  3-fidelity recursive co-kriging via Emukit/GPy
-│   ├── mfgp_pipeline.py   CNP → MFGP bridge: prepare datasets, fit, coverage eval
+│   ├── surrogates/        shared build/fit/predict/evaluate API and the CLI
+│   │   ├── datasets.py        DatasetProvider interface, NpzBatches
+│   │   ├── experiment.py      training runs (train / select / evaluate / read-out)
+│   │   ├── inference.py       context-free predictions per voxel
+│   │   ├── mfgp_stage.py      GP over configurable levels, combined or standalone
+│   │   ├── evaluation.py      validation metrics; readout.py: noise ceilings, sweeps
+│   │   └── __main__.py        python -m core.surrogates train | predict | mfgp
+│   ├── bernoulli_{cnp,mlp,transformer}.py, surrogate_bdt.py   event models
+│   ├── networks.py        universal encoder + null embeddings (PyTorch)
+│   ├── surrogate_mfgp.py  linear multi-fidelity co-kriging via Emukit/GPy
+│   ├── mfgp_pipeline.py   event model → GP levels bridge (numpy boundary)
 │   ├── optimizer.py       IVR + EI acquisitions, active-learning loop
-│   └── training.py        train_cnp, evaluate_mae, cnp_trial_predictive, checkpoints
-├── data/              synthetic data
-│   └── pseudo_generator.py    GaussianBumpTruth + PseudoDataGenerator + for_scenario()
-├── viz/               plotting primitives
-│   └── dispatch.py        plot_field, plot_comparison_1d/2d, plot_coverage_test
-├── scripts/           runnable end-to-end demonstrations on synthetic data
-│   ├── phase{1..5}_*.py
-├── tests/             pytest (no real-data fixtures; everything synthetic)
+│   └── training.py        legacy CNP training loop and checkpoints
+├── data/              synthetic data (pseudo_generator.py) and batch sources
+├── viz/               plotting: coverage, z-scores, run summaries, projections
+├── scripts/           phase{1..5}_*.py: end-to-end demonstrations on synthetic data
+├── notebooks/         minimal example, paper reproduction
+├── tests/             pytest (synthetic data only)
 ├── pyproject.toml     canonical Python deps + uv compatibility groups
 ├── uv.lock            cross-platform Python dependency lock (managed by uv)
 ├── pixi.toml          outer tool/task manifest (Python deps are not repeated)
-├── pixi.lock          cross-platform uv tool lock (managed by Pixi)
-└── CLAUDE.md          authoritative agent brief; deep architecture & math
+└── pixi.lock          cross-platform uv tool lock (managed by Pixi)
 ```
 
 **Decoupling rule:** PyTorch lives only in `core/networks.py`,
@@ -708,9 +807,9 @@ Every Phase 5 run also emits an `optimizer_{S}_trajectory.png` and an
 ## Tests
 
 ```bash
-pytest                     # 158 tests, ~1 minute on CPU
-pytest tests/test_cnp_recovery.py  -v   # the 8-scenario MAE gate (~17s)
-pytest tests/test_mfgp_recovery.py -v   # MFGP coverage gate, ~2 min
+.venv/bin/python -m pytest -q                              # full suite, a few minutes on CPU
+.venv/bin/python -m pytest -q --ignore=tests/test_mfgp_recovery.py   # without the slow GP gate
+.venv/bin/python -m pytest tests/test_mfgp_recovery.py -v  # MFGP coverage gate, ~4 min
 ```
 
 ## Further reading

@@ -60,9 +60,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/python -m core.surrogates mfgp GP.yaml
 ```
 
-Data come from a dataset provider (see "Datasets and providers"). Maintained example
-configs for a real application live in
-[legend-optical-map-ml](https://github.com/annkasch/legend-optical-map-ml) (`configs/`).
+Data come from a dataset provider (see "Datasets and providers").
 Change model and training settings using the API
 options below; BDT fits natural events. `selection` picks the checkpoint metric
 (`bernoulli_log_loss` for natural-event runs, `average_precision` for mixup ablations).
@@ -482,8 +480,8 @@ labels are then a zero placeholder that is never scored), `theta(partition, fide
 returning normalized theta and voxel ids, `coordinates(partition, fidelity)` and
 `normalization()`. Optionally a classmethod `prepare(data_config, data_directory)` rebuilds
 the prepared data and returns a record that the run stores in `experiment.json`. GP levels
-and evaluation sets name provider partitions directly. The LEGEND LAr optical map is such
-an application: https://github.com/annkasch/legend-optical-map-ml.
+and evaluation sets name provider partitions directly. Application packages ship their own
+provider and configs.
 
 Two settings make large validation sets cheap. `selection_max_voxels: N` selects
 checkpoints during training on a seeded subset of at most N validation voxels; the full
