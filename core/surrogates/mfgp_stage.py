@@ -133,6 +133,36 @@ def _fit_targets(level, values, events, cfg):
     return np.maximum(values, cfg.cnp_log_floor)
 
 
+def _training_noise(level, values, events, cfg):
+    """Fixed observation variance [n] of a level in fitted units, or None (learned only)."""
+    if cfg.observation_noise != "binomial" or level.source != "observed_fraction":
+        return None
+    from core.surrogate_mfgp import binomial_noise
+
+    a = cfg.raw_pseudocount
+    smoothed = (values * events + a) / (events + 2 * a)  # nonzero plug-in estimate of p
+    return binomial_noise(smoothed, events, output_transform=cfg.output_transform,
+                          pseudocount=a)
+
+
+def _evaluation_noise(gp, theta, level, events, cfg):
+    """Binomial variance [B] of held-out voxels from their N and the predicted rate.
+
+    Returns (noise or None, number of identity-mode predictions outside [0, 1]); those
+    are counted, and only the noise formula uses the rate limited to [0, 1].
+    """
+    if cfg.observation_noise != "binomial":
+        return None, 0
+    from core.surrogate_mfgp import binomial_noise
+
+    mu, _ = gp.predict_transformed(theta, fidelity=level)
+    rate = np.exp(mu) if cfg.output_transform == "log" else mu  # log: predictive median
+    invalid = int(((rate < 0) | (rate > 1)).sum())
+    noise = binomial_noise(np.clip(rate, 0, 1), events, output_transform=cfg.output_transform,
+                           pseudocount=cfg.raw_pseudocount)
+    return noise, invalid
+
+
 def run_mfgp(
     cfg, *, provider, output_directory, model=None, metrics_seed=None, extra_metadata=None
 ):
@@ -155,6 +185,9 @@ def run_mfgp(
             {f"X_{k}": X, f"Y_{k}": Y[:, None], f"events_{k}": events[:, None], f"index_{k}": index}
         )
         fit[f"X_{k}"], fit[f"Y_{k}"] = X, _fit_targets(level, Y, events, cfg)[:, None]
+        noise = _training_noise(level, Y, events, cfg)
+        if noise is not None:
+            fit[f"noise_{k}"] = noise
         record = dict(level=k, **level.model_dump(mode="json"), voxels=len(Y), data=provenance)
         if cfg.output_transform == "log" and level.source == "model_mean":
             record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
@@ -179,6 +212,8 @@ def run_mfgp(
             kernel=cfg.kernel,
             n_restarts=cfg.n_restarts,
             output_transform=cfg.output_transform,
+            noise_list=None if cfg.observation_noise == "learned"
+            else [fit.get(f"noise_{k}") for k in range(n)],
         )
     finally:
         np.random.set_state(state)
@@ -190,7 +225,12 @@ def run_mfgp(
         target_level=n - 1,
         coordinates="Prepared theta; use saved normalization for physical queries",
         variance="Original-scale predictive variance; log mode uses lognormal moments",
-        noise="Learned per-level constant noise",
+        noise=(
+            "Learned per-level constant noise"
+            if cfg.observation_noise == "learned"
+            else "Learned per-level constant noise plus fixed binomial variance per "
+            "observed_fraction voxel (fit_arrays noise_k, fitted units)"
+        ),
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names_flat().tolist(),
         parameters=gp.model.param_array.tolist(),
@@ -206,17 +246,24 @@ def run_mfgp(
         level = n - 1 if evaluation.level is None else evaluation.level
         batch, provenance = data.labeled(evaluation.partition, evaluation.fidelity)
         observed, events = observed_fraction(batch)
-        mean, variance = gp.predict(batch.theta, fidelity=level)
-        loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level)
+        noise, invalid = _evaluation_noise(gp, batch.theta, level, events, cfg)
+        extra_noise = {} if noise is None else dict(noise=noise)
+        mean, variance = gp.predict(batch.theta, fidelity=level, **extra_noise)
+        loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level, **extra_noise)
         np.testing.assert_array_equal(mean, loaded_mean)
         np.testing.assert_array_equal(variance, loaded_var)
         sigma = np.sqrt(variance)
         if not np.isfinite(mean).all() or not np.isfinite(sigma).all():
             raise ValueError("Nonfinite MFGP predictions")
         intervals = {
-            k: gp.predict_interval(batch.theta, fidelity=level, n_sigma=k) for k in (1, 2, 3)
+            k: gp.predict_interval(batch.theta, fidelity=level, n_sigma=k, **extra_noise)
+            for k in (1, 2, 3)
         }
-        scores = mfgp_metrics(gp, batch.theta, observed, fidelity=level, seed=metrics_seed)
+        scores = mfgp_metrics(gp, batch.theta, observed, fidelity=level, seed=metrics_seed,
+                              noise=noise)
+        if noise is not None:
+            scores["observation_noise"] = "binomial from target N and predicted rate"
+            scores["noise_rate_out_of_range"] = invalid
         scores.update(
             evaluation=e,
             partition=evaluation.partition,

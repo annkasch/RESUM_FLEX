@@ -21,13 +21,41 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
-import numpy as np
 import GPy
+import numpy as np
 from emukit.multi_fidelity.convert_lists_to_array import convert_xy_lists_to_arrays
 from emukit.multi_fidelity.kernels import LinearMultiFidelityKernel
 from emukit.multi_fidelity.models import GPyLinearMultiFidelityModel
 
 from schemas.data_models import ModelPrediction
+
+
+class _FixedPlusLevelNoise(GPy.likelihoods.MixedNoise):
+    """Learned constant noise per fidelity plus fixed per-point variance.
+
+    The fixed part lives in ``Y_metadata["fixed_noise"]`` [n] of the training rows. It does
+    not depend on any parameter, so the per-level gradients of MixedNoise stay valid.
+    """
+
+    def gaussian_variance(self, Y_metadata):
+        variance = super().gaussian_variance(Y_metadata)
+        return variance + Y_metadata.get("fixed_noise", 0.0)
+
+
+def binomial_noise(probability, events, *, output_transform, pseudocount):
+    """Variance [n] of the smoothed fraction (m + a)/(N + 2a) in fitted units.
+
+    probability, events: [n]. Identity: N p (1 - p) / (N + 2a)^2. Log (delta method):
+    N p (1 - p) / (N p + a)^2, finite also for voxels without hits.
+    """
+    p = np.asarray(probability, dtype=float)
+    n = np.asarray(events, dtype=float)
+    if not ((p >= 0) & (p <= 1)).all() or not (n > 0).all():
+        raise ValueError("Binomial noise needs probabilities in [0, 1] and positive event counts")
+    count_variance = n * p * (1 - p)
+    if output_transform == "log":
+        return count_variance / (n * p + pseudocount) ** 2
+    return count_variance / (n + 2 * pseudocount) ** 2
 
 
 _KERNEL_FACTORIES = {
@@ -92,12 +120,15 @@ class MultiFidelityGP:
         *,
         n_restarts: int = 5,
         verbose: bool = False,
-    ) -> "MultiFidelityGP":
+        noise_list: list[np.ndarray | None] | None = None,
+    ) -> MultiFidelityGP:
         """Fit the GP on per-fidelity ``(X, Y)`` arrays.
 
         ``X_list[i]`` has shape ``(n_i, dim_theta)`` and ``Y_list[i]``
         has shape ``(n_i, 1)``. ``i`` indexes fidelity from low (0) to
-        high (``n_fidelities - 1``).
+        high (``n_fidelities - 1``). ``noise_list[i]`` [n_i] is a fixed observation
+        variance per point in fitted units (None: none); each level also learns a
+        constant noise variance.
         """
         if len(X_list) != self.n_fidelities or len(Y_list) != self.n_fidelities:
             raise ValueError(
@@ -119,9 +150,26 @@ class MultiFidelityGP:
                 raise ValueError("Log-space GP requires finite, strictly positive training targets")
             Y_list = [np.log(y) for y in Y_list]
         X_train, Y_train = convert_xy_lists_to_arrays(X_list, Y_list)
+        likelihood = None
+        if noise_list is not None:
+            if len(noise_list) != self.n_fidelities:
+                raise ValueError(f"expected {self.n_fidelities} noise arrays")
+            fixed = []
+            for i, (noise, X) in enumerate(zip(noise_list, X_list, strict=True)):
+                noise = np.zeros(len(X)) if noise is None else np.asarray(noise, dtype=float)
+                if noise.shape != (len(X),) or not np.isfinite(noise).all() or (noise < 0).any():
+                    raise ValueError(f"noise_list[{i}] must be finite, nonnegative, [{len(X)}]")
+                fixed.append(noise)
+            likelihood = _FixedPlusLevelNoise(
+                [GPy.likelihoods.Gaussian(variance=1.0) for _ in range(self.n_fidelities)]
+            )
         model = GPyLinearMultiFidelityModel(
             X_train, Y_train, self._build_kernel(), n_fidelities=self.n_fidelities,
+            likelihood=likelihood,
         )
+        if likelihood is not None:
+            model.Y_metadata["fixed_noise"] = np.concatenate(fixed)  # same row order as X
+            model.parameters_changed()
         model.optimize_restarts(num_restarts=n_restarts, verbose=verbose)
         self._model = model
         return self
@@ -170,13 +218,25 @@ class MultiFidelityGP:
         covariance = np.asarray(covariance).reshape(len(X_new), len(X_new))
         return mean.ravel(), (covariance + covariance.T) / 2
 
-    def predict(self, X_new, fidelity=None):
+    def _moments(self, X_new, fidelity, noise):
+        """predict_transformed plus an optional fixed observation variance [n] (fitted units)."""
+        mean, variance = self.predict_transformed(X_new, fidelity)
+        if noise is None:
+            return mean, variance
+        noise = np.asarray(noise, dtype=float)
+        if noise.shape != variance.shape or not np.isfinite(noise).all() or (noise < 0).any():
+            raise ValueError("noise must be finite, nonnegative and one value per query")
+        return mean, variance + noise
+
+    def predict(self, X_new, fidelity=None, *, noise=None):
         """Mean and variance in original units, including observation noise.
 
-        Log mode returns lognormal moments, not exponentiated Gaussian means.
-        Old checkpoints without output_transform retain identity behavior.
+        ``noise`` [n]: fixed observation variance of the queried voxels in fitted units,
+        added to the learned level noise. Log mode returns lognormal moments, not
+        exponentiated Gaussian means. Old checkpoints without output_transform retain
+        identity behavior.
         """
-        mean, variance = self.predict_transformed(X_new, fidelity)
+        mean, variance = self._moments(X_new, fidelity, noise)
         if getattr(self, "output_transform", "identity") == "log":
             with np.errstate(over="raise", invalid="raise"):
                 original_mean = np.exp(mean + variance / 2)
@@ -184,11 +244,11 @@ class MultiFidelityGP:
             return original_mean, original_variance
         return mean, variance
 
-    def predict_interval(self, X_new, fidelity=None, *, n_sigma=1):
-        """Equal-tail interval with Gaussian ±n_sigma probability mass."""
+    def predict_interval(self, X_new, fidelity=None, *, n_sigma=1, noise=None):
+        """Equal-tail interval with Gaussian ±n_sigma probability mass (noise as in predict)."""
         if not np.isfinite(n_sigma) or n_sigma <= 0:
             raise ValueError("n_sigma must be finite and positive")
-        mean, variance = self.predict_transformed(X_new, fidelity)
+        mean, variance = self._moments(X_new, fidelity, noise)
         width = n_sigma * np.sqrt(variance)
         lower, upper = mean - width, mean + width
         if getattr(self, "output_transform", "identity") == "log":

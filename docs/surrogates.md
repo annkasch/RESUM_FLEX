@@ -176,6 +176,13 @@ partition/fidelity share it. `evaluation` lists held-out partitions whose observ
 fraction is scored against one level (default: the top level). Log mode smooths observed
 fractions to (m + a)/(N + 2a) and floors model means at `cnp_log_floor`.
 
+Each level learns one constant noise variance. With `observation_noise: binomial`, every
+`observed_fraction` voxel also gets a fixed variance from its counts, so dim voxels count
+less than bright ones: N p(1 − p)/(N + 2a)² for the rate, N p(1 − p)/(N p + a)² for its log,
+with the smoothed fraction as p. Evaluation intervals add the same variance for each
+held-out voxel, from its N and the predicted rate. `model_mean` levels keep only the
+learned noise, which there stands for model error.
+
 ```yaml
 levels:
   - {source: model_mean, partition: gp_unlabeled, inference: RUN/inference/best/gp_unlabeled_lf.npz}

@@ -374,6 +374,10 @@ class MFGPStageConfig(StrictConfigModel):
     # Log mode: observed fractions become (m + a) / (N + 2a); model means are floored.
     raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)
+    # learned: one constant noise variance per level. binomial: additionally a fixed
+    # variance per observed_fraction voxel from its counts, and per evaluation voxel from
+    # its N and the predicted rate (model_mean levels keep only the learned noise).
+    observation_noise: Literal["learned", "binomial"] = "learned"
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0

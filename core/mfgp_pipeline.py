@@ -113,11 +113,13 @@ def fit_mfgp(
     n_restarts: int = 5,
     verbose: bool = False,
     output_transform: str = "identity",
+    noise_list: list[np.ndarray | None] | None = None,
 ) -> MultiFidelityGP:
     """Fit a linear multi-fidelity GP with one level per (X, Y) pair, lowest fidelity first.
 
     X_list[k]: [n_k, D_theta]; Y_list[k]: [n_k, 1]. Log mode requires strictly positive
-    targets, already smoothed or floored by the caller.
+    targets, already smoothed or floored by the caller. noise_list: fixed per-point
+    observation variances in fitted units (see MultiFidelityGP.fit).
     """
     if len(X_list) != len(Y_list) or len(X_list) < 2:
         raise ValueError("Need matching X/Y lists with at least two levels")
@@ -126,7 +128,7 @@ def fit_mfgp(
         dim_theta=X_list[0].shape[1],
         kernel=kernel,
         output_transform=output_transform,
-    ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose)
+    ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose, noise_list=noise_list)
 
 
 def evaluate_mfgp_coverage_from_batch(

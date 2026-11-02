@@ -110,6 +110,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `output_transform` | `identity` (rate) or `log` (`identity`). |
 | `raw_pseudocount` | Log mode: observed fractions become (m + a)/(N + 2a) (0.5). |
 | `cnp_log_floor` | Log mode: floor for model means (1e-12). |
+| `observation_noise` | `learned`: one constant noise variance per level. `binomial`: additionally a fixed variance per `observed_fraction` voxel from its counts, and per evaluation voxel from its N and the predicted rate (`learned`). |
 | `kernel` | `rbf` or `matern52` (`rbf`). |
 | `n_restarts` | Hyperparameter optimizer restarts (5). |
 | `seed` | Seed of fits, voxel subsets and context splits (0). |
