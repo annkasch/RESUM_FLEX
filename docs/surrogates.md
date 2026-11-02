@@ -461,6 +461,18 @@ prepared datasets and checkpoints are unaffected.
 - The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP
   dataset helpers reject unequal counts with an error; use `core.surrogates`.
 
+## Binomial count GP
+
+`python -m core.surrogates binomial CONFIG.yaml` fits one spatial GP directly to hit counts:
+m ~ Binomial(N, sigmoid(f(θ))), Matérn-5/2 (or RBF) plus a constant kernel, Laplace
+posterior (`core/binomial_gp.py`). Several count sets (e.g. LF and HF partitions with the same
+physics) share the latent probability; their different event counts N enter the likelihood
+exactly, so the counting noise is per voxel by construction. Evaluation draws joint latent
+probabilities and then binomial counts (observation-predictive); the NLL is a count probability
+mass and must not be ranked against the MFGP's density NLL. Outputs: `observations.json`,
+`training_arrays.npz`, `model.pkl`/`model.json`, `evaluation_<e>.npz`, `metrics.json`,
+`development_map.npz` and coverage / z-score plots. Settings: [docs/configs.md](configs.md).
+
 ## Datasets and providers
 
 Training, inference and the GP stage read data only through a dataset provider

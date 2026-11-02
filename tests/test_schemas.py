@@ -277,7 +277,7 @@ def test_every_config_field_is_documented():
         s.WeightingConfig, s.RealPlusMixupObjective, s.RandomContext, s.FixedContext,
         s.LastLayerFineTuning, s.TrainingStage, s.MLPArchitecture, BDTConfig,
         TabularTransformerConfig, s.MFGPRunConfig, s.ModelMeanLevel, s.ObservedFractionLevel,
-        s.GPEvaluation,
+        s.GPEvaluation, s.BinomialGPRunConfig, s.CountSet, s.CountEvaluation,
     ]
     missing = sorted(
         f"{m.__name__}.{name}"

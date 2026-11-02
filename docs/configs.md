@@ -6,6 +6,7 @@ parentheses.
 
 - [Training config](#training-config) (`python -m core.surrogates train`)
 - [GP config](#gp-config) (`python -m core.surrogates mfgp`, or `mfgp:` in a training config)
+- [Binomial GP config](#binomial-gp-config) (`python -m core.surrogates binomial`)
 
 ## Training config
 
@@ -123,3 +124,21 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `data_directory`, `data_provider`, `data_config` | As in the training config. |
 | `checkpoint` | Event model for `model_mean` levels without `inference`. |
 | `output_directory` | GP run directory; must be new. Required. |
+
+## Binomial GP config
+
+`BinomialGPRunConfig`: one latent hit probability fitted directly to per-voxel hit counts,
+m ~ Binomial(N, sigmoid(f(θ))) with a Laplace posterior. No event model is involved.
+
+| Key | Meaning |
+|---|---|
+| `observations` | List of count sets, each `partition`, `fidelity` and `max_voxels` (all). All sets share one latent probability; N enters the likelihood exactly. |
+| `evaluation` | List of `{partition, fidelity}` scored with the observation-predictive distribution (`fidelity` defaults to `hf`). |
+| `kernel` | `matern52` or `rbf`, plus a constant kernel (`matern52`). |
+| `n_restarts` | Hyperparameter optimizer restarts (2). |
+| `max_iters` | Optimizer iterations per restart (300). |
+| `seed` | Seed of fits, voxel subsets and predictive draws (42). |
+| `prediction_draws` | Monte Carlo draws of the predictive counts per evaluation set (32768). |
+| `unblind_test` | Allow test partitions in `evaluation` (`false`). |
+| `data_directory`, `data_provider`, `data_config` | As in the training config. |
+| `output_directory` | Run directory; must be new. Required. |

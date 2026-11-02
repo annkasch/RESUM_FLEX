@@ -52,6 +52,9 @@ data_directory: prepared
 output_directory: runs/gp
 ```
 
+As an alternative to the MFGP, `python -m core.surrogates binomial binomial.yaml` fits one GP
+directly to hit counts with a binomial likelihood (no event model).
+
 Test partitions are only evaluated with `unblind_test: true`. What a run writes and the
 validation metrics are described in [docs/surrogates.md](docs/surrogates.md#validation-metrics).
 

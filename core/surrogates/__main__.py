@@ -1,6 +1,7 @@
 """Run: python -m core.surrogates train TRAINING.yaml
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
-python -m core.surrogates mfgp GP.yaml"""
+python -m core.surrogates mfgp GP.yaml
+python -m core.surrogates binomial BINOMIAL_GP.yaml"""
 
 import argparse
 
@@ -27,10 +28,20 @@ def main():
     )
     mfgp = commands.add_parser("mfgp", help="Fit a standalone multi-fidelity GP")
     mfgp.add_argument("config")
+    binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
+    binomial.add_argument("config")
     args = parser.parse_args()
     import torch
 
     torch.set_num_threads(1)
+    if args.command == "binomial":
+        from core.surrogates.binomial_stage import run_binomial_config
+        from schemas.surrogates import load_binomial_config
+
+        config = load_binomial_config(args.config)
+        print(f"Fitting a binomial GP on {len(config.observations)} count sets", flush=True)
+        print(run_binomial_config(config), flush=True)
+        return
     if args.command == "mfgp":
         from core.surrogates.mfgp_stage import run_mfgp_config
         from schemas.surrogates import load_mfgp_config

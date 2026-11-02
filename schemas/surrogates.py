@@ -441,6 +441,66 @@ def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
     return config
 
 
+class CountSet(StrictConfigModel):
+    """Prepared partition whose per-voxel hit counts enter the binomial likelihood."""
+
+    partition: str
+    fidelity: Fidelity
+    # Fit on a seeded subset of this many voxels (exact Laplace GPs scale as O(n^3)).
+    max_voxels: int | None = Field(default=None, gt=0)
+
+
+class CountEvaluation(StrictConfigModel):
+    partition: str
+    fidelity: Fidelity = "hf"
+
+
+class BinomialGPRunConfig(StrictConfigModel):
+    """Single spatial GP on hit counts: m ~ Binomial(N, sigmoid(f(theta))), Laplace posterior.
+
+    All observation sets share one latent probability; fidelities differ only in N, which
+    enters the likelihood exactly. No event model is involved.
+    """
+
+    observations: list[CountSet] = Field(min_length=1)
+    evaluation: list[CountEvaluation] = Field(default_factory=list)
+    kernel: Literal["rbf", "matern52"] = "matern52"
+    n_restarts: int = Field(default=2, gt=0)
+    max_iters: int = Field(default=300, gt=0)
+    seed: int = 42
+    # Monte Carlo draws of the observation-predictive distribution per evaluation set.
+    prediction_draws: int = Field(default=32768, ge=2048)
+    unblind_test: bool = False
+    data_directory: Path
+    data_provider: str | None = None
+    data_config: Path | None = None
+    output_directory: Path
+
+    @model_validator(mode="after")
+    def held_out_sets(self):
+        for item in self.observations:
+            if item.partition in TEST_PARTITIONS:
+                raise ValueError(f"Test partition {item.partition} can't be a training set")
+        for item in self.evaluation:
+            if item.partition in TEST_PARTITIONS and not self.unblind_test:
+                raise ValueError(
+                    f"{item.partition} is blinded; set unblind_test: true once all choices "
+                    "are final"
+                )
+        return self
+
+
+def load_binomial_config(path: str | Path) -> BinomialGPRunConfig:
+    """Binomial GP config; paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = BinomialGPRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    for name in ("data_directory", "data_config", "output_directory"):
+        value = getattr(config, name)
+        if value is not None and not value.is_absolute():
+            setattr(config, name, (path.parent / value).resolve())
+    return config
+
+
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
