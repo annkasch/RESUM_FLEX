@@ -109,6 +109,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `evaluation` | List of `{partition, fidelity, level}` scored after fitting; `level` defaults to the target. |
 | `output_transform` | `identity` (rate) or `log` (`identity`). |
 | `raw_pseudocount` | Log mode: observed fractions become (m + a)/(N + 2a) (0.5). |
+| `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
 | `cnp_log_floor` | Log mode: floor for model means (1e-12). |
 | `observation_noise` | `learned`: one constant noise variance per level. `binomial`: additionally a fixed variance per `observed_fraction` voxel from its counts, and per evaluation voxel from its N and the predicted rate (`learned`). |
 | `kernel` | `rbf` or `matern52` (`rbf`). |
@@ -140,6 +141,7 @@ m ~ Binomial(N, sigmoid(f(θ))) with a Laplace posterior. No event model is invo
 | `max_iters` | Optimizer iterations per restart (300). |
 | `seed` | Seed of fits, voxel subsets and predictive draws (42). |
 | `prediction_draws` | Monte Carlo draws of the predictive counts per evaluation set (32768). |
+| `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
 | `unblind_test` | Allow test partitions in `evaluation` (`false`). |
 | `data_directory`, `data_provider`, `data_config` | As in the training config. |
 | `output_directory` | Run directory; must be new. Required. |

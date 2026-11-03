@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from schemas.bdt import BDTConfig
 from schemas.config import EncoderConfig, StrictConfigModel
@@ -381,6 +381,15 @@ class MFGPStageConfig(StrictConfigModel):
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
+    # Fixed y range of the coverage plots (observed fraction); None = from the data.
+    coverage_ylim: tuple[float, float] | None = None
+
+    @field_validator("coverage_ylim")
+    @classmethod
+    def _ordered_coverage_ylim(cls, value):
+        if value is not None and not value[0] < value[1]:
+            raise ValueError(f"coverage_ylim must be (low, high) with low < high, got {value}")
+        return value
     # Context events per voxel when a context model computes a model_mean level.
     n_context: int = Field(default=64, gt=0)
     # Test partitions stay blinded until all choices are final; then set true once.
@@ -474,6 +483,15 @@ class BinomialGPRunConfig(StrictConfigModel):
     seed: int = 42
     # Monte Carlo draws of the observation-predictive distribution per evaluation set.
     prediction_draws: int = Field(default=32768, ge=2048)
+    # Fixed y range of the coverage plots (observed fraction); None = from the data.
+    coverage_ylim: tuple[float, float] | None = None
+
+    @field_validator("coverage_ylim")
+    @classmethod
+    def _ordered_coverage_ylim(cls, value):
+        if value is not None and not value[0] < value[1]:
+            raise ValueError(f"coverage_ylim must be (low, high) with low < high, got {value}")
+        return value
     unblind_test: bool = False
     data_directory: Path
     data_provider: str | None = None
@@ -596,3 +614,4 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
         if level.source == "model_mean" and level.inference and not level.inference.is_absolute():
             level.inference = (path.parent / level.inference).resolve()
     return config
+

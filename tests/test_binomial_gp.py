@@ -28,7 +28,8 @@ def test_binomial_likelihood_matches_counts_and_derivatives():
     ) / (2 * eps)
     np.testing.assert_allclose(likelihood.dlogpdf_df(f, m, metadata), numerical, atol=1e-6)
     extreme = likelihood.logpdf(
-        np.array([[-1000.0], [1000.0]]), np.array([[0.0], [5000.0]]),
+        np.array([[-1000.0], [1000.0]]),
+        np.array([[0.0], [5000.0]]),
         {"trials": np.array([[1500.0], [5000.0]])},
     )
     assert np.isfinite(extreme).all()  # zero / all-hit counts without label smoothing
@@ -52,13 +53,20 @@ def test_counts_not_scores_and_roundtrip(tmp_path):
 def write_batches(root):
     source = for_scenario("S1", seed=2)
     for split, fidelity, n_events, seed in [
-        ("train", "lf", 30, 1), ("train", "hf", 80, 2), ("validation", "hf", 80, 3),
+        ("train", "lf", 30, 1),
+        ("train", "hf", 80, 2),
+        ("validation", "hf", 80, 3),
     ]:
         batch = source.generate(n_trials=6, n_events=n_events, seed=seed)
         folder = root / "batches" / split
         folder.mkdir(parents=True, exist_ok=True)
-        np.savez(folder / f"{fidelity}.npz", mode=batch.mode.value, theta=batch.theta,
-                 phi=batch.phi, labels=batch.labels)
+        np.savez(
+            folder / f"{fidelity}.npz",
+            mode=batch.mode.value,
+            theta=batch.theta,
+            phi=batch.phi,
+            labels=batch.labels,
+        )
     return root
 
 
@@ -67,16 +75,22 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
 
     root = write_batches(tmp_path / "data")
     config = BinomialGPRunConfig(
-        observations=[{"partition": "train", "fidelity": "lf", "max_voxels": 4},
-                      {"partition": "train", "fidelity": "hf"}],
+        observations=[
+            {"partition": "train", "fidelity": "lf", "max_voxels": 4},
+            {"partition": "train", "fidelity": "hf"},
+        ],
         evaluation=[{"partition": "validation", "fidelity": "hf"}],
-        n_restarts=1, max_iters=30, prediction_draws=2048,
-        data_directory=root, output_directory=tmp_path / "gp",
+        n_restarts=1,
+        max_iters=30,
+        prediction_draws=2048,
+        data_directory=root,
+        output_directory=tmp_path / "gp",
     )
     out = run_binomial_config(config)
     sets = json.loads((out / "observations.json").read_text())
     assert [(s["partition"], s["fidelity"], s["voxels"]) for s in sets] == [
-        ("train", "lf", 4), ("train", "hf", 6)
+        ("train", "lf", 4),
+        ("train", "hf", 6),
     ]
     with np.load(out / "training_arrays.npz") as arrays:
         assert len(arrays["hits"]) == 10 and set(arrays["events"]) == {30, 80}
@@ -92,10 +106,25 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
 
 
 def test_binomial_config_blinds_test_partitions():
-    base = dict(observations=[{"partition": "train", "fidelity": "hf"}],
-                data_directory="d", output_directory="o")
+    base = dict(
+        observations=[{"partition": "train", "fidelity": "hf"}],
+        data_directory="d",
+        output_directory="o",
+    )
     with pytest.raises(ValueError, match="blinded"):
         BinomialGPRunConfig(**base, evaluation=[{"partition": "gp_test"}])
     with pytest.raises(ValueError, match="can't be a training set"):
         BinomialGPRunConfig(**{**base, "observations": [{"partition": "test", "fidelity": "hf"}]})
     assert BinomialGPRunConfig(**base, evaluation=[{"partition": "gp_test"}], unblind_test=True)
+
+
+def test_coverage_ylim_config():
+    base = dict(
+        observations=[{"partition": "train", "fidelity": "hf"}],
+        data_directory="d",
+        output_directory="o",
+    )
+    assert BinomialGPRunConfig(**base, coverage_ylim=(0, 0.0065)).coverage_ylim == (0, 0.0065)
+    assert BinomialGPRunConfig(**base).coverage_ylim is None
+    with pytest.raises(ValueError, match="low < high"):
+        BinomialGPRunConfig(**base, coverage_ylim=(0.01, 0.0))

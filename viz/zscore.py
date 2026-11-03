@@ -31,21 +31,29 @@ def gp_zscores(arrays, pseudocount):
     return (observed - mean) / sigma
 
 
-def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
+Z_LIMIT = 6.0  # fixed z axis range ±6 so plots of different runs compare directly
+
+
+def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", limit=Z_LIMIT):
     """Histogram of z against N(0, 1), and z against the predicted rate with ±1/2/3σ bands.
 
-    z, predicted: [B] per voxel. Writes PNG and PDF next to ``out_path`` (no suffix).
-    Returns the summary (mean, std, fraction |z| > 2).
+    z, predicted: [B] per voxel. The z axis is fixed to ±limit; values beyond are drawn at
+    the edge and counted in the legend (summary statistics use the unclipped z). Writes PNG
+    and PDF next to ``out_path`` (no suffix). Returns the summary (mean, std, fraction
+    |z| > 2, number beyond ±limit).
     """
     z, predicted = np.asarray(z, dtype=float), np.asarray(predicted, dtype=float)
     if z.shape != predicted.shape or not np.isfinite(z).all():
         raise ValueError("Need finite z and predicted rates of equal shape")
     summary = dict(mean=float(z.mean()), std=float(z.std(ddof=1)) if len(z) > 1 else 0.0,
-                   outside_2=float(np.mean(np.abs(z) > 2)), voxels=len(z))
+                   outside_2=float(np.mean(np.abs(z) > 2)), voxels=len(z),
+                   beyond_limit=int(np.sum(np.abs(z) > limit)))
     fig, (ax_hist, ax_rate) = plt.subplots(1, 2, figsize=(12, 4.5), layout="constrained")
-    limit = max(4.0, float(np.ceil(np.abs(z).max())))
-    ax_hist.hist(z, bins=np.linspace(-limit, limit, 41), density=True, color="C0", alpha=0.6,
-                 label=f"{len(z)} voxels")
+    shown = np.clip(z, -limit, limit)
+    beyond = summary["beyond_limit"]
+    ax_hist.hist(shown, bins=np.linspace(-limit, limit, 41), density=True, color="C0",
+                 alpha=0.6, label=f"{len(z)} voxels"
+                 + (f" ({beyond} beyond ±{limit:g}, at edge)" if beyond else ""))
     grid = np.linspace(-limit, limit, 400)
     ax_hist.plot(grid, norm.pdf(grid), "k--", label="N(0, 1)")
     ax_hist.set(xlabel="z = (observed − predicted) / σ", ylabel="Density",
@@ -58,7 +66,7 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate"):
         inside = np.mean(np.abs(z) <= k)
         ax_rate.axhspan(-k, k, color=color, alpha=alpha, lw=0,
                         label=f"±{k}σ: {inside:.0%} ({[68.3, 95.4, 99.7][k - 1]}%)")
-    ax_rate.scatter(predicted, z, s=8, color="black", alpha=0.6, label="voxels", zorder=3)
+    ax_rate.scatter(predicted, shown, s=8, color="black", alpha=0.6, label="voxels", zorder=3)
     ax_rate.axhline(0, color="black", lw=1)
     ax_rate.set(xlabel=rate_label, ylabel="z [σ]", title="z vs predicted rate",
                 ylim=(-limit, limit))
