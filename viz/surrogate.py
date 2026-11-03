@@ -285,10 +285,18 @@ def plot_mfgp_training_inputs(directory):
     return directory / "training_inputs.png"
 
 
-def plot_mfgp_run(directory):
-    """Training levels and mean/residual/coverage diagnostics per evaluation set."""
+def plot_mfgp_run(directory, coverage_ylim=None):
+    """Training levels and mean/residual/coverage diagnostics per evaluation set.
+
+    coverage_ylim: fixed y range of the coverage plots; None reads ``coverage_ylim`` from the
+    run's model.json config, and if that is unset the range follows the data.
+    """
     plot_mfgp_training_inputs(directory)
     directory = Path(directory)
+    if coverage_ylim is None:
+        coverage_ylim = json.loads((directory / "model.json").read_text())["config"].get(
+            "coverage_ylim"
+        )
     from viz.zscore import gp_zscores, plot_zscores
 
     pseudocount = json.loads((directory / "model.json").read_text())["config"]["raw_pseudocount"]
@@ -340,7 +348,9 @@ def plot_mfgp_run(directory):
                 xlabel="Evaluation voxel index",
                 predicted_label="MFGP mean",
                 raw_label="Observed fraction",
-                ylim=(max(0, low - padding) if is_log else low - padding, high + padding),
+                ylim=tuple(coverage_ylim) if coverage_ylim else (
+                    max(0, low - padding) if is_log else low - padding, high + padding
+                ),
                 intervals=intervals,
                 interval_label="σ in log space" if is_log else "σ",
                 show_predicted=False,  # the bands carry the mean; the line hid the points

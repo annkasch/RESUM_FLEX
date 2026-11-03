@@ -125,11 +125,18 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
     return directory
 
 
-def _plot(directory):
-    """Coverage and z-score plots per evaluation set (observation-predictive)."""
+def _plot(directory, coverage_ylim=None):
+    """Coverage and z-score plots per evaluation set (observation-predictive).
+
+    coverage_ylim: fixed y range of the coverage plots; None reads ``coverage_ylim`` from the
+    run's model.json config, and if that is unset the range follows the data.
+    """
     from viz.dispatch import plot_coverage_test
     from viz.zscore import plot_zscores
 
+    if coverage_ylim is None and (directory / "model.json").is_file():
+        saved = json.loads((directory / "model.json").read_text())
+        coverage_ylim = saved.get("config", {}).get("coverage_ylim")
     for path in sorted(directory.glob("evaluation_*.npz")):
         with np.load(path) as a:
             observed, mean, sigma = a["observed"], a["mean"], a["sigma"]
@@ -140,7 +147,9 @@ def _plot(directory):
             observed, mean, sigma, out_path=directory / f"{path.stem}_coverage.png",
             title=f"{label}: binomial GP observation-predictive coverage",
             xlabel="Evaluation voxel index", predicted_label="GP mean",
-            raw_label="Observed fraction", ylim=(0, high * 1.05), intervals=intervals,
+            raw_label="Observed fraction",
+            ylim=tuple(coverage_ylim) if coverage_ylim else (0, high * 1.05),
+            intervals=intervals,
             show_predicted=False,
         )
         z = (observed - mean) / np.where(sigma > 0, sigma, np.nan)
