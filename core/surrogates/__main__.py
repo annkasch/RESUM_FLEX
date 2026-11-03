@@ -26,6 +26,12 @@ def main():
         "--data-provider", default="checkpoint",
         help="'module:Class' of the dataset provider (default: the one the model was trained on)",
     )
+    predict.add_argument(
+        "--photons-from", metavar="PARTITION/FIDELITY",
+        help="use the event inputs of seeded random donor voxels of this partition (a fresh "
+        "emission sample) instead of each voxel's own",
+    )
+    predict.add_argument("--seed", type=int, default=0, help="donor draw seed")
     mfgp = commands.add_parser("mfgp", help="Fit a standalone multi-fidelity GP")
     mfgp.add_argument("config")
     binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
@@ -61,6 +67,8 @@ def main():
                 args.fidelity,
                 threads=args.threads,
                 data_provider=args.data_provider,
+                photons_from=tuple(args.photons_from.split("/")) if args.photons_from else None,
+                seed=args.seed,
             ),
             flush=True,
         )

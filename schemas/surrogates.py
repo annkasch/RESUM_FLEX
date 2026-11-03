@@ -464,11 +464,23 @@ class CountEvaluation(StrictConfigModel):
     fidelity: Fidelity = "hf"
 
 
+class BinomialCovariate(StrictConfigModel):
+    """Event-model mean probability per voxel as GP covariate z = logit(p).
+
+    ``inference`` maps every observation and evaluation set ("partition/fidelity") to a file
+    of ``python -m core.surrogates predict`` for exactly that partition (paths relative to
+    the YAML file). The event model must not have been trained or selected on the labels of
+    these sets, otherwise their counts enter twice.
+    """
+
+    inference: dict[str, Path] = Field(min_length=1)
+
+
 class BinomialGPRunConfig(StrictConfigModel):
     """Single spatial GP on hit counts: m ~ Binomial(N, sigmoid(f(theta))), Laplace posterior.
 
     All observation sets share one latent probability; fidelities differ only in N, which
-    enters the likelihood exactly. No event model is involved.
+    enters the likelihood exactly. An event model may enter only as the optional covariate.
     """
 
     observations: list[CountSet] = Field(min_length=1)
@@ -479,6 +491,8 @@ class BinomialGPRunConfig(StrictConfigModel):
     seed: int = 42
     # Monte Carlo draws of the observation-predictive distribution per evaluation set.
     prediction_draws: int = Field(default=32768, ge=2048)
+    # Optional event-model covariate: logit p = b logit(p_model) + c + delta(theta).
+    covariate: BinomialCovariate | None = None
     # Fixed y range of the coverage plots (observed fraction); None = from the data.
     coverage_ylim: tuple[float, float] | None = None
 
@@ -505,6 +519,11 @@ class BinomialGPRunConfig(StrictConfigModel):
                     f"{item.partition} is blinded; set unblind_test: true once all choices "
                     "are final"
                 )
+        if self.covariate is not None:
+            needed = {f"{i.partition}/{i.fidelity}" for i in [*self.observations, *self.evaluation]}
+            missing = sorted(needed - set(self.covariate.inference))
+            if missing:
+                raise ValueError(f"covariate.inference has no file for {missing}")
         return self
 
 
@@ -516,6 +535,11 @@ def load_binomial_config(path: str | Path) -> BinomialGPRunConfig:
         value = getattr(config, name)
         if value is not None and not value.is_absolute():
             setattr(config, name, (path.parent / value).resolve())
+    if config.covariate is not None:
+        config.covariate.inference = {
+            key: value if value.is_absolute() else (path.parent / value).resolve()
+            for key, value in config.covariate.inference.items()
+        }
     return config
 
 

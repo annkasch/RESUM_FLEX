@@ -141,6 +141,7 @@ m ~ Binomial(N, sigmoid(f(θ))) with a Laplace posterior. No event model is invo
 | `seed` | Seed of fits, voxel subsets and predictive draws (42). |
 | `prediction_draws` | Monte Carlo draws of the predictive counts per evaluation set (32768). |
 | `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
+| `covariate` | Optional `{inference: {"partition/fidelity": file}}` of `python -m core.surrogates predict`, one per observation and evaluation set: logit p = b logit(p_model) + c + delta(theta), b and c marginalized as linear/bias kernel terms. The event model must not be trained or selected on these sets. |
 | `unblind_test` | Allow test partitions in `evaluation` (`false`). |
 | `data_directory`, `data_provider`, `data_config` | As in the training config. |
 | `output_directory` | Run directory; must be new. Required. |

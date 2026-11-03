@@ -2,6 +2,12 @@
 
 Optional GPy backend, Laplace posterior approximation, logistic probability link.
 No fidelity input, pseudo-count targets, CNP or Gaussian observation noise.
+
+Optional covariate z (e.g. the logit of an event model's mean probability per voxel):
+logit p(x) = b z(x) + c + delta(x), with b ~ N(0, s_b^2) and c ~ N(0, s_c^2) marginalized
+as a linear and a bias kernel term (GPy's Laplace inference has no mean functions) and the
+spatial kernel modelling the residual delta. s_b, s_c and the spatial hyperparameters are
+fitted on the observed counts; the uncertainty of b and c enters every prediction.
 """
 
 import pickle
@@ -120,21 +126,29 @@ class BinomialGP:
         self.kernel_name = kernel
         self.model = None
 
-    def fit(self, theta, hits, trials, *, max_iters=300, n_restarts=2, seed=42):
+    def fit(self, theta, hits, trials, *, covariate=None, max_iters=300, n_restarts=2, seed=42):
         x = np.asarray(theta, dtype=float)
         if x.ndim != 2 or not len(x) or not np.isfinite(x).all():
             raise ValueError("Coordinates must be a nonempty finite matrix")
+        self.spatial_dims = x.shape[1]
+        self.has_covariate = covariate is not None
+        x = self._with_covariate(x, covariate)
         m = counts_array(hits, len(x))
         n = counts_array(trials, len(x), positive=True)
         if np.any(m > n):
             raise ValueError("Hit counts cannot exceed trials")
-        # Coordinates are the only covariates. N enters the likelihood only.
+        # Coordinates (and the optional covariate) are the inputs. N enters the likelihood only.
         self.offset = x.mean(0)
         self.scale = x.std(0)
         self.scale[self.scale == 0] = 1
         normalized = (x - self.offset) / self.scale
         factory = GPy.kern.RBF if self.kernel_name == "rbf" else GPy.kern.Matern52
-        kernel = factory(x.shape[1], ARD=True) + GPy.kern.Bias(x.shape[1], variance=25.0)
+        d, spatial = x.shape[1], list(range(self.spatial_dims))
+        kernel = factory(self.spatial_dims, ARD=True, active_dims=spatial) + GPy.kern.Bias(
+            d, variance=25.0
+        )
+        if self.has_covariate:
+            kernel = kernel + GPy.kern.Linear(1, variances=1.0, active_dims=[d - 1])
         # Broad finite optimization bounds on standardized-coordinate hyperparameters.
         kernel.constrain_bounded(1e-4, 1e4, warning=False)
         inference = CountLaplace()
@@ -162,10 +176,26 @@ class BinomialGP:
         self.training_hits = m
         return self
 
-    def predict_latent(self, theta, *, full_cov=False):
+    def _with_covariate(self, x, covariate):
+        """Coordinates [n, D] -> model inputs [n, D] or [n, D + 1] with the covariate."""
+        if getattr(self, "has_covariate", False) != (covariate is not None):
+            raise ValueError(
+                "This GP was fitted with a covariate; pass covariate=" if self.has_covariate
+                else "This GP was fitted without a covariate"
+            )
+        if covariate is None:
+            return x
+        z = np.asarray(covariate, dtype=float).reshape(-1)
+        if len(z) != len(x) or not np.isfinite(z).all():
+            raise ValueError("Covariate must be finite with one value per coordinate")
+        return np.column_stack([x, z])
+
+    def predict_latent(self, theta, *, covariate=None, full_cov=False):
         if self.model is None:
             raise RuntimeError("Fit the GP first")
         x = np.asarray(theta, dtype=float)
+        if x.ndim == 2 and x.shape[1] == getattr(self, "spatial_dims", x.shape[1]):
+            x = self._with_covariate(x, covariate)
         if x.ndim != 2 or x.shape[1] != len(self.offset) or not np.isfinite(x).all():
             raise ValueError("Query coordinates must match training dimensions and be finite")
         query = (x - self.offset) / self.scale
@@ -188,18 +218,18 @@ class BinomialGP:
             variance = np.maximum(model.kern.Kdiag(query) - np.sum(V * V, axis=0), 0)
         return mean.ravel(), variance
 
-    def predict(self, theta):
+    def predict(self, theta, *, covariate=None):
         """Probability mean and epistemic variance using Gaussian quadrature."""
-        mu, variance = self.predict_latent(theta)
+        mu, variance = self.predict_latent(theta, covariate=covariate)
         nodes, weights = hermgauss(64)
         p = expit(mu[:, None] + np.sqrt(2 * variance[:, None]) * nodes)
         mean = p @ weights / np.sqrt(np.pi)
         second = (p * p) @ weights / np.sqrt(np.pi)
         return mean, np.maximum(second - mean * mean, 0)
 
-    def predict_observations(self, theta, trials, *, n_draws=32768, seed=42):
+    def predict_observations(self, theta, trials, *, covariate=None, n_draws=32768, seed=42):
         """Joint latent draws followed by binomial counts at exact coordinates."""
-        mu, covariance = self.predict_latent(theta, full_cov=True)
+        mu, covariance = self.predict_latent(theta, covariate=covariate, full_cov=True)
         n = counts_array(trials, len(mu), positive=True)
         rng = np.random.default_rng(seed)
         # PSD eigenfactor handles duplicate coordinates without adding count noise.

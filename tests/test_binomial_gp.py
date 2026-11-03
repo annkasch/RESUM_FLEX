@@ -128,3 +128,73 @@ def test_coverage_ylim_config():
     assert BinomialGPRunConfig(**base).coverage_ylim is None
     with pytest.raises(ValueError, match="low < high"):
         BinomialGPRunConfig(**base, coverage_ylim=(0.01, 0.0))
+
+
+def _field(seed, points=120, trials=3000):
+    """Sharp 1D structure in the covariate z; the spatial field alone is hard to fit."""
+    rng = np.random.default_rng(np.random.SeedSequence([seed, 0]))
+    x = rng.uniform(0, 1, (points, 2))
+    z = -6.0 + 1.5 * np.sign(np.sin(14 * x[:, 0]))  # logit of an informative "model mean"
+    n = np.full(points, trials)
+    m = rng.binomial(n, expit(z + 0.1 * x[:, 1]))
+    return x, z, m, n
+
+
+def test_covariate_kernel_improves_held_out_counts():
+    x, z, m, n = _field(0)
+    xt, zt, mt, nt = _field(1, points=80)
+    with_z = BinomialGP().fit(x, m, n, covariate=z, max_iters=60, n_restarts=1)
+    without = BinomialGP().fit(x, m, n, max_iters=60, n_restarts=1)
+
+    def nll(gp, covariate=None):
+        mu, var = gp.predict_latent(xt, covariate=covariate)
+        draws = np.random.default_rng(np.random.SeedSequence([2, 0])).normal(size=(4000, 1))
+        p = expit(mu + np.sqrt(var) * draws)
+        return -np.mean(np.log(binom.pmf(mt, nt, p).mean(axis=0)))
+
+    assert nll(with_z, zt) < nll(without)
+    with pytest.raises(ValueError, match="covariate"):
+        with_z.predict_latent(xt)
+    with pytest.raises(ValueError, match="without a covariate"):
+        without.predict_latent(xt, covariate=zt)
+
+
+def test_covariate_config_needs_every_set():
+    base = dict(observations=[{"partition": "train", "fidelity": "hf"}],
+                evaluation=[{"partition": "validation", "fidelity": "hf"}],
+                data_directory="d", output_directory="o")
+    with pytest.raises(ValueError, match="no file for"):
+        BinomialGPRunConfig(**base, covariate={"inference": {"train/hf": "a.npz"}})
+    config = BinomialGPRunConfig(
+        **base, covariate={"inference": {"train/hf": "a.npz", "validation/hf": "b.npz"}}
+    )
+    assert set(config.covariate.inference) == {"train/hf", "validation/hf"}
+
+
+def test_runner_with_covariate(tmp_path):
+    from core.surrogates.binomial_stage import run_binomial_config
+    from core.surrogates.datasets import load_provider
+
+    root = write_batches(tmp_path / "data")
+    provider = load_provider(None, root)
+    files = {}
+    for partition, fidelity in (("train", "hf"), ("validation", "hf")):
+        theta, ids = provider.theta(partition, fidelity)
+        path = tmp_path / f"{partition}_{fidelity}.npz"
+        np.savez(path, voxel_ids=np.array(ids), theta=theta,
+                 mean_probability=np.clip(0.3 + 0.1 * theta[:, 0], 0.05, 0.95))
+        path.with_suffix(".json").write_text(json.dumps(
+            dict(partition=partition, fidelity=fidelity, checkpoint="c", step=1)))
+        files[f"{partition}/{fidelity}"] = path
+    config = BinomialGPRunConfig(
+        observations=[{"partition": "train", "fidelity": "hf"}],
+        evaluation=[{"partition": "validation", "fidelity": "hf"}],
+        covariate={"inference": files}, n_restarts=1, max_iters=30, prediction_draws=2048,
+        data_directory=root, output_directory=tmp_path / "gp",
+    )
+    out = run_binomial_config(config)
+    row = json.loads((out / "metrics.json").read_text())[0]
+    assert np.isfinite(row["predictive_nll"]) and row["data"]["covariate"]["inference"]
+    with np.load(out / "training_arrays.npz") as arrays:
+        assert "covariate" in arrays.files
+    assert "logit(p_model)" in json.loads((out / "model.json").read_text())["likelihood"]

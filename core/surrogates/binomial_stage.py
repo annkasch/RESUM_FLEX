@@ -29,6 +29,29 @@ def _counts(batch):
     return hits, batch.events_per_voxel.astype(int)
 
 
+def _covariate(cfg, provider, partition, fidelity):
+    """z = logit(event-model mean p) [B] of a partition (None without covariate) + provenance."""
+    if cfg.covariate is None:
+        return None, None
+    path = Path(cfg.covariate.inference[f"{partition}/{fidelity}"])
+    meta = json.loads(path.with_suffix(".json").read_text())
+    if (meta["partition"], meta["fidelity"]) != (partition, fidelity):
+        raise ValueError(f"{path} holds {meta['partition']}/{meta['fidelity']}, not "
+                         f"{partition}/{fidelity}")
+    theta, ids = provider.theta(partition, fidelity)
+    with np.load(path) as arrays:
+        saved_ids, saved_theta, p = (arrays["voxel_ids"].tolist(), arrays["theta"],
+                                     arrays["mean_probability"].astype(float))
+    if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
+        raise ValueError(f"{path} does not match the voxels or normalization of the data")
+    invalid = int(np.sum(~((p > 0) & (p < 1))))
+    if invalid:
+        raise ValueError(f"{path}: {invalid} mean probabilities outside (0, 1); no logit")
+    return np.log(p / (1 - p)), dict(inference=str(path), checkpoint=meta["checkpoint"],
+                                     step=meta["step"],
+                                     event_inputs=meta.get("event_inputs", "own"))
+
+
 def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
     """Fit the binomial GP on the configured count sets and score the evaluation sets."""
     from core.binomial_gp import BinomialGP
@@ -36,12 +59,16 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
 
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=False)
-    thetas, hits, events, sets, indices, records = [], [], [], [], [], []
+    thetas, hits, events, sets, indices, records, covariates = [], [], [], [], [], [], []
     for k, item in enumerate(cfg.observations):
         batch, provenance = provider.load(item.partition, item.fidelity)
         index = subsample_voxels(batch.batch_size, item.max_voxels, cfg.seed, k)
         batch = batch.take(index)
         m, n = _counts(batch)
+        z, z_provenance = _covariate(cfg, provider, item.partition, item.fidelity)
+        if z is not None:
+            covariates.append(z[index])
+            provenance = dict(provenance, covariate=z_provenance)
         thetas.append(batch.theta)
         hits.append(m)
         events.append(n)
@@ -51,18 +78,22 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
                             hits=int(m.sum()), events=int(n.sum()), data=provenance))
     theta = np.concatenate(thetas)
     m, n = np.concatenate(hits), np.concatenate(events)
+    z_train = np.concatenate(covariates) if covariates else None
     np.savez_compressed(directory / "training_arrays.npz", theta=theta, hits=m, events=n,
-                        set=np.concatenate(sets), index=np.concatenate(indices))
+                        set=np.concatenate(sets), index=np.concatenate(indices),
+                        **({} if z_train is None else {"covariate": z_train}))
     (directory / "observations.json").write_text(json.dumps(records, indent=2, allow_nan=False))
 
     gp = BinomialGP(kernel=cfg.kernel).fit(
-        theta, m, n, max_iters=cfg.max_iters, n_restarts=cfg.n_restarts, seed=cfg.seed
+        theta, m, n, covariate=z_train, max_iters=cfg.max_iters, n_restarts=cfg.n_restarts,
+        seed=cfg.seed,
     )
     gp.save(directory / "model.pkl")
     model = gp.model
     metadata = dict(
         config=cfg.model_dump(mode="json"),
-        likelihood="m ~ Binomial(N, sigmoid(f(theta))), Laplace posterior",
+        likelihood="m ~ Binomial(N, sigmoid(f(theta))), Laplace posterior"
+        + ("; f = b logit(p_model) + c + delta(theta)" if z_train is not None else ""),
         training_voxels=len(m),
         log_likelihood=float(model.log_likelihood()),
         parameter_names=model.parameter_names_flat().tolist(),
@@ -73,13 +104,17 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
     )
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
 
-    metrics, loaded = [], [theta]
+    metrics, loaded, loaded_z = [], [theta], [z_train]
     rng_seed = cfg.seed
     for e, item in enumerate(cfg.evaluation):
         batch, provenance = provider.load(item.partition, item.fidelity)
         k, total = _counts(batch)
         observed = k / total
-        samples = gp.predict_observations(batch.theta, total, n_draws=cfg.prediction_draws,
+        z, z_provenance = _covariate(cfg, provider, item.partition, item.fidelity)
+        if z is not None:
+            provenance = dict(provenance, covariate=z_provenance)
+        samples = gp.predict_observations(batch.theta, total, covariate=z,
+                                          n_draws=cfg.prediction_draws,
                                           seed=rng_seed + e)               # [draws, B] fractions
         mean, sd = samples.mean(axis=0), samples.std(axis=0)
         intervals = {
@@ -89,7 +124,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         scores = gp_metrics(observed, mean, intervals=intervals, samples=samples,
                             median=np.median(samples, axis=0))
         # Count NLL: binomial mass mixed over marginal latent draws (Monte Carlo).
-        mu, variance = gp.predict_latent(batch.theta)
+        mu, variance = gp.predict_latent(batch.theta, covariate=z)
         rng = np.random.default_rng(np.random.SeedSequence([rng_seed, e]))
         p = expit(rng.normal(mu, np.sqrt(variance), size=(cfg.prediction_draws, len(mu))))
         log_mass = logsumexp(binom.logpmf(k, total, p), axis=0) - np.log(len(p))
@@ -112,12 +147,19 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
                for level in LEVELS for i, bound in enumerate(("lower", "upper"))},
         )
         loaded.append(batch.theta)
+        loaded_z.append(z)
     (directory / "metrics.json").write_text(json.dumps(metrics, indent=2, allow_nan=False))
 
-    grid = np.unique(np.concatenate(loaded), axis=0)
-    mean, variance = gp.predict(grid)
-    np.savez_compressed(directory / "development_map.npz", theta=grid, mean=mean,
-                        variance=variance)
+    if z_train is None:
+        grid = np.unique(np.concatenate(loaded), axis=0)
+        mean, variance = gp.predict(grid)
+        np.savez_compressed(directory / "development_map.npz", theta=grid, mean=mean,
+                            variance=variance)
+    else:  # the covariate is known only at loaded voxels; duplicates are kept
+        grid, z_grid = np.concatenate(loaded), np.concatenate(loaded_z)
+        mean, variance = gp.predict(grid, covariate=z_grid)
+        np.savez_compressed(directory / "development_map.npz", theta=grid, covariate=z_grid,
+                            mean=mean, variance=variance)
     norm = provider.normalization()
     if norm is not None:
         (directory / "normalization.json").write_text(json.dumps(norm, indent=2))
