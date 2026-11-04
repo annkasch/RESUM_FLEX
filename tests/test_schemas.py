@@ -273,11 +273,26 @@ def test_every_config_field_is_documented():
 
     text = (Path(__file__).resolve().parents[1] / "docs/configs.md").read_text()
     models = [
-        s.SurrogateRunConfig, s.NeuralTraining, s.SamplingConfig, s.MixupConfig,
-        s.WeightingConfig, s.RealPlusMixupObjective, s.RandomContext, s.FixedContext,
-        s.LastLayerFineTuning, s.TrainingStage, s.MLPArchitecture, BDTConfig,
-        TabularTransformerConfig, s.MFGPRunConfig, s.ModelMeanLevel, s.ObservedFractionLevel,
-        s.GPEvaluation, s.BinomialGPRunConfig, s.CountSet, s.CountEvaluation,
+        s.SurrogateRunConfig,
+        s.NeuralTraining,
+        s.SamplingConfig,
+        s.MixupConfig,
+        s.WeightingConfig,
+        s.RealPlusMixupObjective,
+        s.RandomContext,
+        s.FixedContext,
+        s.LastLayerFineTuning,
+        s.TrainingStage,
+        s.MLPArchitecture,
+        BDTConfig,
+        TabularTransformerConfig,
+        s.MFGPRunConfig,
+        s.ModelMeanLevel,
+        s.ObservedFractionLevel,
+        s.GPEvaluation,
+        s.BinomialGPRunConfig,
+        s.CountSet,
+        s.CountEvaluation,
     ]
     missing = sorted(
         f"{m.__name__}.{name}"

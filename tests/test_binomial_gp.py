@@ -160,9 +160,12 @@ def test_covariate_kernel_improves_held_out_counts():
 
 
 def test_covariate_config_needs_every_set():
-    base = dict(observations=[{"partition": "train", "fidelity": "hf"}],
-                evaluation=[{"partition": "validation", "fidelity": "hf"}],
-                data_directory="d", output_directory="o")
+    base = dict(
+        observations=[{"partition": "train", "fidelity": "hf"}],
+        evaluation=[{"partition": "validation", "fidelity": "hf"}],
+        data_directory="d",
+        output_directory="o",
+    )
     with pytest.raises(ValueError, match="no file for"):
         BinomialGPRunConfig(**base, covariate={"inference": {"train/hf": "a.npz"}})
     config = BinomialGPRunConfig(
@@ -181,16 +184,25 @@ def test_runner_with_covariate(tmp_path):
     for partition, fidelity in (("train", "hf"), ("validation", "hf")):
         theta, ids = provider.theta(partition, fidelity)
         path = tmp_path / f"{partition}_{fidelity}.npz"
-        np.savez(path, voxel_ids=np.array(ids), theta=theta,
-                 mean_probability=np.clip(0.3 + 0.1 * theta[:, 0], 0.05, 0.95))
-        path.with_suffix(".json").write_text(json.dumps(
-            dict(partition=partition, fidelity=fidelity, checkpoint="c", step=1)))
+        np.savez(
+            path,
+            voxel_ids=np.array(ids),
+            theta=theta,
+            mean_probability=np.clip(0.3 + 0.1 * theta[:, 0], 0.05, 0.95),
+        )
+        path.with_suffix(".json").write_text(
+            json.dumps(dict(partition=partition, fidelity=fidelity, checkpoint="c", step=1))
+        )
         files[f"{partition}/{fidelity}"] = path
     config = BinomialGPRunConfig(
         observations=[{"partition": "train", "fidelity": "hf"}],
         evaluation=[{"partition": "validation", "fidelity": "hf"}],
-        covariate={"inference": files}, n_restarts=1, max_iters=30, prediction_draws=2048,
-        data_directory=root, output_directory=tmp_path / "gp",
+        covariate={"inference": files},
+        n_restarts=1,
+        max_iters=30,
+        prediction_draws=2048,
+        data_directory=root,
+        output_directory=tmp_path / "gp",
     )
     out = run_binomial_config(config)
     row = json.loads((out / "metrics.json").read_text())[0]

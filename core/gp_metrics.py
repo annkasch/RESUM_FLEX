@@ -170,8 +170,10 @@ def count_predictive_scores(hits, trials, probability_draws, *, seed=0):
         predictive_nll=float(-log_mass.mean()),
         predictive_distribution="binomial counts mixed over draws of p",
         nll_measure="count probability mass; not comparable to a density NLL",
-        coverage={str(level): float(((observed >= lo) & (observed <= hi)).mean())
-                  for level, (lo, hi) in intervals.items()},
+        coverage={
+            str(level): float(((observed >= lo) & (observed <= hi)).mean())
+            for level, (lo, hi) in intervals.items()
+        },
         draws=len(p),
     )
     arrays = dict(
@@ -182,7 +184,10 @@ def count_predictive_scores(hits, trials, probability_draws, *, seed=0):
         sigma=samples.std(axis=0),
         probability_mean=p.mean(axis=0),
         probability_sd=p.std(axis=0),
-        **{f"{bound}_{level}": intervals[level][i]
-           for level in SIGMA_LEVELS for i, bound in enumerate(("lower", "upper"))},
+        **{
+            f"{bound}_{level}": intervals[level][i]
+            for level in SIGMA_LEVELS
+            for i, bound in enumerate(("lower", "upper"))
+        },
     )
     return scores, arrays

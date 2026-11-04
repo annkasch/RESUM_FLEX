@@ -71,10 +71,11 @@ def plot_surrogate_run(directory):
                     from viz.zscore import plot_zscores
 
                     plot_zscores(
-                        arrays["voxel_z"], arrays["predicted"],
+                        arrays["voxel_z"],
+                        arrays["predicted"],
                         directory / f"{fidelity}_{split}_zscore",
                         title=f"{fidelity.upper()} {split}, best checkpoint: "
-                              "z = (hits − Σp) / √Σp(1−p)",
+                        "z = (hits − Σp) / √Σp(1−p)",
                     )
         for logscale in (False, True):
             fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
@@ -254,23 +255,34 @@ def plot_mfgp_training_inputs(directory):
     """Plot the exact values of every GP level, in training-row order (original units)."""
     directory = Path(directory)
     levels = json.loads((directory / "levels.json").read_text())
-    log_mode = json.loads((directory / "model.json").read_text())["config"][
-        "output_transform"
-    ] == "log"
+    log_mode = (
+        json.loads((directory / "model.json").read_text())["config"]["output_transform"] == "log"
+    )
     fig, axes = plt.subplots(
-        1, len(levels), figsize=(5 * len(levels), 4), sharey=True, layout="constrained",
+        1,
+        len(levels),
+        figsize=(5 * len(levels), 4),
+        sharey=True,
+        layout="constrained",
         squeeze=False,
     )
-    with np.load(directory / "training_arrays.npz") as raw, \
-            np.load(directory / "fit_arrays.npz") as adjusted:
+    with (
+        np.load(directory / "training_arrays.npz") as raw,
+        np.load(directory / "fit_arrays.npz") as adjusted,
+    ):
         for ax, level in zip(axes[0], levels, strict=True):
             k = level["level"]
             values = raw[f"Y_{k}"].ravel()
             label = "model mean" if level["source"] == "model_mean" else "observed fraction"
             ax.scatter(np.arange(len(values)), values, s=10, label=label)
             if log_mode and level["source"] == "observed_fraction":
-                ax.scatter(np.arange(len(values)), adjusted[f"Y_{k}"].ravel(), marker="+",
-                           s=12, label="smoothed before log")
+                ax.scatter(
+                    np.arange(len(values)),
+                    adjusted[f"Y_{k}"].ravel(),
+                    marker="+",
+                    s=12,
+                    label="smoothed before log",
+                )
             ax.set(
                 title=f"Level {k}: {level['partition']}/{level['fidelity']} ({len(values)})",
                 xlabel="GP training voxel index (saved row order)",
@@ -305,9 +317,11 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         with np.load(path) as a:
             log_mode = str(a["output_transform"]) == "log"
             plot_zscores(
-                gp_zscores(a, pseudocount), a["mean"], directory / f"{path.stem}_zscore",
+                gp_zscores(a, pseudocount),
+                a["mean"],
+                directory / f"{path.stem}_zscore",
                 title=f"{a['label']}: z = (observed − GP mean) / GP σ"
-                      + (" in log space" if log_mode else ""),
+                + (" in log space" if log_mode else ""),
                 rate_label="GP predicted rate",
             )
     for path in sorted(directory.glob("evaluation_*.npz")):
@@ -349,9 +363,9 @@ def plot_mfgp_run(directory, coverage_ylim=None):
                 xlabel="Evaluation voxel index",
                 predicted_label="MFGP mean",
                 raw_label="Observed fraction",
-                ylim=tuple(coverage_ylim) if coverage_ylim else (
-                    max(0, low - padding) if is_log else low - padding, high + padding
-                ),
+                ylim=tuple(coverage_ylim)
+                if coverage_ylim
+                else (max(0, low - padding) if is_log else low - padding, high + padding),
                 intervals=intervals,
                 interval_label="σ in log space" if is_log else "σ",
                 show_predicted=False,  # the bands carry the mean; the line hid the points

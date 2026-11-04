@@ -113,14 +113,23 @@ def predict_partition(
         normalization_check="provider normalization equals checkpoint normalization",
         labels="not used (inputs only)",
         uncertainty=(
-            dict(method="Laplace last layer", draws=int(uncertainty["probability_draws"].shape[0]),
-                 seed=model.config.last_layer.seed)
-            if uncertainty else None
+            dict(
+                method="Laplace last layer",
+                draws=int(uncertainty["probability_draws"].shape[0]),
+                seed=model.config.last_layer.seed,
+            )
+            if uncertainty
+            else None
         ),
         event_inputs=(
-            "own" if photons_from is None
-            else dict(donor_partition=photons_from[0], donor_fidelity=photons_from[1],
-                      seed=seed, donor_index=donors.tolist())
+            "own"
+            if photons_from is None
+            else dict(
+                donor_partition=photons_from[0],
+                donor_fidelity=photons_from[1],
+                seed=seed,
+                donor_index=donors.tolist(),
+            )
         ),
     )
     stem.with_suffix(".json").write_text(json.dumps(provenance, indent=2, allow_nan=False))

@@ -180,7 +180,8 @@ class BinomialGP:
         """Coordinates [n, D] -> model inputs [n, D] or [n, D + 1] with the covariate."""
         if getattr(self, "has_covariate", False) != (covariate is not None):
             raise ValueError(
-                "This GP was fitted with a covariate; pass covariate=" if self.has_covariate
+                "This GP was fitted with a covariate; pass covariate="
+                if self.has_covariate
                 else "This GP was fitted without a covariate"
             )
         if covariate is None:

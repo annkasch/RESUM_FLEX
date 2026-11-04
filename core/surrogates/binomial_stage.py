@@ -36,20 +36,27 @@ def _covariate(cfg, provider, partition, fidelity):
     path = Path(cfg.covariate.inference[f"{partition}/{fidelity}"])
     meta = json.loads(path.with_suffix(".json").read_text())
     if (meta["partition"], meta["fidelity"]) != (partition, fidelity):
-        raise ValueError(f"{path} holds {meta['partition']}/{meta['fidelity']}, not "
-                         f"{partition}/{fidelity}")
+        raise ValueError(
+            f"{path} holds {meta['partition']}/{meta['fidelity']}, not {partition}/{fidelity}"
+        )
     theta, ids = provider.theta(partition, fidelity)
     with np.load(path) as arrays:
-        saved_ids, saved_theta, p = (arrays["voxel_ids"].tolist(), arrays["theta"],
-                                     arrays["mean_probability"].astype(float))
+        saved_ids, saved_theta, p = (
+            arrays["voxel_ids"].tolist(),
+            arrays["theta"],
+            arrays["mean_probability"].astype(float),
+        )
     if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
         raise ValueError(f"{path} does not match the voxels or normalization of the data")
     invalid = int(np.sum(~((p > 0) & (p < 1))))
     if invalid:
         raise ValueError(f"{path}: {invalid} mean probabilities outside (0, 1); no logit")
-    return np.log(p / (1 - p)), dict(inference=str(path), checkpoint=meta["checkpoint"],
-                                     step=meta["step"],
-                                     event_inputs=meta.get("event_inputs", "own"))
+    return np.log(p / (1 - p)), dict(
+        inference=str(path),
+        checkpoint=meta["checkpoint"],
+        step=meta["step"],
+        event_inputs=meta.get("event_inputs", "own"),
+    )
 
 
 def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
@@ -74,18 +81,37 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         events.append(n)
         sets.append(np.full(len(m), k))
         indices.append(index)
-        records.append(dict(set=k, **item.model_dump(mode="json"), voxels=len(m),
-                            hits=int(m.sum()), events=int(n.sum()), data=provenance))
+        records.append(
+            dict(
+                set=k,
+                **item.model_dump(mode="json"),
+                voxels=len(m),
+                hits=int(m.sum()),
+                events=int(n.sum()),
+                data=provenance,
+            )
+        )
     theta = np.concatenate(thetas)
     m, n = np.concatenate(hits), np.concatenate(events)
     z_train = np.concatenate(covariates) if covariates else None
-    np.savez_compressed(directory / "training_arrays.npz", theta=theta, hits=m, events=n,
-                        set=np.concatenate(sets), index=np.concatenate(indices),
-                        **({} if z_train is None else {"covariate": z_train}))
+    np.savez_compressed(
+        directory / "training_arrays.npz",
+        theta=theta,
+        hits=m,
+        events=n,
+        set=np.concatenate(sets),
+        index=np.concatenate(indices),
+        **({} if z_train is None else {"covariate": z_train}),
+    )
     (directory / "observations.json").write_text(json.dumps(records, indent=2, allow_nan=False))
 
     gp = BinomialGP(kernel=cfg.kernel).fit(
-        theta, m, n, covariate=z_train, max_iters=cfg.max_iters, n_restarts=cfg.n_restarts,
+        theta,
+        m,
+        n,
+        covariate=z_train,
+        max_iters=cfg.max_iters,
+        n_restarts=cfg.n_restarts,
         seed=cfg.seed,
     )
     gp.save(directory / "model.pkl")
@@ -98,8 +124,10 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         log_likelihood=float(model.log_likelihood()),
         parameter_names=model.parameter_names_flat().tolist(),
         parameters=model.param_array.tolist(),
-        optimization=[dict(status=str(r.status), function_evaluations=int(r.funct_eval))
-                      for r in model.optimization_runs],
+        optimization=[
+            dict(status=str(r.status), function_evaluations=int(r.funct_eval))
+            for r in model.optimization_runs
+        ],
         **(extra_metadata or {}),
     )
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
@@ -113,38 +141,52 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         z, z_provenance = _covariate(cfg, provider, item.partition, item.fidelity)
         if z is not None:
             provenance = dict(provenance, covariate=z_provenance)
-        samples = gp.predict_observations(batch.theta, total, covariate=z,
-                                          n_draws=cfg.prediction_draws,
-                                          seed=rng_seed + e)               # [draws, B] fractions
+        samples = gp.predict_observations(
+            batch.theta, total, covariate=z, n_draws=cfg.prediction_draws, seed=rng_seed + e
+        )  # [draws, B] fractions
         mean, sd = samples.mean(axis=0), samples.std(axis=0)
         intervals = {
             level: tuple(np.quantile(samples, [(1 - q) / 2, (1 + q) / 2], axis=0))
             for level, q in LEVELS.items()
         }
-        scores = gp_metrics(observed, mean, intervals=intervals, samples=samples,
-                            median=np.median(samples, axis=0))
+        scores = gp_metrics(
+            observed, mean, intervals=intervals, samples=samples, median=np.median(samples, axis=0)
+        )
         # Count NLL: binomial mass mixed over marginal latent draws (Monte Carlo).
         mu, variance = gp.predict_latent(batch.theta, covariate=z)
         rng = np.random.default_rng(np.random.SeedSequence([rng_seed, e]))
         p = expit(rng.normal(mu, np.sqrt(variance), size=(cfg.prediction_draws, len(mu))))
         log_mass = logsumexp(binom.logpmf(k, total, p), axis=0) - np.log(len(p))
         scores.update(
-            evaluation=e, partition=item.partition, fidelity=item.fidelity,
-            voxels=len(observed), data=provenance,
+            evaluation=e,
+            partition=item.partition,
+            fidelity=item.fidelity,
+            voxels=len(observed),
+            data=provenance,
             predictive_nll=float(-log_mass.mean()),
             predictive_distribution="binomial counts mixed over logistic Gaussian latent p",
             nll_measure="count probability mass; not comparable to a density NLL",
-            coverage={str(level): float(((observed >= lo) & (observed <= hi)).mean())
-                      for level, (lo, hi) in intervals.items()},
+            coverage={
+                str(level): float(((observed >= lo) & (observed <= hi)).mean())
+                for level, (lo, hi) in intervals.items()
+            },
         )
         metrics.append(scores)
         np.savez_compressed(
             directory / f"evaluation_{e}.npz",
-            theta=batch.theta, observed=observed, hits=k, target_events=total,
-            mean=mean, sigma=sd, residual=mean - observed,
+            theta=batch.theta,
+            observed=observed,
+            hits=k,
+            target_events=total,
+            mean=mean,
+            sigma=sd,
+            residual=mean - observed,
             label=np.array(f"{item.partition}/{item.fidelity}"),
-            **{f"{bound}_{level}": intervals[level][i]
-               for level in LEVELS for i, bound in enumerate(("lower", "upper"))},
+            **{
+                f"{bound}_{level}": intervals[level][i]
+                for level in LEVELS
+                for i, bound in enumerate(("lower", "upper"))
+            },
         )
         loaded.append(batch.theta)
         loaded_z.append(z)
@@ -153,13 +195,19 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
     if z_train is None:
         grid = np.unique(np.concatenate(loaded), axis=0)
         mean, variance = gp.predict(grid)
-        np.savez_compressed(directory / "development_map.npz", theta=grid, mean=mean,
-                            variance=variance)
+        np.savez_compressed(
+            directory / "development_map.npz", theta=grid, mean=mean, variance=variance
+        )
     else:  # the covariate is known only at loaded voxels; duplicates are kept
         grid, z_grid = np.concatenate(loaded), np.concatenate(loaded_z)
         mean, variance = gp.predict(grid, covariate=z_grid)
-        np.savez_compressed(directory / "development_map.npz", theta=grid, covariate=z_grid,
-                            mean=mean, variance=variance)
+        np.savez_compressed(
+            directory / "development_map.npz",
+            theta=grid,
+            covariate=z_grid,
+            mean=mean,
+            variance=variance,
+        )
     norm = provider.normalization()
     if norm is not None:
         (directory / "normalization.json").write_text(json.dumps(norm, indent=2))
@@ -186,18 +234,26 @@ def _plot(directory, coverage_ylim=None):
             label = str(a["label"])
         high = max(float(observed.max()), float(intervals[3][1].max()))
         plot_coverage_test(
-            observed, mean, sigma, out_path=directory / f"{path.stem}_coverage.png",
+            observed,
+            mean,
+            sigma,
+            out_path=directory / f"{path.stem}_coverage.png",
             title=f"{label}: binomial GP observation-predictive coverage",
-            xlabel="Evaluation voxel index", predicted_label="GP mean",
+            xlabel="Evaluation voxel index",
+            predicted_label="GP mean",
             raw_label="Observed fraction",
             ylim=tuple(coverage_ylim) if coverage_ylim else (0, high * 1.05),
             intervals=intervals,
             show_predicted=False,
         )
         z = (observed - mean) / np.where(sigma > 0, sigma, np.nan)
-        plot_zscores(np.nan_to_num(z), mean, directory / f"{path.stem}_zscore",
-                     title=f"{label}: z = (observed − predictive mean) / predictive sd",
-                     rate_label="GP predicted rate")
+        plot_zscores(
+            np.nan_to_num(z),
+            mean,
+            directory / f"{path.stem}_zscore",
+            title=f"{label}: z = (observed − predictive mean) / predictive sd",
+            rate_label="GP predicted rate",
+        )
 
 
 def run_binomial_config(config):
@@ -205,5 +261,9 @@ def run_binomial_config(config):
     from core.surrogates.experiment import prepare_and_open
 
     provider, record = prepare_and_open(config)
-    return run_binomial_gp(config, provider=provider, output_directory=config.output_directory,
-                           extra_metadata=dict(data_preparation=record))
+    return run_binomial_gp(
+        config,
+        provider=provider,
+        output_directory=config.output_directory,
+        extra_metadata=dict(data_preparation=record),
+    )

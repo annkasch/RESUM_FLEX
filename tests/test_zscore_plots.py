@@ -32,6 +32,11 @@ def test_gp_zscores_recover_mean_and_sigma(log):
         mu, sigma = np.array([0.002, 0.004]), np.array([0.0005, 0.001])
         lower, upper = mu - sigma, mu + sigma
         observed = mu - 2 * sigma
-    arrays = dict(lower_1=lower, upper_1=upper, observed=observed, target_events=n,
-                  output_transform=np.array("log" if log else "identity"))
+    arrays = dict(
+        lower_1=lower,
+        upper_1=upper,
+        observed=observed,
+        target_events=n,
+        output_transform=np.array("log" if log else "identity"),
+    )
     np.testing.assert_allclose(gp_zscores(arrays, 0.5), [1, 1] if log else [-2, -2])

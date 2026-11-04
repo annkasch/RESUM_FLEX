@@ -31,9 +31,9 @@ class BayesianLastLayer(StrictConfigModel):
     predictive distributions; ``seed`` makes them reproducible.
     """
 
-    prior_precision: Literal["evidence"] | Annotated[
-        float, Field(gt=0, allow_inf_nan=False)
-    ] = "evidence"
+    prior_precision: Literal["evidence"] | Annotated[float, Field(gt=0, allow_inf_nan=False)] = (
+        "evidence"
+    )
     draws: int = Field(default=1000, ge=100)
     seed: int = 0
 
@@ -474,6 +474,7 @@ class MFGPStageConfig(StrictConfigModel):
         if value is not None and not value[0] < value[1]:
             raise ValueError(f"coverage_ylim must be (low, high) with low < high, got {value}")
         return value
+
     # Context events per voxel when a context model computes a model_mean level.
     n_context: int = Field(default=64, gt=0)
     # Test partitions stay blinded until all choices are final; then set true once.
@@ -590,6 +591,7 @@ class BinomialGPRunConfig(StrictConfigModel):
         if value is not None and not value[0] < value[1]:
             raise ValueError(f"coverage_ylim must be (low, high) with low < high, got {value}")
         return value
+
     unblind_test: bool = False
     data_directory: Path
     data_provider: str | None = None
@@ -703,17 +705,22 @@ class SurrogateRunConfig(SurrogateConfig):
             for stage in self.stages:
                 if stage.name in seen or stage.name in {"best", "final", "initial"}:
                     raise ValueError("Stage names must be unique and not reserved")
-                SurrogateConfig(model=self.model, training=stage.training, selection=stage.selection)
+                SurrogateConfig(
+                    model=self.model, training=stage.training, selection=stage.selection
+                )
                 if stage.start_from != "initial":
                     parts = stage.start_from.split("/")
                     if len(parts) != 2 or parts[0] not in seen or parts[1] not in {"best", "final"}:
-                        raise ValueError("Stage start_from must reference an earlier stage/best or final")
+                        raise ValueError(
+                            "Stage start_from must reference an earlier stage/best or final"
+                        )
                 if stage.training.backend == "bdt" and stage.start_from != "initial":
                     raise ValueError("BDT continuation is not supported")
                 seen.add(stage.name)
         choices = {"best", "final", "pretraining"}
-        choices.update(f"stages/{s.name}/{which}" for s in self.stages or []
-                       for which in ("best", "final"))
+        choices.update(
+            f"stages/{s.name}/{which}" for s in self.stages or [] for which in ("best", "final")
+        )
         if self.mfgp_checkpoint not in choices:
             raise ValueError("Unknown mfgp_checkpoint")
         return self
@@ -731,4 +738,3 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
         if level.source == "model_mean" and level.inference and not level.inference.is_absolute():
             level.inference = (path.parent / level.inference).resolve()
     return config
-
