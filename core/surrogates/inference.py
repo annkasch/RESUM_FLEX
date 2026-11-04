@@ -4,7 +4,7 @@ The mean predicted probability per voxel is the input of the GP stage. Results a
 next to the checkpoint's run, never into the prepared data::
 
     <run>/inference/<checkpoint>/<partition>_<fidelity>.npz    per-voxel arrays
-    <run>/inference/<checkpoint>/<partition>_<fidelity>.json   provenance
+    <run>/inference/<checkpoint>/<partition>_<fidelity>.json   provenance and compute
 """
 
 import json
@@ -12,6 +12,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.compute import ComputeLog
 from core.surrogates.checkpoints import load_surrogate
 from core.surrogates.datasets import load_provider
 from core.surrogates.evaluation import _predict, evaluation_threads
@@ -50,6 +51,7 @@ def predict_partition(
     must be normalized exactly as the training data: the provider's normalization must
     equal the one stored in the checkpoint. Returns the path of the written .npz file.
     """
+    compute = ComputeLog()
     checkpoint, data_directory = Path(checkpoint), Path(data_directory)
     model = load_surrogate(checkpoint)
     if model.uses_context:
@@ -73,13 +75,15 @@ def predict_partition(
         stem = output / f"{partition}_{fidelity}_photons-{photons_from[0]}_{photons_from[1]}"
     if stem.with_suffix(".npz").exists():
         raise FileExistsError(f"{stem}.npz exists; inference results are never overwritten")
-    batch, data = provider.load(partition, fidelity, labels=False)
-    ids = provider.theta(partition, fidelity)[1]
-    donors = None
-    if photons_from is not None:
-        batch, donors = _donor_batch(batch, provider.load(*photons_from, labels=False)[0], seed)
+    with compute.stage("data_loading"):
+        batch, data = provider.load(partition, fidelity, labels=False)
+        ids = provider.theta(partition, fidelity)[1]
+        donors = None
+        if photons_from is not None:
+            donor = provider.load(*photons_from, labels=False)[0]
+            batch, donors = _donor_batch(batch, donor, seed)
     uncertainty = {}
-    with evaluation_threads(threads):
+    with evaluation_threads(threads), compute.stage("prediction"):
         prediction = _predict(model, batch, None)
         if getattr(model, "last_layer", None) is not None:
             from core.surrogates.last_layer import voxel_probability_draws
@@ -131,6 +135,7 @@ def predict_partition(
                 donor_index=donors.tolist(),
             )
         ),
+        compute=compute.summary(),
     )
     stem.with_suffix(".json").write_text(json.dumps(provenance, indent=2, allow_nan=False))
     return stem.with_suffix(".npz")

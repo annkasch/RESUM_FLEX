@@ -202,6 +202,17 @@ def test_field_runs_through_the_pipeline(tmp_path):
     assert restored.module.position_scale[0].item() == pytest.approx(expected, rel=1e-6)
     rows = json.loads((output / "metrics.json").read_text())
     assert all("voxel_predictive" in r for r in rows if r["split"] == "validation")
+    compute = json.loads((output / "compute.json").read_text())
+    assert [s["name"] for s in compute["stages"]] == [
+        "data_preparation",
+        "data_loading",
+        "training",
+        "last_layer_fit",
+        "evaluation",
+    ]
+    assert compute["total"]["core_hours"] > 0
     path = predict_partition(output / "checkpoints/best", root, "validation", "hf")
     with np.load(path) as arrays:
         assert arrays["probability_draws"].shape == (200, 5)
+    provenance = json.loads(path.with_suffix(".json").read_text())
+    assert [s["name"] for s in provenance["compute"]["stages"]] == ["data_loading", "prediction"]

@@ -4,6 +4,7 @@ import json
 
 import numpy as np
 
+from core.compute import ComputeLog
 from core.gp_subsample import subsample_voxels
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
@@ -28,13 +29,16 @@ def run_experiment(config: SurrogateRunConfig):
 
     Prepared batches are already normalized. Explicitly requested test files
     are opened only after fitting and checkpoint selection have completed.
-    Output must be empty, preventing accidental overwriting of prior runs.
+    Output must be empty, preventing accidental overwriting of prior runs. The compute of
+    every stage is written to ``compute.json`` (core.compute).
     """
     config = SurrogateRunConfig.model_validate(config)
     output = config.output_directory
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
-    provider, data_check = prepare_and_open(config)
+    compute = ComputeLog()
+    with compute.stage("data_preparation"):
+        provider, data_check = prepare_and_open(config)
 
     def load_split(split, fidelity):
         return provider.load(config.partitions[split], fidelity)
@@ -45,8 +49,11 @@ def run_experiment(config: SurrogateRunConfig):
         partitions.append(("validation", "hf"))
     if config.lf_validation:
         partitions.insert(1, ("validation", "lf"))
-    for split, fidelity in partitions:
-        batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(split, fidelity)
+    with compute.stage("data_loading"):
+        for split, fidelity in partitions:
+            batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(
+                split, fidelity
+            )
     episodes = {
         key: Episode(
             *split_context_target(
@@ -113,7 +120,7 @@ def run_experiment(config: SurrogateRunConfig):
     model.metadata = metadata
     output.mkdir(parents=True, exist_ok=True)
     (output / "experiment.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
-    with evaluation_threads(config.evaluation_threads):
+    with evaluation_threads(config.evaluation_threads), compute.stage("training"):
         if config.stages:
             from core.surrogates.stages import fit_stages
 
@@ -134,8 +141,23 @@ def run_experiment(config: SurrogateRunConfig):
             )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
     if getattr(config.model, "last_layer", None) is not None:
-        _fit_last_layers(output / "checkpoints", train, config)
+        with compute.stage("last_layer_fit"):
+            _fit_last_layers(output / "checkpoints", train, config)
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
+    with compute.stage("evaluation"):
+        _evaluate(config, output, train, batches, episodes, load_split)
+    if config.mfgp is not None:
+        from core.surrogates.mfgp_stage import run_mfgp_stage
+
+        checkpoint = output / "checkpoints" / config.mfgp_checkpoint
+        with compute.stage("mfgp"):
+            run_mfgp_stage(config, load_surrogate(checkpoint), checkpoint_path=checkpoint)
+    compute.write(output)
+    return output
+
+
+def _evaluate(config, output, train, batches, episodes, load_split):
+    """Optional unblinded test, metrics of every checkpoint on every split, plots."""
     # Selection is complete. Never pass test episodes into either training stage.
     test_provenance = {}
     if config.test_fidelities and not config.unblind_test:
@@ -230,12 +252,6 @@ def run_experiment(config: SurrogateRunConfig):
         from viz.surrogate import plot_fine_tuning_comparison
 
         plot_fine_tuning_comparison(output)
-    if config.mfgp is not None:
-        from core.surrogates.mfgp_stage import run_mfgp_stage
-
-        checkpoint = output / "checkpoints" / config.mfgp_checkpoint
-        run_mfgp_stage(config, load_surrogate(checkpoint), checkpoint_path=checkpoint)
-    return output
 
 
 def _fit_last_layers(directory, train, config):

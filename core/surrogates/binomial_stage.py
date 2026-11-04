@@ -8,6 +8,7 @@ Output directory::
     evaluation_<e>.npz       per evaluation set: observed fraction, predictive mean/sd/intervals
     metrics.json             one row per evaluation set
     development_map.npz      probability mean and variance at every loaded voxel
+    compute.json             wall/CPU time and allocated cores per stage (core.compute)
 """
 
 import json
@@ -17,6 +18,7 @@ import numpy as np
 from scipy.special import expit, logsumexp
 from scipy.stats import binom
 
+from core.compute import ComputeLog
 from core.gp_metrics import gp_metrics
 
 # Gaussian-equivalent central probabilities of the ±1/2/3 sigma bands.
@@ -59,11 +61,16 @@ def _covariate(cfg, provider, partition, fidelity):
     )
 
 
-def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
-    """Fit the binomial GP on the configured count sets and score the evaluation sets."""
+def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, compute=None):
+    """Fit the binomial GP on the configured count sets and score the evaluation sets.
+
+    ``compute`` (core.compute.ComputeLog, new by default) gets the stages data_loading, fit
+    and evaluation and is written to compute.json.
+    """
     from core.binomial_gp import BinomialGP
     from core.gp_subsample import subsample_voxels
 
+    compute = ComputeLog() if compute is None else compute
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=False)
     thetas, hits, events, sets, indices, records, covariates = [], [], [], [], [], [], []
@@ -104,6 +111,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         **({} if z_train is None else {"covariate": z_train}),
     )
     (directory / "observations.json").write_text(json.dumps(records, indent=2, allow_nan=False))
+    compute.lap("data_loading")
 
     gp = BinomialGP(kernel=cfg.kernel).fit(
         theta,
@@ -131,6 +139,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
         **(extra_metadata or {}),
     )
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
+    compute.lap("fit")
 
     metrics, loaded, loaded_z = [], [theta], [z_train]
     rng_seed = cfg.seed
@@ -212,6 +221,8 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None):
     if norm is not None:
         (directory / "normalization.json").write_text(json.dumps(norm, indent=2))
     _plot(directory)
+    compute.lap("evaluation")
+    compute.write(directory)
     return directory
 
 
@@ -260,10 +271,13 @@ def run_binomial_config(config):
     """Standalone run of a BinomialGPRunConfig."""
     from core.surrogates.experiment import prepare_and_open
 
-    provider, record = prepare_and_open(config)
+    compute = ComputeLog()
+    with compute.stage("data_preparation"):
+        provider, record = prepare_and_open(config)
     return run_binomial_gp(
         config,
         provider=provider,
         output_directory=config.output_directory,
         extra_metadata=dict(data_preparation=record),
+        compute=compute,
     )

@@ -86,6 +86,28 @@ Notebooks can call it and display artifacts, without duplicating a training loop
 The CLI limits Torch threads to one; BDT fitting limits its thread pools to one.
 CUDA is opt-in through `training.device`; default examples run on CPU.
 
+## Compute accounting
+
+Every run records what it cost (`core.compute`): a training run, the binomial GP and the
+MFGP write `compute.json` into their output directory, and context-free inference adds a
+`compute` entry to its `.json` provenance. A combined run's `mfgp/` folder has its own file;
+the parent also lists it as stage `mfgp`.
+
+- `stages`: one record per stage. Training runs: `data_preparation`, `data_loading`,
+  `training`, `last_layer_fit` (if configured), `evaluation`, `mfgp` (combined runs). GP
+  runs: `data_preparation` (standalone), `data_loading`, `fit`, `evaluation`. Inference:
+  `data_loading`, `prediction`.
+- `total`: the whole run, including anything between stages.
+- `environment`: host, Slurm job id, allocated logical CPUs and physical cores, GPUs and the
+  thread variables.
+
+Each record has `wall_seconds`, `cpu_seconds` (CPU time used, summed over threads),
+`allocated_cores` (physical cores of the process's CPU affinity, i.e. the Slurm allocation),
+`core_hours = wall_seconds × allocated_cores / 3600` (what the allocation costs, used or
+not), `cpu_utilization = cpu_seconds / (wall_seconds × allocated_cores)` and the Torch
+threads. The cost of a pipeline is the sum over its runs, e.g. event-model training +
+inference + GP fit for NN + GP.
+
 ## Blinded test sets
 
 Test partitions are blinded by default. `test_fidelities` declares which test sets exist,

@@ -101,6 +101,13 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
         assert (arrays["lower_1"] <= arrays["upper_1"]).all()
     for name in ("evaluation_0_coverage.png", "evaluation_0_zscore.png", "model.pkl"):
         assert (out / name).exists()
+    compute = json.loads((out / "compute.json").read_text())
+    assert [s["name"] for s in compute["stages"]] == [
+        "data_preparation",
+        "data_loading",
+        "fit",
+        "evaluation",
+    ]
     with pytest.raises(FileExistsError):
         run_binomial_config(config)
 

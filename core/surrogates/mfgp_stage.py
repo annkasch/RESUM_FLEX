@@ -16,6 +16,7 @@ Output directory::
     evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals, ...
     metrics.json             one row per evaluation set
     development_map.npz      top-level prediction at every loaded voxel
+    compute.json             wall/CPU time and allocated cores per stage (core.compute)
 """
 
 import json
@@ -23,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.compute import ComputeLog
 from core.gp_metrics import mfgp_metrics
 
 
@@ -30,8 +32,7 @@ def _model_mean(model, batch, *, n_context, seed):
     """Mean predicted p per voxel [B]; only context models split off a context."""
     from core.mfgp_pipeline import model_mean
 
-    return model_mean(model, batch, n_context=n_context if model.uses_context else None,
-                      seed=seed)
+    return model_mean(model, batch, n_context=n_context if model.uses_context else None, seed=seed)
 
 
 class _Data:
@@ -134,12 +135,24 @@ def _fit_targets(level, values, events, cfg):
 
 
 def run_mfgp(
-    cfg, *, provider, output_directory, model=None, metrics_seed=None, extra_metadata=None
+    cfg,
+    *,
+    provider,
+    output_directory,
+    model=None,
+    metrics_seed=None,
+    extra_metadata=None,
+    compute=None,
 ):
-    """Fit the configured levels, score the evaluation sets and write the output directory."""
+    """Fit the configured levels, score the evaluation sets and write the output directory.
+
+    ``compute`` (core.compute.ComputeLog, new by default) gets the stages data_loading, fit
+    and evaluation and is written to compute.json.
+    """
     from core.mfgp_pipeline import fit_mfgp, observed_fraction
     from core.surrogate_mfgp import load_mfgp, save_mfgp
 
+    compute = ComputeLog() if compute is None else compute
     directory = Path(output_directory)
     directory.mkdir(parents=True, exist_ok=False)
     data = _Data(provider)
@@ -169,6 +182,7 @@ def run_mfgp(
         },
     )
     (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
+    compute.lap("data_loading")
     n = len(cfg.levels)
     state = np.random.get_state()  # GPy restarts draw from the global numpy stream
     try:
@@ -201,6 +215,7 @@ def run_mfgp(
         **(extra_metadata or {}),
     )
     (directory / "model.json").write_text(json.dumps(metadata, indent=2, allow_nan=False))
+    compute.lap("fit")
     metrics, thetas = [], [arrays[f"X_{k}"] for k in range(n)]
     for e, evaluation in enumerate(cfg.evaluation):
         level = n - 1 if evaluation.level is None else evaluation.level
@@ -278,6 +293,8 @@ def run_mfgp(
         from core.projection_selection import ensure_selected_projections
 
         ensure_selected_projections(directory, cfg.projections, backend="mfgp")
+    compute.lap("evaluation")
+    compute.write(directory)
     return directory
 
 
@@ -300,7 +317,9 @@ def run_mfgp_config(config):
     """Standalone mode: a saved checkpoint and/or inference files on prepared data."""
     from core.surrogates.experiment import prepare_and_open
 
-    provider, _ = prepare_and_open(config)
+    compute = ComputeLog()
+    with compute.stage("data_preparation"):
+        provider, _ = prepare_and_open(config)
     model = None
     if config.checkpoint is not None:
         from core.surrogates.checkpoints import load_surrogate
@@ -315,4 +334,5 @@ def run_mfgp_config(config):
             mode="standalone",
             surrogate_checkpoint=None if config.checkpoint is None else str(config.checkpoint),
         ),
+        compute=compute,
     )

@@ -48,8 +48,9 @@ def test_level_settings_are_validated(tmp_path):
     )
     assert unblinded.evaluation[0].partition == "gp_test"
     with pytest.raises(ValueError, match="can't be a GP training level"):
-        MFGPStageConfig(levels=[TWO_LEVELS[0], {**TWO_LEVELS[1], "partition": "cnp_test"}],
-                        unblind_test=True)
+        MFGPStageConfig(
+            levels=[TWO_LEVELS[0], {**TWO_LEVELS[1], "partition": "cnp_test"}], unblind_test=True
+        )
     with pytest.raises(ValueError, match="evaluation level"):
         MFGPStageConfig(levels=TWO_LEVELS, evaluation=[{"partition": "v", "level": 2}])
     base = dict(levels=TWO_LEVELS, data_directory="d", output_directory="o")
@@ -129,6 +130,13 @@ def test_standalone_two_levels_with_checkpoint(tmp_path):
     for e in range(2):
         assert (out / f"evaluation_{e}_coverage.png").exists()
     assert (out / "training_inputs.png").exists()
+    compute = json.loads((out / "compute.json").read_text())
+    assert [s["name"] for s in compute["stages"]] == [
+        "data_preparation",
+        "data_loading",
+        "fit",
+        "evaluation",
+    ]
     with pytest.raises(FileExistsError):
         run_mfgp_config(config)
 
@@ -185,8 +193,15 @@ def test_coverage_plot_can_hide_predicted_line(tmp_path, monkeypatch, show):
 
     monkeypatch.setattr(matplotlib.axes.Axes, "plot", plot)
     y = np.linspace(0.1, 0.2, 5)
-    plot_coverage_test(y, y, np.full(5, 0.01), out_path=tmp_path / "c.png", title="t",
-                       predicted_label="MFGP mean", show_predicted=show)
+    plot_coverage_test(
+        y,
+        y,
+        np.full(5, 0.01),
+        out_path=tmp_path / "c.png",
+        title="t",
+        predicted_label="MFGP mean",
+        show_predicted=show,
+    )
     assert ("MFGP mean" in labels) == show
 
 
@@ -197,11 +212,13 @@ def test_coverage_plot_order_changes_display_only(tmp_path):
     mean = rng.uniform(0.1, 0.2, 30)
     obs = mean + rng.normal(0, 0.01, 30)
     results = {
-        order: plot_coverage_test(obs, mean, np.full(30, 0.01), out_path=tmp_path / f"{order}.png",
-                                  title="t", order=order)
+        order: plot_coverage_test(
+            obs, mean, np.full(30, 0.01), out_path=tmp_path / f"{order}.png", title="t", order=order
+        )
         for order in ("input", "predicted", "observed")
     }
     assert results["input"] == results["predicted"] == results["observed"]
     with pytest.raises(ValueError, match="order must be"):
-        plot_coverage_test(obs, mean, np.full(30, 0.01), out_path=tmp_path / "x.png", title="t",
-                           order="random")
+        plot_coverage_test(
+            obs, mean, np.full(30, 0.01), out_path=tmp_path / "x.png", title="t", order="random"
+        )
