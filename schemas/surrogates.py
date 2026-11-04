@@ -633,6 +633,13 @@ def load_binomial_config(path: str | Path) -> BinomialGPRunConfig:
     return config
 
 
+class TrainingSet(StrictConfigModel):
+    """One prepared partition/fidelity whose labelled events train the event model."""
+
+    partition: str
+    fidelity: Fidelity
+
+
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
@@ -654,6 +661,10 @@ class SurrogateRunConfig(SurrogateConfig):
     partitions: dict[Literal["train", "validation", "test"], str] = Field(
         default_factory=lambda: {"train": "train", "validation": "validation", "test": "test"}
     )
+    # Train on the voxels of several sets instead of partitions.train at LF, e.g. the GP's
+    # training data (LF2 + HF train) for a model that predicts voxel rates itself. Selection
+    # still uses partitions.validation; the sets may not include it or partitions.test.
+    train_sets: list[TrainingSet] | None = Field(default=None, min_length=1)
     # Optional data-preparation YAML for the provider. When set, each run first lets the
     # provider rebuild data_directory if its settings or raw inputs changed.
     data_config: Path | None = None
@@ -693,6 +704,31 @@ class SurrogateRunConfig(SurrogateConfig):
         defaults = {"train": "train", "validation": "validation", "test": "test"}
         self.partitions = {**defaults, **self.partitions}
         return self
+
+    @model_validator(mode="after")
+    def train_sets_held_out(self):
+        if self.train_sets is None:
+            return self
+        keys = [(t.partition, t.fidelity) for t in self.train_sets]
+        if len(set(keys)) != len(keys):
+            raise ValueError("train_sets must be unique")
+        held_out = {self.partitions["validation"], self.partitions["test"]}
+        if any(t.partition in held_out for t in self.train_sets):
+            raise ValueError("train_sets may not include the validation or test partition")
+        return self
+
+    @property
+    def training_sets(self) -> list[tuple[str, str]]:
+        """(partition, fidelity) of every training set."""
+        if self.train_sets is None:
+            return [(self.partitions["train"], "lf")]
+        return [(t.partition, t.fidelity) for t in self.train_sets]
+
+    @property
+    def training_label(self) -> str:
+        """Fidelity label of the training split: its common fidelity, otherwise "mixed"."""
+        fidelities = {fidelity for _, fidelity in self.training_sets}
+        return fidelities.pop() if len(fidelities) == 1 else "mixed"
 
     @model_validator(mode="after")
     def unique_tests(self):

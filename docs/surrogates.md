@@ -70,8 +70,11 @@ overwritten. Data/output paths resolve relative to the YAML file.
 
 The runner loads prepared LF training and LF/HF validation batches. Inputs must
 already have the training-only normalization applied. It never reads test data.
-Only LF validation selects a model; HF is scored after selection. Training PR is
-in-sample. Files under the output directory are uniform across model families:
+`train_sets` replaces the LF training partition by several sets, e.g. LF2 + HF train
+for a model that is benchmarked against the GPs on their own training data; their voxels
+form one zero-padded batch, and the training split is labelled by their common fidelity
+(`mixed` otherwise). LF validation selects the model by default; HF is then scored after
+selection (`selection_fidelity` changes this). Training PR is in-sample. Files under the output directory are uniform across model families:
 
 - `experiment.json`: resolved configuration, input-file hashes, normalization,
   feature metadata and split manifest when available.

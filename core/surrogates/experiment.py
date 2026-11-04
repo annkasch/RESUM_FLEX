@@ -11,6 +11,7 @@ from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate
 from core.surrogates.evaluation import evaluate_surrogate, evaluation_threads
 from core.surrogates.models import build_surrogate
+from schemas.data_models import concatenate_batches
 from schemas.surrogates import SurrogateRunConfig
 
 
@@ -25,7 +26,7 @@ def prepare_and_open(config):
 
 
 def run_experiment(config: SurrogateRunConfig):
-    """Fit on LF train; optionally select on LF validation; report available splits.
+    """Fit on LF train (or ``train_sets``); optionally select on validation; report splits.
 
     Prepared batches are already normalized. Explicitly requested test files
     are opened only after fitting and checkpoint selection have completed.
@@ -44,12 +45,22 @@ def run_experiment(config: SurrogateRunConfig):
         return provider.load(config.partitions[split], fidelity)
 
     batches, provenance = {}, {}
-    partitions = [("train", "lf")]
+    label = config.training_label  # "lf" for the default LF train partition
+    partitions = []
+    if config.lf_validation:
+        partitions.append(("validation", "lf"))
     if config.hf_validation:
         partitions.append(("validation", "hf"))
-    if config.lf_validation:
-        partitions.insert(1, ("validation", "lf"))
     with compute.stage("data_loading"):
+        loaded = [provider.load(*key) for key in config.training_sets]
+        batches["train", label] = (
+            loaded[0][0] if len(loaded) == 1 else concatenate_batches([b for b, _ in loaded])
+        )
+        provenance[f"train/{label}"] = (
+            loaded[0][1]
+            if config.train_sets is None
+            else {"/".join(k): d for k, (_, d) in zip(config.training_sets, loaded, strict=True)}
+        )
         for split, fidelity in partitions:
             batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(
                 split, fidelity
@@ -65,7 +76,7 @@ def run_experiment(config: SurrogateRunConfig):
         )
         for key, batch in batches.items()
     }
-    train = batches["train", "lf"]
+    train = batches["train", label]
     selection_episode = episodes.get(("validation", config.selection_fidelity))
     selection_voxels = None
     if selection_episode is not None:

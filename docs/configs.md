@@ -20,6 +20,7 @@ parentheses.
 | `data_provider` | Provider as `module:Class` (none: `.npz` batches, `batches/<partition>/<fidelity>.npz`). |
 | `data_config` | Data-preparation YAML for the provider; the data are rebuilt when it or the raw files change (none). |
 | `partitions` | Provider partitions for `train`, `validation`, `test` (each named like the key). |
+| `train_sets` | Train on these sets instead of `partitions.train` at LF: a list of `{partition, fidelity}`, e.g. the GP's training data `[{partition: gp_unlabeled, fidelity: lf}, {partition: gp_train, fidelity: hf}]` for a model that predicts voxel rates itself. Their voxels form one zero-padded batch; the validation and test partitions are not allowed (none). |
 | `output_directory` | Run directory. Required; must be new or empty. |
 
 ### Evaluation

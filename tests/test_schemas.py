@@ -293,6 +293,7 @@ def test_every_config_field_is_documented():
         s.BinomialGPRunConfig,
         s.CountSet,
         s.CountEvaluation,
+        s.TrainingSet,
     ]
     missing = sorted(
         f"{m.__name__}.{name}"

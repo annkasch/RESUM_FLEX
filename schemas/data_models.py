@@ -360,6 +360,48 @@ class ModelPrediction(BaseModel):
         return self
 
 
+def concatenate_batches(batches: list[StandardBatch]) -> StandardBatch:
+    """All voxels of ``batches`` in one batch ``[sum B, max N]``, in the given order.
+
+    Shorter event axes are zero-padded (inputs and labels) and the result carries per-voxel
+    ``event_counts``, so the padding never counts as events. Mode, feature dimensions and the
+    presence of ``beta`` must agree.
+    """
+    if not batches:
+        raise ValueError("concatenate_batches needs at least one batch")
+    first = batches[0]
+    for batch in batches[1:]:
+        if batch.mode is not first.mode:
+            raise ValueError(f"Batches mix input modes {first.mode} and {batch.mode}")
+        for name in ("theta", "phi"):
+            a, b = getattr(first, name), getattr(batch, name)
+            if a is not None and a.shape[-1] != b.shape[-1]:
+                raise ValueError(f"{name} dimensions differ: {a.shape[-1]} and {b.shape[-1]}")
+        if (first.beta is None) != (batch.beta is None):
+            raise ValueError("Either all batches carry beta or none")
+    n = max(b.n_events for b in batches)
+
+    def padded(name):  # [B, n, ...] per batch, zero beyond its own N
+        if getattr(first, name) is None:
+            return None
+        parts = []
+        for batch in batches:
+            a = getattr(batch, name)
+            width = [(0, 0)] * a.ndim
+            width[1] = (0, n - a.shape[1])
+            parts.append(np.pad(a, width))
+        return np.concatenate(parts)
+
+    return StandardBatch(
+        mode=first.mode,
+        labels=padded("labels"),
+        theta=None if first.theta is None else np.concatenate([b.theta for b in batches]),
+        phi=padded("phi"),
+        beta=padded("beta"),
+        event_counts=np.concatenate([b.events_per_voxel for b in batches]),
+    )
+
+
 def valid_event_mask(counts: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray:
     """``[B, N]`` mask of real events for padded per-voxel arrays (all True if ``None``)."""
     if counts is None:
