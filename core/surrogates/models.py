@@ -38,10 +38,33 @@ class NeuralSurrogate(EventSurrogate):
 
             encoder = EncoderConfig(type="mlp", latent_dim=1, **config.architecture.model_dump())
             self.module = BernoulliMLP(encoder, dim_theta, dim_phi)
+        elif config.kind == "field":
+            from core.bernoulli_field import BernoulliField
+
+            self.module = BernoulliField(config, dim_theta, dim_phi)
         else:
             from core.bernoulli_transformer import BernoulliTransformer
 
             self.module = BernoulliTransformer(config.architecture, dim_theta, dim_phi)
+
+    # Fitted Laplace posterior of the final layer (core.last_layer), or None.
+    last_layer = None
+
+    @property
+    def supports_uncertainty(self):
+        return self.last_layer is not None
+
+    @property
+    def capabilities(self):
+        return {**super().capabilities, "predictive_distribution": self.supports_uncertainty}
+
+    def configure_normalization(self, normalization):
+        """Give a field the data normalization it needs to combine inputs in physical units.
+
+        No-op for other kinds. Stored in the module state, so checkpoints keep it.
+        """
+        if self.config.kind == "field":
+            self.module.set_normalization(normalization)
 
     def output_layer(self):
         """Explicit final projection for each architecture; never infer by ordering."""

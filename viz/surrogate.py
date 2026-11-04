@@ -141,7 +141,8 @@ def plot_calibration(directory, fidelity, save):
         ax.errorbar(
             predicted,
             observed,
-            yerr=[observed - low, high - observed],
+            # Wilson bounds can miss the point by rounding error at 0 or all hits.
+            yerr=[np.maximum(observed - low, 0), np.maximum(high - observed, 0)],
             fmt="o-",
             ms=3,
             capsize=2,
@@ -173,12 +174,12 @@ def plot_context_sweep(directory, save):
             observed = [r for r in selected if r["context_labels"] == "observed"]
             line = ax.plot(
                 [r["n_context"] for r in observed],
-                [r[key] for r in observed],
+                [np.nan if r[key] is None else r[key] for r in observed],  # undefined: gap
                 "o-",
                 label=", ".join(group),
             )[0]
             for r in selected:
-                if r["context_labels"] == "zeroed":
+                if r["context_labels"] == "zeroed" and r[key] is not None:
                     ax.plot(r["n_context"], r[key], "x", ms=9, color=line.get_color())
         ax.set(xlabel="Context events", ylabel=key)
         ax.grid(alpha=0.2)

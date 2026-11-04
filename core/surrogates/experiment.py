@@ -79,6 +79,9 @@ def run_experiment(config: SurrogateRunConfig):
              else build_surrogate(config.model, dt, dp, seed=seed))
     if model.config != config.model or (model.dim_theta, model.dim_phi) != (dt, dp):
         raise ValueError("Initial checkpoint architecture/features do not match experiment")
+    if not config.initial_checkpoint and hasattr(model, "configure_normalization"):
+        # A field combines inputs in physical units; the map is stored with its weights.
+        model.configure_normalization(provider.normalization())
     metadata = dict(
         resolved_config=config.model_dump(mode="json"),
         data=provenance,
@@ -111,6 +114,8 @@ def run_experiment(config: SurrogateRunConfig):
                 selection=config.selection, checkpoints=output / "checkpoints",
             )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
+    if getattr(config.model, "last_layer", None) is not None:
+        _fit_last_layers(output / "checkpoints", train, config)
     (output / "sampling_audit.json").write_text(json.dumps(result.sampling_audit, indent=2))
     # Selection is complete. Never pass test episodes into either training stage.
     test_provenance = {}
@@ -172,6 +177,10 @@ def run_experiment(config: SurrogateRunConfig):
                     summary.update(
                         readout_metrics(episode.target, arrays, seed=config.validation_seed)
                     )
+                    if getattr(saved, "last_layer", None) is not None:
+                        summary["voxel_predictive"] = _voxel_predictive(
+                            saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"
+                        )
                     if saved.uses_context:
                         sweep.extend(
                             dict(checkpoint=checkpoint, split=split, fidelity=fidelity, **row)
@@ -206,3 +215,55 @@ def run_experiment(config: SurrogateRunConfig):
         checkpoint = output / "checkpoints" / config.mfgp_checkpoint
         run_mfgp_stage(config, load_surrogate(checkpoint), checkpoint_path=checkpoint)
     return output
+
+
+def _fit_last_layers(directory, train, config):
+    """Fit the Laplace last layer of every saved checkpoint on the training events.
+
+    Context models condition on the same context split as evaluation; only the remaining
+    target events enter the Hessian.
+    """
+    from core.surrogates.last_layer import fit_last_layer
+
+    for manifest in sorted(directory.rglob("model.json")):
+        model = load_surrogate(manifest.parent)
+        context, target = None, train
+        if model.uses_context:
+            context, target = split_context_target(
+                train,
+                config.validation_context_events,
+                seed=config.validation_seed,
+                n_pool=config.validation_context_pool,
+            )
+        fit_last_layer(model, target, context)
+        model.save(manifest.parent)
+
+
+def _voxel_predictive(model, episode, stem):
+    """Count-level predictive scores of a Bayesian-last-layer model on one episode.
+
+    Writes ``<stem>.npz`` (per-voxel predictive arrays) and a coverage plot.
+    """
+    from core.gp_metrics import count_predictive_scores
+    from core.surrogates.last_layer import voxel_probability_draws
+
+    target = episode.target
+    draws = voxel_probability_draws(model, target, episode.context)  # [S, B]
+    hits = np.where(target.event_mask, target.labels, 0).sum(axis=1)
+    scores, arrays = count_predictive_scores(
+        hits, target.events_per_voxel, draws, seed=model.config.last_layer.seed
+    )
+    np.savez_compressed(stem.with_suffix(".npz"), **arrays)
+    from viz.dispatch import plot_coverage_test
+
+    intervals = {k: (arrays[f"lower_{k}"], arrays[f"upper_{k}"]) for k in (1, 2, 3)}
+    high = max(float(arrays["observed"].max()), float(intervals[3][1].max()))
+    plot_coverage_test(
+        arrays["observed"], arrays["mean"], arrays["sigma"],
+        out_path=stem.parent / f"{stem.name}_coverage.png",
+        title=f"{stem.name}: Bayesian last layer, observation-predictive coverage",
+        xlabel="Voxel index", predicted_label="Predictive mean",
+        raw_label="Observed fraction", ylim=(0, high * 1.05), intervals=intervals,
+        show_predicted=False,
+    )
+    return scores

@@ -48,6 +48,15 @@ def save_surrogate(path, model, *, metadata=None):
             path / (filename + ".tmp"),
         )
     (path / (filename + ".tmp")).replace(path / filename)
+    posterior = getattr(model, "last_layer", None)
+    if posterior is not None:
+        import numpy as np
+
+        with (path / "last_layer.npz.tmp").open("wb") as stream:
+            np.savez(stream, **posterior.to_arrays())
+        (path / "last_layer.npz.tmp").replace(path / "last_layer.npz")
+    elif (path / "last_layer.npz").exists():
+        (path / "last_layer.npz").unlink()  # a stale posterior must not outlive its weights
     (path / "model.json.tmp").write_text(serialized)
     (path / "model.json.tmp").replace(path / "model.json")
 
@@ -71,5 +80,12 @@ def load_surrogate(path):
             torch.load(path / "weights.pt", map_location="cpu", weights_only=True)
         )
         model.module.eval()
+        if (path / "last_layer.npz").exists():
+            import numpy as np
+
+            from core.last_layer import LastLayerPosterior
+
+            with np.load(path / "last_layer.npz") as arrays:
+                model.last_layer = LastLayerPosterior.from_arrays(arrays)
     model.metadata = manifest["metadata"]
     return model

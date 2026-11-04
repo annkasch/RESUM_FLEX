@@ -21,9 +21,27 @@ def default_encoder():
     return EncoderConfig(type="mlp", latent_dim=64, hidden_dims=[128, 128])
 
 
+class BayesianLastLayer(StrictConfigModel):
+    """Laplace posterior over the final linear layer, fitted after training.
+
+    The trained weights are the posterior mean. The precision is the exact Bernoulli
+    Hessian over all natural training events plus an isotropic Gaussian prior:
+    ``prior_precision`` = "evidence" maximizes the Laplace marginal likelihood (training
+    data only), a number fixes it. ``draws`` weight samples give event and voxel
+    predictive distributions; ``seed`` makes them reproducible.
+    """
+
+    prior_precision: Literal["evidence"] | Annotated[
+        float, Field(gt=0, allow_inf_nan=False)
+    ] = "evidence"
+    draws: int = Field(default=1000, ge=100)
+    seed: int = 0
+
+
 class CNPModel(StrictConfigModel):
     kind: Literal["cnp"] = "cnp"
     encoder: EncoderConfig = Field(default_factory=default_encoder)
+    last_layer: BayesianLastLayer | None = None
 
     @model_validator(mode="after")
     def supported_encoder(self):
@@ -34,8 +52,17 @@ class CNPModel(StrictConfigModel):
         return self
 
 
-class LegacyCNPModel(CNPModel):
+class LegacyCNPModel(StrictConfigModel):
     kind: Literal["legacy_cnp"] = "legacy_cnp"
+    encoder: EncoderConfig = Field(default_factory=default_encoder)
+
+    @model_validator(mode="after")
+    def supported_encoder(self):
+        if self.encoder.type != "mlp":
+            raise ValueError(
+                "This CNP supports the MLP encoder; use kind=transformer for tabular attention"
+            )
+        return self
 
 
 class MLPArchitecture(StrictConfigModel):
@@ -48,6 +75,62 @@ class MLPArchitecture(StrictConfigModel):
 class MLPModel(StrictConfigModel):
     kind: Literal["mlp"] = "mlp"
     architecture: MLPArchitecture = Field(default_factory=MLPArchitecture)
+    last_layer: BayesianLastLayer | None = None
+
+
+class FieldPosition(StrictConfigModel):
+    """Event columns that, added to theta in physical units, give one continuous position.
+
+    For example theta = voxel centre and phi[0:3] = emission offset from that centre. The
+    sum uses the data normalization stored with the model, so it is exact in physical
+    units; the field never sees the voxel structure.
+    """
+
+    phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=1)
+
+
+class FieldDirection(StrictConfigModel):
+    """Event columns of a 3-vector direction (any length), encoded by real spherical
+    harmonics up to ``degree`` after normalizing to unit length."""
+
+    phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=3, max_length=3)
+    degree: int = Field(default=4, ge=0, le=8)
+
+
+class FourierEncoding(StrictConfigModel):
+    """sin/cos of each position coordinate at ``n_frequencies`` octave-spaced frequencies
+    up to ``max_frequency`` (cycles per unit of normalized theta), plus the raw value.
+
+    The finest resolvable half-period is 1 / (2 max_frequency) normalized units.
+    """
+
+    kind: Literal["fourier"] = "fourier"
+    n_frequencies: int = Field(default=8, ge=1, le=16)
+    max_frequency: float = Field(default=8.0, gt=0, allow_inf_nan=False)
+
+
+class FieldModel(StrictConfigModel):
+    """Neural field: an MLP on encoded event coordinates, p(position, direction, rest).
+
+    Position = theta (+ ``position.phi_columns`` in physical units) through the Fourier
+    encoding; ``direction`` columns through spherical harmonics; all other phi columns
+    enter unencoded. Context-free like the MLP.
+    """
+
+    kind: Literal["field"] = "field"
+    architecture: MLPArchitecture = Field(default_factory=MLPArchitecture)
+    position: FieldPosition | None = None
+    direction: FieldDirection | None = None
+    encoding: FourierEncoding = Field(default_factory=FourierEncoding)
+    last_layer: BayesianLastLayer | None = None
+
+    @model_validator(mode="after")
+    def distinct_columns(self):
+        groups = [g.phi_columns for g in (self.position, self.direction) if g is not None]
+        columns = [c for group in groups for c in group]
+        if len(set(columns)) != len(columns):
+            raise ValueError("position and direction phi_columns must be distinct")
+        return self
 
 
 class TransformerModel(StrictConfigModel):
@@ -70,7 +153,8 @@ class BDTModel(StrictConfigModel):
 
 
 ModelSpec = Annotated[
-    CNPModel | LegacyCNPModel | MLPModel | TransformerModel | BDTModel, Field(discriminator="kind")
+    CNPModel | LegacyCNPModel | MLPModel | FieldModel | TransformerModel | BDTModel,
+    Field(discriminator="kind"),
 ]
 
 

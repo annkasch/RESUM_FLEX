@@ -55,7 +55,7 @@ def predict_partition(
     if model.uses_context:
         raise ValueError(
             f"{model.config.kind} needs labeled context events; unlabeled inference requires "
-            "a context-free model (mlp, transformer, bdt)"
+            "a context-free model (mlp, field, transformer, bdt)"
         )
     if data_provider == FROM_CHECKPOINT:
         data_provider = model.metadata.get("data_provider")
@@ -78,8 +78,18 @@ def predict_partition(
     donors = None
     if photons_from is not None:
         batch, donors = _donor_batch(batch, provider.load(*photons_from, labels=False)[0], seed)
+    uncertainty = {}
     with evaluation_threads(threads):
         prediction = _predict(model, batch, None)
+        if getattr(model, "last_layer", None) is not None:
+            from core.surrogates.last_layer import voxel_probability_draws
+
+            draws = voxel_probability_draws(model, batch)  # [S, B]
+            uncertainty = dict(
+                probability_draws=draws.astype(np.float32),  # [S, B] last-layer draws
+                probability_mean=draws.mean(axis=0),  # [B] posterior mean of the voxel p
+                probability_sd=draws.std(axis=0),  # [B] its epistemic sd
+            )
     output.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         stem.with_suffix(".npz"),
@@ -88,6 +98,7 @@ def predict_partition(
         theta=batch.theta,  # [B, D_theta] normalized model input
         event_counts=batch.events_per_voxel,  # [B]
         mean_probability=prediction.mean,  # [B] mean predicted p over each voxel's events
+        **uncertainty,
     )
     provenance = dict(
         checkpoint=str(checkpoint.resolve()),
@@ -101,6 +112,11 @@ def predict_partition(
         events=int(batch.events_per_voxel.sum()),
         normalization_check="provider normalization equals checkpoint normalization",
         labels="not used (inputs only)",
+        uncertainty=(
+            dict(method="Laplace last layer", draws=int(uncertainty["probability_draws"].shape[0]),
+                 seed=model.config.last_layer.seed)
+            if uncertainty else None
+        ),
         event_inputs=(
             "own" if photons_from is None
             else dict(donor_partition=photons_from[0], donor_fidelity=photons_from[1],

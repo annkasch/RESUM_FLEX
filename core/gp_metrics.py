@@ -129,3 +129,60 @@ def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096):
     )
     result["crps_method"] = f"empirical marginal predictive draws; n={n_draws}, seed={seed}"
     return result
+
+
+# Central predictive intervals keyed by Gaussian-equivalent sigma level.
+SIGMA_LEVELS = {1: erf(1 / sqrt(2)), 2: erf(2 / sqrt(2)), 3: erf(3 / sqrt(2))}
+
+
+def count_predictive_scores(hits, trials, probability_draws, *, seed=0):
+    """Score a count prediction given draws of each voxel's hit probability.
+
+    hits, trials: [B] observed counts; probability_draws: [S, B] equal-weight draws of p.
+    The observation predictive is k ~ Binomial(N, p) mixed over the draws: its fractions
+    give intervals, coverage and CRPS (gp_metrics), and the count NLL is the binomial mass
+    mixed over the same draws. Returns (scores, arrays) like the binomial GP evaluation.
+    """
+    from scipy.special import logsumexp
+    from scipy.stats import binom
+
+    k, n = np.asarray(hits), np.asarray(trials)
+    p = np.asarray(probability_draws, float)
+    if k.ndim != 1 or n.shape != k.shape or p.ndim != 2 or p.shape[1] != len(k):
+        raise ValueError("Expected hits, trials [B] and probability_draws [S, B]")
+    if np.any(n < 1) or np.any(k < 0) or np.any(k > n):
+        raise ValueError("Counts need 0 <= hits <= trials and trials >= 1")
+    if not np.isfinite(p).all() or np.any(p <= 0) or np.any(p >= 1):
+        raise ValueError("Probability draws must lie strictly inside (0, 1)")
+    rng = np.random.default_rng(np.random.SeedSequence([seed, 0]))
+    observed = k / n
+    samples = rng.binomial(n, p) / n  # [S, B] predicted fractions
+    intervals = {
+        level: tuple(np.quantile(samples, [(1 - q) / 2, (1 + q) / 2], axis=0))
+        for level, q in SIGMA_LEVELS.items()
+    }
+    mean = samples.mean(axis=0)
+    scores = gp_metrics(
+        observed, mean, intervals=intervals, samples=samples, median=np.median(samples, axis=0)
+    )
+    log_mass = logsumexp(binom.logpmf(k, n, p), axis=0) - np.log(len(p))
+    scores.update(
+        predictive_nll=float(-log_mass.mean()),
+        predictive_distribution="binomial counts mixed over draws of p",
+        nll_measure="count probability mass; not comparable to a density NLL",
+        coverage={str(level): float(((observed >= lo) & (observed <= hi)).mean())
+                  for level, (lo, hi) in intervals.items()},
+        draws=len(p),
+    )
+    arrays = dict(
+        observed=observed,
+        hits=k,
+        target_events=n,
+        mean=mean,
+        sigma=samples.std(axis=0),
+        probability_mean=p.mean(axis=0),
+        probability_sd=p.std(axis=0),
+        **{f"{bound}_{level}": intervals[level][i]
+           for level in SIGMA_LEVELS for i, bound in enumerate(("lower", "upper"))},
+    )
+    return scores, arrays
