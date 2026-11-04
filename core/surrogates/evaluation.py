@@ -59,14 +59,14 @@ def probability_metrics(target, labels, probabilities, *, reference_rate=None):
     target: StandardBatch giving the voxel layout; labels, probabilities: [B, N].
     reference_rate: constant-rate model for the log-loss skill (training prevalence).
     """
-    mask = target.event_mask                                       # [B, N]
-    n = target.events_per_voxel                                    # [B]
+    mask = target.event_mask  # [B, N]
+    n = target.events_per_voxel  # [B]
     if np.any(n < 2):
         raise ValueError("Voxel metrics need at least two target events per voxel")
-    p = np.where(mask, probabilities, 0.0)                         # [B, N]
-    hits = np.where(mask, labels, 0).sum(axis=1).astype(float)     # [B]
-    expected = p.sum(axis=1)                                       # [B]
-    variance = (p * (1 - p)).sum(axis=1)                           # [B] binomial variance of hits
+    p = np.where(mask, probabilities, 0.0)  # [B, N]
+    hits = np.where(mask, labels, 0).sum(axis=1).astype(float)  # [B]
+    expected = p.sum(axis=1)  # [B]
+    variance = (p * (1 - p)).sum(axis=1)  # [B] binomial variance of hits
     if np.any(variance <= 0):
         raise ValueError("Predicted hit variance is zero; probabilities are degenerate")
     observed, predicted = hits / n, expected / n
@@ -79,9 +79,10 @@ def probability_metrics(target, labels, probabilities, *, reference_rate=None):
         else None
     )
     bins = calibration_bins(labels[mask], probabilities[mask])
-    chi2 = np.square(bins["calibration_hits"] - bins["calibration_predicted"]) / bins[
-        "calibration_variance"
-    ]
+    chi2 = (
+        np.square(bins["calibration_hits"] - bins["calibration_predicted"])
+        / bins["calibration_variance"]
+    )
     metrics = dict(
         voxel_rate_mse_denoised=float(denoised.mean()),
         spearman_r=spearman,
@@ -98,6 +99,15 @@ def probability_metrics(target, labels, probabilities, *, reference_rate=None):
         reference = -np.where(y == 1, np.log(reference_rate), np.log1p(-reference_rate)).mean()
         metrics["reference_log_loss"] = float(reference)
     return metrics, dict(voxel_z=z, **bins)
+
+
+def _count_nll(hits, trials, probability):
+    """Mean -log Binomial(k | n, p) over voxels with the predicted mean p (plug-in)."""
+    from scipy.stats import binom
+
+    if np.any(probability <= 0) or np.any(probability >= 1):
+        raise ValueError("Voxel mean probabilities must lie strictly inside (0, 1)")
+    return float(-binom.logpmf(hits, trials, probability).mean())
 
 
 def evaluate_surrogate(model, target, *, context=None, reference_rate=None):
@@ -144,6 +154,9 @@ def evaluate_surrogate(model, target, *, context=None, reference_rate=None):
             ).mean()
         ),
         brier_score=float(np.square(prediction.probabilities[mask] - event_labels).mean()),
+        voxel_count_nll=_count_nll(
+            np.where(mask, labels, 0).sum(axis=1), target.events_per_voxel, predicted
+        ),
         average_precision=curve["average_precision"],
         prevalence=curve["prevalence"],
         lift=curve["average_precision"] / curve["prevalence"] if labels.sum() else None,

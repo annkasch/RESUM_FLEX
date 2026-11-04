@@ -26,9 +26,10 @@ parentheses.
 
 | Key | Meaning |
 |---|---|
-| `selection` | Checkpoint metric on LF validation: `bernoulli_log_loss`, `average_precision`, `voxel_rate_mae` (`voxel_rate_mae`). Use log loss for natural-event runs, AP for mixup runs. |
-| `lf_validation` | Select on LF validation; `false` keeps the final checkpoint (`true`). |
-| `hf_validation` | Also report HF validation (`true`). |
+| `selection` | Checkpoint metric on the selection set: `bernoulli_log_loss`, `average_precision`, `voxel_rate_mae`, `voxel_count_nll` (`voxel_rate_mae`). Use log loss or `voxel_count_nll` (plug-in binomial count NLL per voxel, much more sensitive with few hits) for natural-event runs, AP for mixup runs. |
+| `lf_validation` | Load and report LF validation; without a loaded selection set the final checkpoint is kept (`true`). |
+| `hf_validation` | Load and report HF validation (`true`). |
+| `selection_fidelity` | Validation fidelity that selects the checkpoint: `lf` or `hf` (`lf`). With `hf` that set's scores are selection-biased; keep a blinded test set for the final comparison. |
 | `test_fidelities` | Test sets that exist, e.g. `[lf]` (`[]`). |
 | `unblind_test` | Evaluate the test sets. Leave `false` until all choices are final (`false`). |
 | `validation_context_events` | Context events per voxel for context models during evaluation (64). |
@@ -45,6 +46,9 @@ parentheses.
 |---|---|
 | `cnp` | `encoder`: `latent_dim`, `hidden_dims`, `dropout` (64, `[128, 128]`, 0). Uses context events. |
 | `mlp` | `architecture`: `hidden_dims`, `dropout` (`[128, 128]`, 0). |
+| `field` | `architecture` as mlp; `position.phi_columns` (added to theta in physical units), `direction.phi_columns` + `degree` (4), `encoding`: `n_frequencies`, `max_frequency` (8, 8.0). See surrogates.md, Neural field. |
+
+`mlp`, `cnp` and `field` take an optional `last_layer`: `prior_precision` (`evidence` or a number), `draws` (1000), `seed` (0): a Laplace posterior over the final layer, fitted after training (surrogates.md, Bayesian last layer).
 | `transformer` | `architecture`: `architecture` (`legacy` or `ft_transformer`), `token_dim`, `n_heads`, `n_layers`, `feedforward_dim`, `dropout`, `inference_chunk_size`. |
 | `bdt` | `architecture`: `learning_rate`, `max_iter`, `eval_every`, `max_leaf_nodes`, `max_depth`, `min_samples_leaf`, `l2_regularization`, `max_bins`, `seed`. Needs `training.backend: bdt`. |
 | `legacy_cnp` | Original two-output CNP; needs `training.loss: theory-truth` or `practice-truth`. |

@@ -59,7 +59,8 @@ def run_experiment(config: SurrogateRunConfig):
         for key, batch in batches.items()
     }
     train = batches["train", "lf"]
-    selection_episode, selection_voxels = episodes.get(("validation", "lf")), None
+    selection_episode = episodes.get(("validation", config.selection_fidelity))
+    selection_voxels = None
     if selection_episode is not None:
         n = selection_episode.target.batch_size
         index = subsample_voxels(n, config.selection_max_voxels, config.validation_seed, 0)
@@ -75,8 +76,11 @@ def run_experiment(config: SurrogateRunConfig):
         if config.training.backend == "neural"
         else config.model.architecture.seed
     )
-    model = (load_surrogate(config.initial_checkpoint) if config.initial_checkpoint
-             else build_surrogate(config.model, dt, dp, seed=seed))
+    model = (
+        load_surrogate(config.initial_checkpoint)
+        if config.initial_checkpoint
+        else build_surrogate(config.model, dt, dp, seed=seed)
+    )
     if model.config != config.model or (model.dim_theta, model.dim_phi) != (dt, dp):
         raise ValueError("Initial checkpoint architecture/features do not match experiment")
     if not config.initial_checkpoint and hasattr(model, "configure_normalization"):
@@ -88,10 +92,16 @@ def run_experiment(config: SurrogateRunConfig):
         context_conditioning=model.uses_context,
         data_config=data_check,
         test_data="Not loaded",
-        selection_split="validation/lf" if config.lf_validation else None,
+        selection_split=(
+            f"validation/{config.selection_fidelity}" if selection_episode is not None else None
+        ),
         selection_voxels=selection_voxels,
         evaluation_threads=config.evaluation_threads,
-        checkpoint_policy="best LF validation" if config.lf_validation else "final training step",
+        checkpoint_policy=(
+            f"best {config.selection_fidelity.upper()} validation"
+            if selection_episode is not None
+            else "final training step"
+        ),
         training_pr="In-sample",
         score_weights="Uniform natural events; no resampling during evaluation",
     )
@@ -106,12 +116,21 @@ def run_experiment(config: SurrogateRunConfig):
     with evaluation_threads(config.evaluation_threads):
         if config.stages:
             from core.surrogates.stages import fit_stages
-            result = fit_stages(model, train, config.stages, validation=selection_episode,
-                                checkpoints=output / "checkpoints")
+
+            result = fit_stages(
+                model,
+                train,
+                config.stages,
+                validation=selection_episode,
+                checkpoints=output / "checkpoints",
+            )
         else:
             result = model.fit(
-                train, config.training, validation=selection_episode,
-                selection=config.selection, checkpoints=output / "checkpoints",
+                train,
+                config.training,
+                validation=selection_episode,
+                selection=config.selection,
+                checkpoints=output / "checkpoints",
             )
     (output / "history.json").write_text(json.dumps(result.history, indent=2, allow_nan=False))
     if getattr(config.model, "last_layer", None) is not None:
@@ -121,9 +140,9 @@ def run_experiment(config: SurrogateRunConfig):
     test_provenance = {}
     if config.test_fidelities and not config.unblind_test:
         print("Test set blinded (set unblind_test: true to evaluate it)", flush=True)
-        (output / "test_evaluation.json").write_text(json.dumps(
-            {"status": "blinded", "fidelities": config.test_fidelities}, indent=2
-        ))
+        (output / "test_evaluation.json").write_text(
+            json.dumps({"status": "blinded", "fidelities": config.test_fidelities}, indent=2)
+        )
     for fidelity in config.test_fidelities if config.unblind_test else []:
         batch, test_provenance[fidelity] = load_split("test", fidelity)
         batches["test", fidelity] = batch
@@ -185,7 +204,9 @@ def run_experiment(config: SurrogateRunConfig):
                         sweep.extend(
                             dict(checkpoint=checkpoint, split=split, fidelity=fidelity, **row)
                             for row in context_sweep(
-                                saved, batches[split, fidelity], config,
+                                saved,
+                                batches[split, fidelity],
+                                config,
                                 reference_rate=prevalence,
                             )
                         )
@@ -259,11 +280,16 @@ def _voxel_predictive(model, episode, stem):
     intervals = {k: (arrays[f"lower_{k}"], arrays[f"upper_{k}"]) for k in (1, 2, 3)}
     high = max(float(arrays["observed"].max()), float(intervals[3][1].max()))
     plot_coverage_test(
-        arrays["observed"], arrays["mean"], arrays["sigma"],
+        arrays["observed"],
+        arrays["mean"],
+        arrays["sigma"],
         out_path=stem.parent / f"{stem.name}_coverage.png",
         title=f"{stem.name}: Bayesian last layer, observation-predictive coverage",
-        xlabel="Voxel index", predicted_label="Predictive mean",
-        raw_label="Observed fraction", ylim=(0, high * 1.05), intervals=intervals,
+        xlabel="Voxel index",
+        predicted_label="Predictive mean",
+        raw_label="Observed fraction",
+        ylim=(0, high * 1.05),
+        intervals=intervals,
         show_predicted=False,
     )
     return scores

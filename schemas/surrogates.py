@@ -369,7 +369,11 @@ class TreeTraining(StrictConfigModel):
 
 
 TrainingSpec = Annotated[NeuralTraining | TreeTraining, Field(discriminator="backend")]
-SelectionMetric = Literal["voxel_rate_mae", "average_precision", "bernoulli_log_loss"]
+# voxel_count_nll: mean -log Binomial(k | n, mean predicted p) per voxel (plug-in); far more
+# sensitive than the event log loss when voxels have few hits.
+SelectionMetric = Literal[
+    "voxel_rate_mae", "average_precision", "bernoulli_log_loss", "voxel_count_nll"
+]
 
 
 class TrainingStage(StrictConfigModel):
@@ -630,6 +634,9 @@ def load_binomial_config(path: str | Path) -> BinomialGPRunConfig:
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
+    # Validation fidelity that selects the checkpoint (it must be loaded). HF selection makes
+    # that set's scores selection-biased; keep a blinded test set for the final comparison.
+    selection_fidelity: Literal["lf", "hf"] = "lf"
     # Test sets that exist; they are evaluated only with unblind_test (blinded by default,
     # so model choices are made on validation only).
     test_fidelities: list[Literal["lf", "hf"]] = Field(default_factory=list)
@@ -671,6 +678,12 @@ class SurrogateRunConfig(SurrogateConfig):
         sweep = self.validation_context_sweep
         if any(n <= 0 for n in sweep) or len(set(sweep)) != len(sweep):
             raise ValueError("validation_context_sweep needs unique positive sizes")
+        return self
+
+    @model_validator(mode="after")
+    def selection_set_loaded(self):
+        if self.selection_fidelity == "hf" and not self.hf_validation:
+            raise ValueError("selection_fidelity: hf needs hf_validation: true")
         return self
 
     @model_validator(mode="after")
