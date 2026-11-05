@@ -381,3 +381,55 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         for suffix in ("png", "pdf"):
             fig.savefig(directory / f"development_map.{suffix}", dpi=150)
         plt.close(fig)
+
+
+def plot_photon_run(directory):
+    """Plots of a field trained on photons, beside plot_surrogate_run's voxel plots:
+    photon log loss history, and calibration and precision-recall on the validation photons.
+    """
+    directory = Path(directory)
+    records = json.loads((directory / "metrics.json").read_text())
+    history = json.loads((directory / "history.json").read_text())
+
+    def save(fig, name):
+        for suffix in ("png", "pdf"):
+            fig.savefig(directory / f"{name}.{suffix}", dpi=150)
+        plt.close(fig)
+
+    reference = next((r["reference_log_loss"] for r in records if r["fidelity"] == "photons"), None)
+    fig, ax = plt.subplots(figsize=(7, 4), layout="constrained")
+    steps = [r["step"] for r in history]
+    ax.plot(steps, [r["training_loss"] for r in history], label="training batches")
+    ax.plot(steps, [r["photon_log_loss"] for r in history], label="validation photons")
+    if reference is not None:
+        ax.axhline(reference, color="gray", ls="--", label="constant training rate")
+    ax.set(xlabel="Training step", ylabel="Bernoulli log loss", title="Photon log loss")
+    ax.legend(fontsize=8)
+    ax.grid(alpha=0.2)
+    save(fig, "photon_history")
+    plot_calibration(directory, "photons", save)
+    for logscale in (False, True):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
+        for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
+            path = directory / f"photons_validation_{checkpoint}.npz"
+            if not path.exists():
+                continue
+            row = next(
+                r for r in records if r["fidelity"] == "photons" and r["checkpoint"] == checkpoint
+            )
+            with np.load(path) as arrays:
+                ax.step(
+                    arrays["recall"],
+                    arrays["precision"],
+                    where="pre",
+                    label=f"validation photons, AP={row['average_precision']}",
+                )
+            ax.axhline(row["prevalence"], ls="--", alpha=0.4)
+            ax.set(xlabel="Recall", ylabel="Precision", title=checkpoint, xlim=(0, 1))
+            ax.set(
+                yscale="log" if logscale else "linear",
+                ylim=(1e-4, 1.05) if logscale else (0, 1.05),
+            )
+            ax.legend(fontsize=8)
+            ax.grid(alpha=0.2)
+        save(fig, "photons_precision_recall" + ("_log" if logscale else ""))

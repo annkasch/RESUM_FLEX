@@ -804,6 +804,15 @@ class PhotonTraining(StrictConfigModel):
     loading: PhotonLoading = Field(default_factory=PhotonLoading)
 
 
+class VoxelEvaluationSet(StrictConfigModel):
+    """A prepared voxel partition on which a photon-trained field is scored, under the split
+    name used in metrics.json and the plots (``{fidelity}_{split}_{checkpoint}.npz``)."""
+
+    split: Literal["validation", "test"]
+    partition: str
+    fidelity: Fidelity
+
+
 class PhotonFieldRunConfig(StrictConfigModel):
     """A neural field trained on every photon of a photon store, selected on its validation
     photons by the Bernoulli log loss; evaluated later on voxel data (``predict``).
@@ -817,10 +826,34 @@ class PhotonFieldRunConfig(StrictConfigModel):
     training: PhotonTraining = Field(default_factory=PhotonTraining)
     photon_store: Path
     photon_source: str = "legend_optical_map_ml.photon_loader:PhotonStream"
-    # Provider of the voxel data the field is evaluated on (recorded for ``predict``).
+    # Voxel data the field is evaluated on, with the metrics and plots of voxel training.
     data_provider: str = "legend_optical_map_ml.provider:OpticalDataset"
+    data_directory: Path | None = None
+    data_config: Path | None = None  # prepares data_directory when outdated
+    evaluation: list[VoxelEvaluationSet] = Field(default_factory=list)
+    # Voxels of the first validation set scored at every validation step (validation history
+    # plot; seeded subset, None = all). Selection itself uses the validation photons.
+    history_voxels: int | None = Field(default=500, gt=0)
+    evaluation_seed: int = 0
+    unblind_test: bool = False
     output_directory: Path
     dim_phi: int = Field(default=6, ge=6)
+
+    @model_validator(mode="after")
+    def evaluation_sets(self):
+        if self.evaluation and self.data_directory is None:
+            raise ValueError("evaluation needs data_directory")
+        keys = [(e.split, e.fidelity) for e in self.evaluation]
+        if len(set(keys)) != len(keys):
+            raise ValueError("Each (split, fidelity) may be evaluated once")
+        for item in self.evaluation:
+            blinded = item.split == "test" or item.partition in TEST_PARTITIONS
+            if blinded and not self.unblind_test:
+                raise ValueError(
+                    f"{item.partition} is blinded; set unblind_test: true once all choices "
+                    "are final"
+                )
+        return self
 
     @model_validator(mode="after")
     def photon_field(self):
@@ -838,7 +871,10 @@ def load_photon_field_config(path: str | Path) -> PhotonFieldRunConfig:
     """Photon field config; paths resolve relative to the YAML file."""
     path = Path(path).resolve()
     config = PhotonFieldRunConfig.model_validate(yaml.safe_load(path.read_text()))
-    for name in ("photon_store", "output_directory"):
-        value = getattr(config, name).expanduser()
+    for name in ("photon_store", "output_directory", "data_directory", "data_config"):
+        value = getattr(config, name)
+        if value is None:
+            continue
+        value = value.expanduser()
         setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
     return config

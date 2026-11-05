@@ -42,6 +42,7 @@ class FakePhotonSource:
         self.records = np.load(f"{store}/{split}.npy")
         self.seed, self.rank, self.world_size = seed, rank, world_size
         self.n_photons = len(self.records)
+        self.n_detected = int(photon_labels(torch.as_tensor(self.records)).sum())
 
     def normalization(self):
         return PHOTON_NORMALIZATION
@@ -100,12 +101,32 @@ def _photon_split(rng, n):
     return _records(position, momentum, rng.random(n) < p)
 
 
+def _voxel_data(root, rng):
+    """Voxel evaluation data (NpzBatches layout) with the same rate as the photons."""
+    x0 = PHOTON_NORMALIZATION["offset"][0]
+    for partition, fidelity in (("cnp_validation", "lf"), ("gp_validation", "hf")):
+        centre, offset, direction = _random_physical(rng, b=6, n=60)
+        x = centre[:, None, 0] + offset[..., 0]
+        p = 1 / (1 + np.exp(-(-3.0 + 25.0 * (x - x0))))
+        batch = _physical_batch(centre, offset, direction, labels=rng.binomial(1, p))
+        folder = root / "batches" / partition
+        folder.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            folder / f"{fidelity}.npz",
+            mode=batch.mode.value,
+            theta=batch.theta,
+            phi=batch.phi,
+            labels=batch.labels,
+        )
+
+
 def _run_config(tmp_path, **training):
     store = tmp_path / "store"
     store.mkdir()
     rng = np.random.default_rng(0)
     for split, n in (("train", 6000), ("validation", 2000)):
         np.save(store / f"{split}.npy", _photon_split(rng, n))
+    _voxel_data(tmp_path / "voxels", rng)
     return PhotonFieldRunConfig.model_validate(
         {
             "model": {**SPEC, "last_layer": {"prior_precision": "evidence", "draws": 100}},
@@ -121,6 +142,13 @@ def _run_config(tmp_path, **training):
             "photon_store": str(store),
             "photon_source": "tests.test_photon_field:FakePhotonSource",
             "output_directory": str(tmp_path / "run"),
+            "data_provider": "tests.test_bernoulli_field:FieldNpz",
+            "data_directory": str(tmp_path / "voxels"),
+            "evaluation": [
+                {"split": "validation", "partition": "cnp_validation", "fidelity": "lf"},
+                {"split": "validation", "partition": "gp_validation", "fidelity": "hf"},
+            ],
+            "history_voxels": 4,
         }
     )
 
@@ -130,7 +158,9 @@ def test_photon_training_learns_selects_and_fits_the_last_layer(tmp_path):
     report = run_photon_field(config)
     history = report["history"]
     assert report["steps"] == 3 * -(-6000 // 256)
-    assert history[-1]["validation_loss"] < history[0]["validation_loss"]
+    assert history[-1]["photon_log_loss"] < history[0]["photon_log_loss"]
+    # Every validation step also scores the (subsampled) LF validation voxels.
+    assert all(r["voxels"] == 4 and "voxel_rate_mae" in r for r in history)
     run = tmp_path / "run"
     experiment = json.loads((run / "experiment.json").read_text())
     assert experiment["photon_normalization"] == PHOTON_NORMALIZATION
@@ -139,7 +169,32 @@ def test_photon_training_learns_selects_and_fits_the_last_layer(tmp_path):
     best = load_surrogate(run / "checkpoints" / "best")
     assert best.module.uses_photon_units and best.last_layer is not None
     assert best.metadata["last_layer"]["events"] == 6000
-    assert best.metadata["best_validation_loss"] == pytest.approx(report["best"]["loss"])
+    assert best.metadata["best_photon_log_loss"] == pytest.approx(report["best"]["loss"])
+    assert best.metadata["step"] == report["best"]["step"]
+    # Same metrics and plots as voxel training, plus the photon ones.
+    rows = json.loads((run / "metrics.json").read_text())
+    keys = {(r["checkpoint"], r["split"], r["fidelity"]) for r in rows}
+    assert keys == {
+        (c, "validation", f) for c in ("best", "final") for f in ("photons", "lf", "hf")
+    }
+    voxel = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
+    for key in ("voxel_rate_mae", "voxel_count_nll", "log_loss_skill", "voxel_predictive"):
+        assert voxel[key] is not None
+    photons = next(r for r in rows if r["fidelity"] == "photons" and r["checkpoint"] == "best")
+    assert photons["bernoulli_log_loss"] == pytest.approx(report["best"]["loss"], rel=1e-5)
+    for name in (
+        "validation_history",
+        "lf_means",
+        "hf_means",
+        "lf_validation_zscore",
+        "lf_calibration",
+        "hf_precision_recall",
+        "photon_history",
+        "photons_calibration",
+        "photons_precision_recall_log",
+    ):
+        assert (run / f"{name}.png").is_file(), name
+    assert (run / "hf_validation_best_predictive_coverage.png").is_file()
     # The selected checkpoint reproduces its recorded validation loss.
     validation = torch.as_tensor(np.load(tmp_path / "store" / "validation.npy")[:1500])
     with torch.no_grad():

@@ -12,6 +12,7 @@ from typing import Protocol
 
 class PhotonSource(Protocol):
     n_photons: int
+    n_detected: int  # photons with label 1 (training prevalence for the log-loss skill)
 
     def normalization(self) -> dict: ...  # offset/scale of the 6 physical columns
 

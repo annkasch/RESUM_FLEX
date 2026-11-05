@@ -24,7 +24,9 @@ import numpy as np
 
 from core.compute import ComputeLog
 from core.photon_data import open_photon_source, photon_labels
-from core.surrogates.checkpoints import save_surrogate
+from core.surrogates.base import Episode
+from core.surrogates.checkpoints import load_surrogate, save_surrogate
+from core.surrogates.evaluation import calibration_bins, evaluate_surrogate
 from core.surrogates.last_layer import _layer, last_layer_weights
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import PhotonFieldRunConfig
@@ -119,6 +121,157 @@ def fit_photon_last_layer(model, source, *, batch_size, device):
     return posterior
 
 
+def _voxel_episodes(config: PhotonFieldRunConfig):
+    """Labelled voxel episodes of ``config.evaluation`` (context-free: no context events).
+
+    Returns (episodes {(split, fidelity): Episode}, the history episode, data record).
+    """
+    from core.gp_subsample import subsample_voxels
+    from core.surrogates.datasets import load_provider, prepare_data
+
+    if config.data_config is not None:
+        prepare_data(config.data_provider, config.data_config, config.data_directory)
+    provider = load_provider(config.data_provider, config.data_directory)
+    episodes, provenance = {}, {}
+    for item in config.evaluation:
+        batch, provenance[f"{item.split}/{item.fidelity}"] = provider.load(
+            item.partition, item.fidelity
+        )
+        provenance[f"{item.split}/{item.fidelity}"]["partition"] = item.partition
+        episodes[item.split, item.fidelity] = Episode(None, batch)
+    first = next((e for e in config.evaluation if e.split == "validation"), None)
+    history_episode, history_voxels = None, None
+    if first is not None:
+        target = episodes["validation", first.fidelity].target
+        index = subsample_voxels(
+            target.batch_size, config.history_voxels, config.evaluation_seed, 0
+        )
+        history_episode = Episode(
+            None, target.take(index) if len(index) < target.batch_size else target
+        )
+        history_voxels = dict(
+            set=f"validation/{first.fidelity}", available=target.batch_size, used=len(index)
+        )
+    data = dict(
+        normalization=provider.normalization(), provenance=provenance, history_voxels=history_voxels
+    )
+    return episodes, history_episode, data
+
+
+def photon_metrics(labels, logits, *, reference_rate):
+    """Event metrics of photons without voxel structure, as in voxel evaluation.
+
+    labels, logits: [M] numpy. Returns (metrics, arrays) with calibration bins and the
+    precision-recall curve.
+    """
+    from scipy.special import expit
+
+    from core.precision_recall import precision_recall
+
+    labels = np.asarray(labels, dtype=np.int8)
+    logits = np.asarray(logits, dtype=np.float64)
+    p = expit(logits)
+    curve = precision_recall(labels, logits)
+    log_loss = float(
+        np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits)).mean()
+    )
+    reference = float(
+        -np.where(labels == 1, np.log(reference_rate), np.log1p(-reference_rate)).mean()
+    )
+    bins = calibration_bins(labels, p)
+    chi2 = (
+        np.square(bins["calibration_hits"] - bins["calibration_predicted"])
+        / bins["calibration_variance"]
+    )
+    variance = float((p * (1 - p)).sum())
+    metrics = dict(
+        events=int(len(labels)),
+        positives=int(labels.sum()),
+        mean_observed=float(labels.mean()),
+        mean_predicted=float(p.mean()),
+        bernoulli_log_loss=log_loss,
+        reference_log_loss=reference,
+        log_loss_skill=1 - log_loss / reference,
+        brier_score=float(np.square(p - labels).mean()),
+        average_precision=curve["average_precision"],
+        prevalence=curve["prevalence"],
+        lift=curve["average_precision"] / curve["prevalence"] if labels.sum() else None,
+        calibration_z=float((labels.sum() - p.sum()) / np.sqrt(variance)),
+        calibration_chi2_per_bin=float(chi2.mean()),
+    )
+    arrays = dict(
+        logits=logits.astype(np.float32),
+        labels=labels,
+        precision=curve["precision"],
+        recall=curve["recall"],
+        logit_threshold=curve["logit_threshold"],
+        **bins,
+    )
+    return metrics, arrays
+
+
+def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device):
+    """metrics.json, arrays and plots of best and final, as for voxel training.
+
+    Voxel sets get the voxel-training metrics (and the last-layer predictive scores); the
+    validation photons get the event metrics under fidelity ``photons``.
+    """
+    from core.surrogates.experiment import _voxel_predictive
+    from core.surrogates.readout import readout_metrics
+
+    rows = []
+    for checkpoint in ("best", "final"):
+        saved = load_surrogate(output / "checkpoints" / checkpoint)
+        saved.module.to(device)
+        saved.module.eval()
+        logits = []
+        import torch
+
+        with torch.no_grad():
+            for start in range(0, len(validation), VALIDATION_CHUNK):
+                logits.append(
+                    saved.module.forward_photons(validation[start : start + VALIDATION_CHUNK])
+                    .float()
+                    .cpu()
+                )
+        labels = photon_labels(validation).cpu().numpy()
+        summary, arrays = photon_metrics(
+            labels, torch.cat(logits).numpy(), reference_rate=prevalence
+        )
+        rows.append(
+            dict(
+                checkpoint=checkpoint,
+                step=saved.metadata.get("step"),
+                split="validation",
+                fidelity="photons",
+                **summary,
+            )
+        )
+        np.savez_compressed(output / f"photons_validation_{checkpoint}.npz", **arrays)
+        for (split, fidelity), episode in episodes.items():
+            summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
+            summary.update(readout_metrics(episode.target, arrays, seed=seed))
+            if getattr(saved, "last_layer", None) is not None:
+                summary["voxel_predictive"] = _voxel_predictive(
+                    saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"
+                )
+            rows.append(
+                dict(
+                    checkpoint=checkpoint,
+                    step=saved.metadata.get("step"),
+                    split=split,
+                    fidelity=fidelity,
+                    **summary,
+                )
+            )
+            np.savez_compressed(output / f"{fidelity}_{split}_{checkpoint}.npz", **arrays)
+    (output / "metrics.json").write_text(json.dumps(rows, indent=2, allow_nan=False))
+    from viz.surrogate import plot_photon_run, plot_surrogate_run
+
+    plot_surrogate_run(output)
+    plot_photon_run(output)
+
+
 def run_photon_field(config: PhotonFieldRunConfig) -> dict:
     import torch
 
@@ -169,7 +322,11 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         enabled = device.type == "cuda" and training.precision == "bf16"
         return torch.autocast(device.type, dtype=torch.bfloat16, enabled=enabled)
 
-    validation = None
+    # Training prevalence: constant-rate reference of the log-loss skill everywhere.
+    prevalence = train.n_detected / train.n_photons
+    if not 0 < prevalence < 1:
+        raise ValueError("Training photons must contain detected and undetected photons")
+    validation, episodes, history_episode = None, {}, None
     with compute.stage("validation_loading"):
         if rank == 0:
             source = open_photon_source(
@@ -179,12 +336,9 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
             if training.validation_photons is not None:
                 photons = photons[: training.validation_photons]
             validation = torch.as_tensor(np.ascontiguousarray(photons), device=device)
-    prevalence = float(photon_labels(validation).mean()) if validation is not None else None
-    constant_loss = (
-        -(prevalence * math.log(prevalence) + (1 - prevalence) * math.log(1 - prevalence))
-        if prevalence and 0 < prevalence < 1
-        else None
-    )
+            if config.evaluation:
+                episodes, history_episode, data = _voxel_episodes(config)
+                model.configure_normalization(data["normalization"])
     checkpoints = output / "checkpoints"
     history, best = [], dict(loss=math.inf, step=0)
     metadata = dict(
@@ -194,13 +348,16 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         data_provider=config.data_provider,
         photon_normalization=normalization,
         training_photons=train.n_photons,
+        training_prevalence=prevalence,
         validation_photons=None if validation is None else len(validation),
-        validation_constant_rate_log_loss=constant_loss,
         world_size=world,
-        selection="validation bernoulli_log_loss",
+        selection="bernoulli_log_loss on the validation photons",
         uses_context=False,
         uncertainty=False,
     )
+    if config.evaluation and rank == 0:
+        metadata.update(voxel_evaluation=data["provenance"], history_voxels=data["history_voxels"])
+        metadata["normalization.json"] = data["normalization"]
     model.metadata = metadata
 
     def evaluate(step, pass_index, train_loss):
@@ -209,14 +366,17 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         model.module.eval()
         loss = _log_loss(model.module.forward_photons, validation, device, autocast)
         model.module.train()
-        history.append(
-            dict(step=step, pass_index=pass_index, train_loss=train_loss, validation_loss=loss)
-        )
+        row = dict(step=step, pass_index=pass_index, training_loss=train_loss, photon_log_loss=loss)
+        if history_episode is not None:
+            row.update(
+                evaluate_surrogate(model, history_episode.target, reference_rate=prevalence)[0]
+            )
+        history.append(row)
         print(f"step {step} pass {pass_index}: train {train_loss:.6f} val {loss:.6f}", flush=True)
         if loss < best["loss"]:
             best.update(loss=loss, step=step, pass_index=pass_index)
-            model.metadata.update(best_step=step, best_validation_loss=loss)
-            save_surrogate(checkpoints / "best", model)
+            model.metadata.update(best_step=step, best_photon_log_loss=loss)
+            save_surrogate(checkpoints / "best", model, metadata={"step": step})
 
     step, photons_seen, running = 0, 0, []
     model.module.train()
@@ -248,11 +408,10 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         dist.barrier()
     report = dict(steps=step, photons_seen=photons_seen * world, best=best, history=history)
     if rank == 0:
-        model.metadata.update(steps=step, final_validation_loss=history[-1]["validation_loss"])
-        save_surrogate(checkpoints / "final", model)
+        model.metadata.update(steps=step, final_photon_log_loss=history[-1]["photon_log_loss"])
+        save_surrogate(checkpoints / "final", model, metadata={"step": step})
+        (output / "history.json").write_text(json.dumps(history, indent=1, allow_nan=False))
         if config.model.last_layer is not None:
-            from core.surrogates.checkpoints import load_surrogate
-
             stream = open_photon_source(
                 config.photon_source, config.photon_store, "train", **loading
             )
@@ -265,7 +424,10 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
                     )
                     selected.module.cpu()
                     save_surrogate(checkpoints / name, selected)
-        (output / "history.json").write_text(json.dumps(history, indent=1))
+        with compute.stage("evaluation"):
+            _evaluate_checkpoints(
+                output, validation, episodes, prevalence, config.evaluation_seed, device
+            )
         (output / "experiment.json").write_text(
             json.dumps(dict(metadata, report=report), indent=2, allow_nan=False)
         )
