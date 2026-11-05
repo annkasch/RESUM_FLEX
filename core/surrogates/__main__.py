@@ -1,7 +1,8 @@
 """Run: python -m core.surrogates train TRAINING.yaml
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 python -m core.surrogates mfgp GP.yaml
-python -m core.surrogates binomial BINOMIAL_GP.yaml"""
+python -m core.surrogates binomial BINOMIAL_GP.yaml
+python -m core.surrogates photon PHOTON_FIELD.yaml   (torchrun for several GPUs)"""
 
 import argparse
 
@@ -38,10 +39,21 @@ def main():
     mfgp.add_argument("config")
     binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
     binomial.add_argument("config")
+    photon = commands.add_parser("photon", help="Train a neural field on a photon store")
+    photon.add_argument("config")
     args = parser.parse_args()
     import torch
 
     torch.set_num_threads(1)
+    if args.command == "photon":
+        from core.surrogates.photon_training import run_photon_field
+        from schemas.surrogates import load_photon_field_config
+
+        config = load_photon_field_config(args.config)
+        print(f"Training a neural field on photons of {config.photon_store}", flush=True)
+        report = run_photon_field(config)
+        print({k: report[k] for k in ("steps", "photons_seen", "best")}, flush=True)
+        return
     if args.command == "binomial":
         from core.surrogates.binomial_stage import run_binomial_config
         from schemas.surrogates import load_binomial_config

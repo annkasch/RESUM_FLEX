@@ -774,3 +774,71 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
         if level.source == "model_mean" and level.inference and not level.inference.is_absolute():
             level.inference = (path.parent / level.inference).resolve()
     return config
+
+
+# --- Neural field trained on ungrouped photons (photon store) -------------------------------
+
+
+class PhotonLoading(StrictConfigModel):
+    """Reading and shuffling of the photon stream (see the photon source's documentation)."""
+
+    block_photons: int | None = Field(default=None, gt=0)  # None: the source's default
+    buffer_photons: int = Field(default=2**20, gt=0)
+    in_memory: bool = False
+    prefetch: int = Field(default=3, ge=1)
+    threads: int = Field(default=4, ge=1)
+
+
+class PhotonTraining(StrictConfigModel):
+    batch_size: int = Field(default=65536, gt=0)
+    n_passes: int = Field(default=1, ge=1)
+    learning_rate: float = Field(default=1e-3, gt=0)
+    eval_every: int = Field(default=200, gt=0)  # optimizer steps between validations
+    seed: int = 0
+    device: Literal["cpu", "cuda"] = "cuda"
+    precision: Literal["fp32", "bf16"] = "bf16"  # bf16 autocast on CUDA; CPU always fp32
+    compile: bool = False  # torch.compile the photon forward pass
+    # Validation photons used for checkpoint selection (the first ones of the validation
+    # shards, which are already in random order); None = all.
+    validation_photons: int | None = Field(default=20_000_000, gt=0)
+    loading: PhotonLoading = Field(default_factory=PhotonLoading)
+
+
+class PhotonFieldRunConfig(StrictConfigModel):
+    """A neural field trained on every photon of a photon store, selected on its validation
+    photons by the Bernoulli log loss; evaluated later on voxel data (``predict``).
+
+    ``dim_phi`` is the event-input width of the voxel data it will be evaluated on (offset
+    and momentum: 6), so the checkpoint loads like any field. Position must be three phi
+    columns added to a 3-D theta, and a direction is required.
+    """
+
+    model: FieldModel
+    training: PhotonTraining = Field(default_factory=PhotonTraining)
+    photon_store: Path
+    photon_source: str = "legend_optical_map_ml.photon_loader:PhotonStream"
+    # Provider of the voxel data the field is evaluated on (recorded for ``predict``).
+    data_provider: str = "legend_optical_map_ml.provider:OpticalDataset"
+    output_directory: Path
+    dim_phi: int = Field(default=6, ge=6)
+
+    @model_validator(mode="after")
+    def photon_field(self):
+        if self.model.position is None or len(self.model.position.phi_columns) != 3:
+            raise ValueError("A photon field needs position.phi_columns of length 3")
+        if self.model.direction is None:
+            raise ValueError("A photon field needs a direction encoding")
+        used = {*self.model.position.phi_columns, *self.model.direction.phi_columns}
+        if used != set(range(self.dim_phi)):
+            raise ValueError("Position and direction must use all dim_phi event columns")
+        return self
+
+
+def load_photon_field_config(path: str | Path) -> PhotonFieldRunConfig:
+    """Photon field config; paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = PhotonFieldRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    for name in ("photon_store", "output_directory"):
+        value = getattr(config, name).expanduser()
+        setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
+    return config

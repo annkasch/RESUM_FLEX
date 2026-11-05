@@ -21,6 +21,12 @@ from core.surrogates.evaluation import _predict, evaluation_threads
 FROM_CHECKPOINT = "checkpoint"
 
 
+def photon_units(model) -> bool:
+    """True for a field trained on a photon store (its own physical position units)."""
+    module = getattr(model, "module", None)
+    return bool(getattr(module, "uses_photon_units", False))
+
+
 def normalization_matches(saved: dict | None, current: dict | None) -> bool:
     """True when both normalizations exist and agree on theta and phi."""
     if saved is None or current is None:
@@ -62,7 +68,11 @@ def predict_partition(
     if data_provider == FROM_CHECKPOINT:
         data_provider = model.metadata.get("data_provider")
     provider = load_provider(data_provider, data_directory)
-    if not normalization_matches(
+    if photon_units(model):
+        # A field trained on ungrouped photons works in physical units: map this data's
+        # voxel inputs (theta + offset) into them instead of requiring equal normalization.
+        model.configure_normalization(provider.normalization())
+    elif not normalization_matches(
         model.metadata.get("normalization.json"), provider.normalization()
     ):
         raise ValueError(
@@ -114,7 +124,11 @@ def predict_partition(
         fidelity=fidelity,
         voxels=int(batch.batch_size),
         events=int(batch.events_per_voxel.sum()),
-        normalization_check="provider normalization equals checkpoint normalization",
+        normalization_check=(
+            "voxel inputs mapped into the photon-trained field's physical units"
+            if photon_units(model)
+            else "provider normalization equals checkpoint normalization"
+        ),
         labels="not used (inputs only)",
         uncertainty=(
             dict(

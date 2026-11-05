@@ -598,6 +598,30 @@ normalized to unit length and encoded by real orthonormal spherical harmonics up
 `position`, theta alone is the position. Training, selection, inference, the GP levels and
 the Bayesian last layer work as for the MLP.
 
+### Neural field on photons (`python -m core.surrogates photon CONFIG.yaml`)
+
+A field can train on every photon of a homogeneous campaign instead of on voxels
+(`core/surrogates/photon_training.py`, config `PhotonFieldRunConfig`):
+
+```yaml
+model: {kind: field, position: {phi_columns: [0, 1, 2]}, direction: {phi_columns: [3, 4, 5]}, ...}
+training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16, loading: {in_memory: true}}
+photon_store: /pscratch/.../photon_stores/genesis_box_x+300+500
+photon_source: legend_optical_map_ml.photon_loader:PhotonStream   # default
+output_directory: ../outputs/optical_photon_field/RUN/seed0
+```
+
+The photon source (`core/photon_data.py` protocol) streams raw records [M, 7]. The field fixes
+its own position units from the store's train normalization (`set_photon_normalization`)
+and computes the direction from the momentum. Checkpoints are selected by the Bernoulli
+log loss on the validation photons. With `last_layer`, the selected checkpoints get the
+Laplace posterior from one streaming pass over all training photons. Several GPUs:
+`torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are options.
+
+The checkpoints are ordinary field checkpoints. `predict` and `score_event_model.py`
+evaluate them on voxel data: for a photon-trained field the provider's theta + offset is
+mapped into the field's physical units, so no equal normalization is required.
+
 ### Log-space MFGP
 
 `mfgp.output_transform: log` fits all three GP levels to natural logarithms;

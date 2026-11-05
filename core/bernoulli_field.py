@@ -12,6 +12,13 @@ Inputs per event (all optional, from schemas.surrogates.FieldModel):
 An MLP maps the concatenated encodings to the logit. Without the encodings an MLP on raw
 coordinates learns mainly smooth (low-frequency) functions; the Fourier features let it
 represent structure down to a half-period of 1 / (2 f_max).
+
+Position units. By default the field position is in normalized theta units of the voxel
+data it is trained on. A field trained on ungrouped photons (``forward_photons``, e.g. a
+homogeneous photon store) instead fixes its own units with ``set_photon_normalization``:
+position = (x - origin) / unit in physical coordinates. ``set_normalization`` then maps voxel
+inputs (theta + offset) into those same units, so the photon-trained field is evaluated on
+voxel data unchanged.
 """
 
 import math
@@ -111,11 +118,16 @@ class BernoulliField(nn.Module):
         self.extra_columns = [c for c in range(dim_phi or 0) if c not in used]
         dim_position = dim_theta or 0
         # Affine maps from normalized inputs to physical-unit combinations (set_normalization):
-        # position offset in theta units = phi * position_scale + position_shift;
-        # direction (physical, up to scale) = phi * direction_scale + direction_shift.
+        # field position = theta * theta_coefficient + phi[position] * position_scale
+        # + position_shift; direction (up to scale) = phi * direction_scale + direction_shift.
         n_pos, n_dir = len(self.position_columns), len(self.direction_columns)
+        self.register_buffer("theta_coefficient", torch.ones(dim_position))
         self.register_buffer("position_scale", torch.ones(n_pos))
         self.register_buffer("position_shift", torch.zeros(n_pos))
+        # Field units from photon data (set_photon_normalization); unused while photon_units = 0.
+        self.register_buffer("position_origin", torch.zeros(dim_position))
+        self.register_buffer("position_unit", torch.ones(dim_position))
+        self.register_buffer("photon_units", torch.zeros(()))
         self.register_buffer("direction_scale", torch.ones(n_dir))
         self.register_buffer("direction_shift", torch.zeros(n_dir))
         self.fourier = FourierFeatures(config.encoding.n_frequencies, config.encoding.max_frequency)
@@ -130,12 +142,56 @@ class BernoulliField(nn.Module):
         arch = config.architecture
         self.decoder = MLPEncoder(width, list(arch.hidden_dims), 1, arch.dropout)
 
+    # Buffers added after the first field checkpoints; older weights load with their defaults.
+    _OPTIONAL_BUFFERS = ("theta_coefficient", "position_origin", "position_unit", "photon_units")
+
+    def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        for name in self._OPTIONAL_BUFFERS:
+            state_dict.setdefault(prefix + name, getattr(self, name).detach().clone())
+        super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
+
+    @property
+    def uses_photon_units(self) -> bool:
+        return bool(self.photon_units)
+
+    def set_photon_normalization(self, normalization):
+        """Fix the field units from photon data: position = (x - offset[:3]) / scale[:3].
+
+        ``normalization``: dict with ``offset`` and ``scale`` of x, y, z, px, py, pz (physical
+        units, as from a photon store). Needs a 3-D position (theta + position columns) and
+        a direction; call before ``set_normalization`` of any voxel data.
+        """
+        if self.dim_theta != 3 or len(self.position_columns) != 3 or self.harmonics is None:
+            raise ValueError("Photon training needs a 3-D position and a direction encoding")
+        if self.extra_columns:
+            raise ValueError("Photon training supports no unencoded extra phi columns")
+        offset = torch.as_tensor(normalization["offset"], dtype=torch.float64)
+        scale = torch.as_tensor(normalization["scale"], dtype=torch.float64)
+        if offset.shape != (6,) or scale.shape != (6,) or torch.any(scale[:3] <= 0):
+            raise ValueError("Photon normalization needs offset and scale of 6 columns")
+        self.position_origin.copy_(offset[:3].float())
+        self.position_unit.copy_(scale[:3].float())
+        self.photon_units.fill_(1.0)
+
+    def forward_photons(self, photons: torch.Tensor) -> torch.Tensor:
+        """Logits [M] of raw photon records [M, >= 6]: x, y, z (m), px, py, pz (any unit)."""
+        if not self.uses_photon_units:
+            raise ValueError("Call set_photon_normalization before forward_photons")
+        position = (photons[:, :3] - self.position_origin) / self.position_unit
+        momentum = photons[:, 3:6]
+        direction = momentum / momentum.norm(dim=-1, keepdim=True)
+        parts = [self.fourier(position), self.harmonics(direction)]
+        return self.decoder(torch.cat(parts, dim=-1)).squeeze(-1)
+
     def set_normalization(self, normalization):
         """Read the affine normalization x_n = (x - offset) / scale of theta and phi.
 
-        None (unnormalized data) keeps the identity maps.
+        None (unnormalized data) keeps the identity maps. With photon units the voxel inputs
+        are mapped into those units; otherwise normalized theta units are the field units.
         """
         if normalization is None or not (self.position_columns or self.direction_columns):
+            if self.uses_photon_units:
+                raise ValueError("A photon-trained field needs the voxel data normalization")
             return
 
         def affine(group, size):
@@ -154,8 +210,14 @@ class BernoulliField(nn.Module):
         if self.position_columns:
             theta_offset, theta_scale = affine("theta", self.dim_theta)
             cols = self.position_columns
-            self.position_scale.copy_((phi_scale[cols] / theta_scale).float())
-            self.position_shift.copy_((phi_offset[cols] / theta_scale).float())
+            if self.uses_photon_units:
+                origin = self.position_origin.double()
+                unit = self.position_unit.double()
+            else:
+                origin, unit = theta_offset, theta_scale
+            self.theta_coefficient.copy_((theta_scale / unit).float())
+            self.position_scale.copy_((phi_scale[cols] / unit).float())
+            self.position_shift.copy_(((theta_offset + phi_offset[cols] - origin) / unit).float())
         if self.direction_columns:
             cols = self.direction_columns
             self.direction_scale.copy_(phi_scale[cols].float())
@@ -171,7 +233,7 @@ class BernoulliField(nn.Module):
             phi = torch.as_tensor(target.phi, dtype=torch.float32, device=parameter.device)
         if self.dim_theta:
             theta = torch.as_tensor(target.theta, dtype=torch.float32, device=parameter.device)
-            position = theta[:, None, :].expand(-1, n_events, -1)  # [B, N, D]
+            position = theta[:, None, :].expand(-1, n_events, -1) * self.theta_coefficient
             if self.position_columns:
                 offset = phi[..., self.position_columns] * self.position_scale
                 position = position + offset + self.position_shift
