@@ -101,7 +101,6 @@ No committed smoke config; smoke runs use a temporary config with a few steps.
 - Don't edit: lock files by hand; `notebooks/data/paper_2410_03873/` (paper provenance).
 - Don't commit generated outputs, application data or configs, or scratch notebooks/scripts.
 - Don't put application-specific code, paths or configs into this repository.
-- Never put "Claude" in branch names, commit messages or trailers; no Co-Authored-By lines.
 
 ## Workflow
 After each finished, tested step: commit the code, tests and docs you changed (stage files
