@@ -54,9 +54,11 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/python -m core.surrogates train TRAINING.yaml
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]
 .venv/bin/python -m core.surrogates mfgp|binomial|stream CONFIG.yaml
+.venv/bin/python scripts/smoke.py    # every CLI stage on tiny synthetic data, ~30 s
 .venv/bin/python scripts/phase1_plot_ground_truth.py   # cheap synthetic sanity check
 ```
-No committed smoke config; smoke runs use a temporary config with a few steps.
+After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smoke`, skip with
+`-m 'not smoke'`).
 
 ## Layout
 - `schemas/`: pydantic configs and data contracts (numpy-only); all run configs in `surrogates.py`.
@@ -64,7 +66,8 @@ No committed smoke config; smoke runs use a temporary config with a few steps.
   entry point `experiment.run_experiment`, data access via `datasets.py` (DatasetProvider).
 - `core/`: models and math; `data/`: synthetic data; `viz/`: plotting
   (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
-- `scripts/phase{1..5}_*.py`, `notebooks/`, `tests/` (synthetic data only).
+- `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`, `notebooks/`,
+  `tests/` (synthetic data only).
   Module docstrings and `docs/reference.md` describe the files.
 
 ## Conventions

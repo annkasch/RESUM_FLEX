@@ -80,6 +80,9 @@ select = ["E", "F", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra -q"
+markers = [
+    "smoke: end-to-end CLI pipeline check (scripts/smoke.py, ~30 s); skip with -m 'not smoke'",
+]
 filterwarnings = [
     # GPy / paramz ship LaTeX docstrings that trip Python 3.12's stricter
     # SyntaxWarning. Not our problem.

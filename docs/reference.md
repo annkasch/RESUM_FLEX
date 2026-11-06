@@ -138,7 +138,7 @@ RESUM_FLEX/
 │   └── training.py        legacy CNP training loop and checkpoints
 ├── data/              synthetic data (pseudo_generator.py) and batch sources
 ├── viz/               plotting: coverage, z-scores, run summaries, projections
-├── scripts/           phase{1..5}_*.py: end-to-end demonstrations on synthetic data
+├── scripts/           smoke.py: CLI pipeline check; phase{1..5}_*.py: synthetic demonstrations
 ├── notebooks/         minimal example, paper reproduction
 ├── tests/             pytest (synthetic data only)
 ├── pyproject.toml     canonical Python deps + uv compatibility groups
@@ -649,6 +649,16 @@ The `viz_output/phaseN_*/` tree is only used by the demonstration
 scripts in `scripts/` — it's gitignored.
 
 ---
+
+## Pipeline smoke check
+
+`python scripts/smoke.py` runs every CLI stage once on tiny seeded synthetic data (S4) in a
+fresh temporary directory: `train` (MLP + last layer), `predict` (three partitions), `mfgp`,
+`binomial` (event-model covariate) and `stream` (stream MLP on an in-memory event source,
+scored on the design-point data). It checks exit codes and `metrics.json`/`compute.json`
+and prints the time per stage (~30 s, one thread per process, login-node safe). A pipeline
+check only: no model conclusions. `--keep` keeps the directory, `--workdir DIR` runs in DIR.
+`tests/test_smoke.py` runs it under the `smoke` marker (skip with `-m 'not smoke'`).
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 
