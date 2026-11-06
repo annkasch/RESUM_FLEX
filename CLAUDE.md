@@ -113,5 +113,6 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
 After each finished, tested step: commit the code, tests and docs you changed (stage files
 explicitly, leave the user's uncommitted edits out) and push the current branch to `origin`
 (the fork), never `upstream`. When you add, rename or remove modules, commands or rules, update
-this file in the same commit. Local notes (`docs/PROGRESS.md`, `.claude/`) are never committed;
-update PROGRESS at the end of each task.
+this file in the same commit. Local notes (`docs/PROGRESS.md`, `.claude/`) are never committed.
+PROGRESS holds open state only (now, waiting on the user, next, known issues), one line per
+item: at the end of each task delete finished items and add new ones; no history.
