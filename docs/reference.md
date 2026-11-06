@@ -147,11 +147,11 @@ RESUM_FLEX/
 └── pixi.lock          cross-platform uv tool lock (managed by Pixi)
 ```
 
-**Decoupling rule:** PyTorch lives only in `core/networks.py`,
-`core/surrogate_cnp.py`, `core/training.py`, and `core/optimizer.py`. The
-schema layer is numpy-native; `core/surrogate_mfgp.py` (GPy/Emukit) consumes
-those arrays directly. `core/mfgp_pipeline.py` is the only file where
-torch and GPy coexist — and only at the boundary (CNP → numpy → GP).
+**Decoupling rule:** GPy/Emukit are imported only in `core/surrogate_mfgp.py`,
+`core/binomial_gp.py` and `core/optimizer.py`; none of them imports Torch. The
+event models (PyTorch) meet the GPs only through numpy arrays, in
+`core/mfgp_pipeline.py` and `core/surrogates/mfgp_stage.py`. The schema layer is
+numpy-only.
 
 ---
 

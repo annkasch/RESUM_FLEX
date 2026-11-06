@@ -1,10 +1,12 @@
 # RESUM_FLEX — agent brief
 
 Application-independent toolkit for rare-event surrogates, a modular refactor of RESuM
-([paper](https://openreview.net/pdf?id=lqTILjL6lP)). Event models learn per-event hit
-probabilities from simulated binary outcomes; Gaussian processes turn them into per-design
-(per-voxel) rates. No application code lives here: applications bring their data through a
-dataset provider and keep their own configs, outputs and job scripts.
+([paper](https://openreview.net/pdf?id=lqTILjL6lP)). Event models learn per-event outcome
+probabilities from simulated binary outcomes; a Bayesian last layer or a Gaussian process turns
+them into rates with uncertainty per design point. No application code lives here: applications
+bring their data through a dataset provider and keep their own configs, outputs and job scripts.
+Keep the vocabulary generic (design point, event, outcome); application terms such as voxels or
+photons appear only in code names.
 
 If `docs/PROGRESS.md` exists (local notes), read it first. On a Slurm cluster (e.g. NERSC
 Perlmutter), read `docs/nersc.md` before running anything heavier than a single test file.
@@ -14,29 +16,28 @@ Docs: `README.md` (usage), `docs/configs.md` (every config setting),
 `docs/reference.md` (install, layout, data contracts, Python API, synthetic phases).
 
 ## Concepts
-- `θ` design parameters (per simulation/voxel), `φ` event parameters (per event), `X` binary
-  labels. Modes FULL (θ,φ,X), EVENT_ONLY (φ,X), DESIGN_ONLY (θ,X): missing inputs use learnable
-  null embeddings (`core/networks.py`), never separate code paths.
-- Approach under test (2026-11): event model + Bayesian last layer (`model.last_layer`, Laplace
-  over the final linear layer) gives per-voxel rates with uncertainty directly, without GP
-  regression. Main candidates: `mlp` and `field` (neural field; on photons via `photon`). Its
-  `voxel_predictive` metrics (count NLL, coverage, CRPS) match the GP metrics, so the two
-  approaches compare directly (see `docs/surrogates.md`, "Bayesian last layer").
-- Established pipeline, kept as baseline: event model → mean p per voxel (`predict`) → GP over
-  configurable fidelity levels (`mfgp`), or a binomial count GP directly on hit counts
-  (`binomial`, optional event-model covariate). Optional: IVR/EI active learning
-  (`core/optimizer.py`, GP-based).
-- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field`, `transformer`, `bdt`,
-  `legacy_cnp`. Bayesian last layer available for mlp, cnp, field.
+- `θ` design parameters (one per simulation trial / design point), `φ` event parameters,
+  `X` binary outcomes. Modes FULL (θ,φ,X), EVENT_ONLY (φ,X), DESIGN_ONLY (θ,X): missing inputs
+  use learnable null embeddings (`core/networks.py`), never separate code paths.
+- Two ways from event probabilities to design-point rates, compared on the same predictive
+  metrics (count NLL, coverage, CRPS):
+  - Event model + Bayesian last layer (`model.last_layer`, Laplace over the final linear
+    layer; mlp, cnp, field): rates with uncertainty directly, no GP. The approach under test.
+  - Event model → mean p per design point (`predict`) → GP over configurable fidelity levels
+    (`mfgp`), or a binomial count GP directly on outcome counts (`binomial`, optional
+    event-model covariate). The baseline.
+- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field on encoded
+  coordinates; trainable on ungrouped events via `photon`), `transformer`, `bdt`, `legacy_cnp`.
+- Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based).
 
 ## Environment
-- Repo-local `.venv` (Python 3.11) from `pyproject.toml` + `uv.lock`; call `.venv/bin/python`,
+- Repo-local `.venv` from `pyproject.toml` + `uv.lock`; call `.venv/bin/python`,
   `.venv/bin/pytest`, `.venv/bin/ruff` directly. Sync: `uv sync --extra gp --extra bdt`
   (`gp` = GPy + Emukit, `bdt` = scikit-learn; `gp-numpy1` is the legacy NumPy-1 matrix only and
   conflicts with `gp`).
 - `pyproject.toml` is the only dependency declaration; pixi only provides uv and tasks
   (`pixi run test-all` = NumPy 1 + 2 matrix in `.venv-numpy1/2`). Never edit `uv.lock` or
-  `pixi.lock` by hand. `.python-version` says 3.12 but `.venv` is 3.11.5.
+  `pixi.lock` by hand.
 - The Torch lock is CPU-only. CUDA is opt-in via `training.device: cuda` and needs a CUDA
   Torch from elsewhere (e.g. a cluster module).
 - Always set `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1` for tests and runs
@@ -46,8 +47,8 @@ Docs: `README.md` (usage), `docs/configs.md` (every config setting),
 ```bash
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/pytest -q tests/test_schemas.py    # single files: fast
-.venv/bin/pytest -q                          # 533 tests; heavy, not on shared login nodes
-.venv/bin/ruff check <files>                 # 78 pre-existing errors repo-wide (notebooks, scripts)
+.venv/bin/pytest -q                          # full suite: heavy, not on shared login nodes
+.venv/bin/ruff check <files>                 # repo-wide check has pre-existing errors
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]
@@ -57,20 +58,13 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 No committed smoke config; smoke runs use a temporary config with a few steps.
 
 ## Layout
-- `schemas/`: pydantic configs and data contracts, numpy-only. `surrogates.py` = all run
-  configs (training, MFGP, binomial, photon field, model specs), `data_models.py` =
-  `StandardBatch`, `ModelPrediction`; `config.py` = synthetic phase pipeline.
-- `core/surrogates/`: shared build/fit/predict/evaluate API and CLI (`__main__.py`).
-  `experiment.py` training runs, `datasets.py` DatasetProvider + default `NpzBatches`,
-  `inference.py`, `mfgp_stage.py`, `binomial_stage.py`, `photon_training.py`, `last_layer.py`,
-  `evaluation.py` + `readout.py` metrics, `stages.py` ordered training stages.
-- `core/`: models and math (`bernoulli_{cnp,mlp,field,transformer}.py`, `surrogate_bdt.py`,
-  `networks.py`, `surrogate_mfgp.py`, `mfgp_pipeline.py`, `binomial_gp.py`, `last_layer.py`,
-  `optimizer.py`, `scaling.py`, `compute.py`, `photon_data.py`; module docstrings say the rest).
-- `data/`: `pseudo_generator.py` (synthetic truth), `batch_source.py`. `viz/`: plotting;
-  `viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer.
-- `scripts/phase{1..5}_*.py`: synthetic demos → `viz_output/`. `notebooks/`: minimal example,
-  paper reproduction (`notebooks/data/paper_2410_03873/`). `tests/`: synthetic data only.
+- `schemas/`: pydantic configs and data contracts (numpy-only); all run configs in `surrogates.py`.
+- `core/surrogates/`: shared build/fit/predict/evaluate API, run stages and the CLI (`__main__.py`);
+  entry point `experiment.run_experiment`, data access via `datasets.py` (DatasetProvider).
+- `core/`: models and math; `data/`: synthetic data; `viz/`: plotting
+  (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
+- `scripts/phase{1..5}_*.py`, `notebooks/`, `tests/` (synthetic data only).
+  Module docstrings and `docs/reference.md` describe the files.
 
 ## Conventions
 - Config: every YAML loads into a pydantic model in `schemas/`; change behaviour through YAML.
@@ -95,15 +89,17 @@ No committed smoke config; smoke runs use a temporary config with a few steps.
   `core/networks.py` must not import `core/surrogate_mfgp.py`; `schemas/` stays numpy-only.
 - CNP aggregator reduces over the event axis N, never the batch axis B.
 - Tensor shapes as inline comments, e.g. `z_phi: torch.Tensor,  # [B, N, Z]`
-  (B = voxels/trials, N = events, Z = latent).
+  (B = design points/trials, N = events, Z = latent).
 - Style: ruff, line length 100, rules E,F,I,B,UP, py311. Type hints, pydantic validation with
   informative errors, a pytest with synthetic fixtures for every change.
 - Working style: check the code rather than guess; ask when intent or data format is unclear;
   push back when a request looks wrong.
 
 ## Don't
-- Don't read: `viz_output/`, `build/`, `.venv*/`, run output directories, `*.ckpt/*.pt/*.pkl/*.npz`,
-  notebook output cells, lock files, `notebooks/data/**/*.csv`.
+- Don't read: `viz_output/`, `build/`, `.venv*/`, lock files, notebook output cells,
+  `notebooks/data/**/*.csv`; in run directories, read the JSON files (`metrics.json`,
+  `compute.json`, `experiment.json`), not arrays, checkpoints or plots
+  (`*.npz/*.ckpt/*.pt/*.pkl/*.png`).
 - Don't edit: lock files by hand; `notebooks/data/paper_2410_03873/` (paper provenance).
 - Don't commit generated outputs, application data or configs, or scratch notebooks/scripts.
 - Don't put application-specific code, paths or configs into this repository.
