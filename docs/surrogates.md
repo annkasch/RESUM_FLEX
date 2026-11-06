@@ -606,12 +606,13 @@ the Bayesian last layer work as for the MLP.
 
 ### Training on an event stream (`python -m core.surrogates stream CONFIG.yaml`)
 
-A context-free model (MLP or neural field) can train on a large set of ungrouped events, e.g.
+The MLP or the neural field can train on a large set of ungrouped events, e.g.
 a homogeneous simulation campaign, instead of on events grouped by design point
-(`core/surrogates/stream_training.py`, config `StreamRunConfig`). The CNP needs events
-grouped by design point (its context) and cannot train on a stream. The transformer and the
-BDT are context-free too but have no stream training yet; the BDT would need a subsample in
-memory, since boosted trees do not learn batch by batch.
+(`core/surrogates/stream_training.py`, config `StreamRunConfig`). Only the MLP and the
+field have stream training so far. The CNP, transformer and BDT could be added: the CNP
+needs a rule that forms its context sets from the stream (today a context is the events of
+one design point), the transformer only the record-to-input mapping, and the BDT a
+subsample in memory, since boosted trees do not learn batch by batch.
 
 ```yaml
 model: {kind: mlp, architecture: {hidden_dims: [256, 256, 256]}, last_layer: {}}
