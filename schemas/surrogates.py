@@ -90,10 +90,15 @@ class FieldPosition(StrictConfigModel):
 
 
 class FieldDirection(StrictConfigModel):
-    """Event columns of a 3-vector direction (any length), encoded by real spherical
-    harmonics up to ``degree`` after normalizing to unit length."""
+    """Event columns of a 3-vector direction (any length).
+
+    ``harmonics``: real spherical harmonics up to ``degree`` of the unit vector (the length is
+    dropped). ``momentum``: the vector itself in the normalized units of the training data,
+    length included (for photons: the wavelength); ``degree`` is unused.
+    """
 
     phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=3, max_length=3)
+    encoding: Literal["harmonics", "momentum"] = "harmonics"
     degree: int = Field(default=4, ge=0, le=8)
 
 
@@ -109,6 +114,12 @@ class FourierEncoding(StrictConfigModel):
     max_frequency: float = Field(default=8.0, gt=0, allow_inf_nan=False)
 
 
+class RawPosition(StrictConfigModel):
+    """The position in normalized units, unencoded (an MLP on raw coordinates)."""
+
+    kind: Literal["none"] = "none"
+
+
 class FieldModel(StrictConfigModel):
     """Neural field: an MLP on encoded event coordinates, p(position, direction, rest).
 
@@ -121,7 +132,8 @@ class FieldModel(StrictConfigModel):
     architecture: MLPArchitecture = Field(default_factory=MLPArchitecture)
     position: FieldPosition | None = None
     direction: FieldDirection | None = None
-    encoding: FourierEncoding = Field(default_factory=FourierEncoding)
+    # Untagged: configs without ``kind`` stay Fourier (both models forbid extra fields).
+    encoding: FourierEncoding | RawPosition = Field(default_factory=FourierEncoding)
     last_layer: BayesianLastLayer | None = None
 
     @model_validator(mode="after")
@@ -820,9 +832,13 @@ class PhotonFieldRunConfig(StrictConfigModel):
     ``dim_phi`` is the event-input width of the voxel data it will be evaluated on (offset
     and momentum: 6), so the checkpoint loads like any field. Position must be three phi
     columns added to a 3-D theta, and a direction is required.
+
+    ``model: {kind: mlp}`` trains the photon MLP: the same network on the normalized raw
+    position and momentum, x, y, z, px, py, pz (``network``: a field without encodings).
+    Unlike the voxel MLP it has no separate voxel centre, which homogeneous photons lack.
     """
 
-    model: FieldModel
+    model: FieldModel | MLPModel = Field(discriminator="kind")
     training: PhotonTraining = Field(default_factory=PhotonTraining)
     photon_store: Path
     photon_source: str = "legend_optical_map_ml.photon_loader:PhotonStream"
@@ -855,13 +871,27 @@ class PhotonFieldRunConfig(StrictConfigModel):
                 )
         return self
 
+    @property
+    def network(self) -> FieldModel:
+        """The network trained: the field, or for ``kind: mlp`` the unencoded field."""
+        if isinstance(self.model, FieldModel):
+            return self.model
+        return FieldModel(
+            architecture=self.model.architecture,
+            position=FieldPosition(phi_columns=[0, 1, 2]),
+            direction=FieldDirection(phi_columns=[3, 4, 5], encoding="momentum"),
+            encoding=RawPosition(),
+            last_layer=self.model.last_layer,
+        )
+
     @model_validator(mode="after")
     def photon_field(self):
-        if self.model.position is None or len(self.model.position.phi_columns) != 3:
+        model = self.network
+        if model.position is None or len(model.position.phi_columns) != 3:
             raise ValueError("A photon field needs position.phi_columns of length 3")
-        if self.model.direction is None:
+        if model.direction is None:
             raise ValueError("A photon field needs a direction encoding")
-        used = {*self.model.position.phi_columns, *self.model.direction.phi_columns}
+        used = {*model.position.phi_columns, *model.direction.phi_columns}
         if used != set(range(self.dim_phi)):
             raise ValueError("Position and direction must use all dim_phi event columns")
         return self

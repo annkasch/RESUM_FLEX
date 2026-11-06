@@ -6,8 +6,12 @@ Inputs per event (all optional, from schemas.surrogates.FieldModel):
   centre + emission offset = emission point), expressed in normalized theta units and
   Fourier-encoded: [x, sin(2π f_k x), cos(2π f_k x)] for octave-spaced f_k up to f_max;
 * direction = a 3-vector of phi columns, normalized to unit length and encoded by real
-  orthonormal spherical harmonics up to the configured degree;
+  orthonormal spherical harmonics up to the configured degree, or (``encoding: momentum``)
+  the normalized vector itself, which keeps its length (the photon wavelength);
 * every other phi column unencoded.
+
+With ``encoding: {kind: none}`` and a momentum direction the field is a plain MLP on
+(position, momentum): the photon-trained MLP (``kind: mlp`` in a photon run config).
 
 An MLP maps the concatenated encodings to the logit. Without the encodings an MLP on raw
 coordinates learns mainly smooth (low-frequency) functions; the Fourier features let it
@@ -130,20 +134,41 @@ class BernoulliField(nn.Module):
         self.register_buffer("photon_units", torch.zeros(()))
         self.register_buffer("direction_scale", torch.ones(n_dir))
         self.register_buffer("direction_shift", torch.zeros(n_dir))
-        self.fourier = FourierFeatures(config.encoding.n_frequencies, config.encoding.max_frequency)
-        self.harmonics = None if direction is None else SphericalHarmonics(direction.degree)
-        width = (
-            (self.fourier.output_dim(dim_position) if dim_position else 0)
-            + (self.harmonics.output_dim if self.harmonics is not None else 0)
-            + len(self.extra_columns)
+        # Momentum encoding: (vector - momentum_origin) / momentum_unit in physical units; the
+        # normalization of the training data (voxel phi or photon store).
+        self.register_buffer("momentum_origin", torch.zeros(n_dir))
+        self.register_buffer("momentum_unit", torch.ones(n_dir))
+        encoding = config.encoding
+        self.fourier = (
+            FourierFeatures(encoding.n_frequencies, encoding.max_frequency)
+            if encoding.kind == "fourier"
+            else None
         )
+        self.momentum = direction is not None and direction.encoding == "momentum"
+        self.harmonics = (
+            SphericalHarmonics(direction.degree)
+            if direction is not None and not self.momentum
+            else None
+        )
+        width_position = self.fourier.output_dim(dim_position) if self.fourier else dim_position
+        width_direction = (
+            0 if direction is None else 3 if self.momentum else self.harmonics.output_dim
+        )
+        width = width_position + width_direction + len(self.extra_columns)
         if width == 0:
             raise ValueError("The field has no inputs")
         arch = config.architecture
         self.decoder = MLPEncoder(width, list(arch.hidden_dims), 1, arch.dropout)
 
     # Buffers added after the first field checkpoints; older weights load with their defaults.
-    _OPTIONAL_BUFFERS = ("theta_coefficient", "position_origin", "position_unit", "photon_units")
+    _OPTIONAL_BUFFERS = (
+        "theta_coefficient",
+        "position_origin",
+        "position_unit",
+        "photon_units",
+        "momentum_origin",
+        "momentum_unit",
+    )
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
         for name in self._OPTIONAL_BUFFERS:
@@ -161,16 +186,18 @@ class BernoulliField(nn.Module):
         units, as from a photon store). Needs a 3-D position (theta + position columns) and
         a direction; call before ``set_normalization`` of any voxel data.
         """
-        if self.dim_theta != 3 or len(self.position_columns) != 3 or self.harmonics is None:
+        if self.dim_theta != 3 or len(self.position_columns) != 3 or not self.direction_columns:
             raise ValueError("Photon training needs a 3-D position and a direction encoding")
         if self.extra_columns:
             raise ValueError("Photon training supports no unencoded extra phi columns")
         offset = torch.as_tensor(normalization["offset"], dtype=torch.float64)
         scale = torch.as_tensor(normalization["scale"], dtype=torch.float64)
-        if offset.shape != (6,) or scale.shape != (6,) or torch.any(scale[:3] <= 0):
-            raise ValueError("Photon normalization needs offset and scale of 6 columns")
+        if offset.shape != (6,) or scale.shape != (6,) or torch.any(scale <= 0):
+            raise ValueError("Photon normalization needs offset and positive scale of 6 columns")
         self.position_origin.copy_(offset[:3].float())
         self.position_unit.copy_(scale[:3].float())
+        self.momentum_origin.copy_(offset[3:].float())
+        self.momentum_unit.copy_(scale[3:].float())
         self.photon_units.fill_(1.0)
 
     def forward_photons(self, photons: torch.Tensor) -> torch.Tensor:
@@ -178,10 +205,17 @@ class BernoulliField(nn.Module):
         if not self.uses_photon_units:
             raise ValueError("Call set_photon_normalization before forward_photons")
         position = (photons[:, :3] - self.position_origin) / self.position_unit
-        momentum = photons[:, 3:6]
-        direction = momentum / momentum.norm(dim=-1, keepdim=True)
-        parts = [self.fourier(position), self.harmonics(direction)]
+        parts = [self._position_features(position), self._direction_features(photons[:, 3:6])]
         return self.decoder(torch.cat(parts, dim=-1)).squeeze(-1)
+
+    def _position_features(self, position):
+        return position if self.fourier is None else self.fourier(position)
+
+    def _direction_features(self, vector):
+        """Encoded direction of nonzero physical vectors [..., 3]."""
+        if self.momentum:
+            return (vector - self.momentum_origin) / self.momentum_unit
+        return self.harmonics(vector / vector.norm(dim=-1, keepdim=True))
 
     def set_normalization(self, normalization):
         """Read the affine normalization x_n = (x - offset) / scale of theta and phi.
@@ -222,6 +256,9 @@ class BernoulliField(nn.Module):
             cols = self.direction_columns
             self.direction_scale.copy_(phi_scale[cols].float())
             self.direction_shift.copy_(phi_offset[cols].float())
+            if not self.uses_photon_units:  # momentum in the units of the training data
+                self.momentum_origin.copy_(phi_offset[cols].float())
+                self.momentum_unit.copy_(phi_scale[cols].float())
 
     def encode(self, target) -> torch.Tensor:
         """Concatenated encodings [B, N, width] of a StandardBatch."""
@@ -237,8 +274,8 @@ class BernoulliField(nn.Module):
             if self.position_columns:
                 offset = phi[..., self.position_columns] * self.position_scale
                 position = position + offset + self.position_shift
-            parts.append(self.fourier(position))
-        if self.harmonics is not None:
+            parts.append(self._position_features(position))
+        if self.direction_columns:
             vector = phi[..., self.direction_columns] * self.direction_scale + self.direction_shift
             norm = vector.norm(dim=-1, keepdim=True)  # [B, N, 1]
             valid = torch.as_tensor(target.event_mask, device=norm.device)[..., None]
@@ -246,7 +283,7 @@ class BernoulliField(nn.Module):
                 raise ValueError("Direction vectors of valid events must be nonzero")
             # Padded slots of ragged batches are not events; any unit vector will do.
             vector = torch.where(valid, vector, torch.ones_like(vector))
-            parts.append(self.harmonics(vector / vector.norm(dim=-1, keepdim=True)))
+            parts.append(self._direction_features(vector))
         if self.extra_columns:
             parts.append(phi[..., self.extra_columns])
         return torch.cat(parts, dim=-1)

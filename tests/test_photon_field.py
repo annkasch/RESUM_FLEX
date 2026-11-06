@@ -26,6 +26,13 @@ PHOTON_NORMALIZATION = {
 }
 
 
+# Photon MLP: raw position and momentum (what ``model: {kind: mlp}`` trains on photons).
+MLP_CHANGES = {
+    "encoding": {"kind": "none"},
+    "direction": {"phi_columns": [3, 4, 5], "encoding": "momentum"},
+}
+
+
 def _records(position, momentum, label=None):
     """Raw photon records [M, 7] float32 with label bits in the last column."""
     out = np.zeros((len(position), 7), dtype=np.float32)
@@ -62,12 +69,14 @@ class FakePhotonSource:
         return self.records
 
 
-def test_photon_trained_field_gives_the_same_logits_on_voxel_inputs():
-    model = _field()
+@pytest.mark.parametrize("changes", [{}, MLP_CHANGES], ids=["field", "mlp"])
+def test_photon_trained_field_gives_the_same_logits_on_voxel_inputs(changes):
+    model = _field(**changes)
     model.module.set_photon_normalization(PHOTON_NORMALIZATION)
     model.configure_normalization(NORMALIZATION)  # voxel data of the evaluation
     rng = np.random.default_rng(1)
     centre, offset, direction = _random_physical(rng)
+    direction *= rng.uniform(0.9, 1.1, direction.shape[:-1])[..., None]  # wavelength spread
     batch = _physical_batch(centre, offset, direction)
     with torch.no_grad():
         voxel = model.module(None, batch)  # [B, N]
@@ -75,6 +84,38 @@ def test_photon_trained_field_gives_the_same_logits_on_voxel_inputs():
         photons = torch.as_tensor(_records(position, direction.reshape(-1, 3)))
         direct = model.module.forward_photons(photons).reshape(voxel.shape)
     torch.testing.assert_close(voxel, direct, rtol=1e-4, atol=1e-4)
+
+
+def test_photon_mlp_sees_the_momentum_length_and_the_field_does_not():
+    rng = np.random.default_rng(3)
+    position = rng.normal(PHOTON_NORMALIZATION["offset"][:3], 0.05, (50, 3))
+    momentum = rng.normal(size=(50, 3)) * 9.7e-6
+    outputs = {}
+    for name, changes in (("field", {}), ("mlp", MLP_CHANGES)):
+        model = _field(**changes)
+        model.module.set_photon_normalization(PHOTON_NORMALIZATION)
+        with torch.no_grad():
+            short, long = (
+                model.module.forward_photons(torch.as_tensor(_records(position, k * momentum)))
+                for k in (1.0, 1.05)
+            )
+        outputs[name] = float((short - long).abs().max())
+    assert outputs["field"] < 1e-5 < outputs["mlp"]
+
+
+def test_photon_mlp_config_is_the_unencoded_field():
+    config = PhotonFieldRunConfig.model_validate(
+        {
+            "model": {"kind": "mlp", "architecture": {"hidden_dims": [32, 32]}},
+            "photon_store": "s",
+            "output_directory": "o",
+        }
+    )
+    network = config.network
+    assert network.kind == "field" and network.encoding.kind == "none"
+    assert network.direction.encoding == "momentum"
+    assert network.position.phi_columns == [0, 1, 2]
+    assert list(network.architecture.hidden_dims) == [32, 32]
 
 
 def test_voxel_trained_field_is_unchanged_and_old_weights_load():
@@ -201,6 +242,34 @@ def test_photon_training_learns_selects_and_fits_the_last_layer(tmp_path):
     assert float(loss) == pytest.approx(report["best"]["loss"], rel=1e-5)
     with pytest.raises(FileExistsError):
         run_photon_field(config)
+
+
+def test_photon_mlp_trains_and_scores_on_voxels(tmp_path):
+    config = _run_config(tmp_path, n_passes=1)
+    config = config.model_copy(
+        update={
+            "model": PhotonFieldRunConfig.model_validate(
+                {
+                    "model": {
+                        "kind": "mlp",
+                        "architecture": {"hidden_dims": [16, 16]},
+                        "last_layer": {"prior_precision": "evidence", "draws": 100},
+                    },
+                    "photon_store": "s",
+                    "output_directory": "o",
+                }
+            ).model
+        }
+    )
+    report = run_photon_field(config)
+    assert report["history"][-1]["photon_log_loss"] < report["history"][0]["photon_log_loss"]
+    best = load_surrogate(tmp_path / "run" / "checkpoints" / "best")
+    assert best.module.momentum and best.module.fourier is None
+    assert best.last_layer is not None
+    experiment = json.loads((tmp_path / "run" / "experiment.json").read_text())
+    assert experiment["resolved_config"]["model"]["kind"] == "mlp"
+    rows = json.loads((tmp_path / "run" / "metrics.json").read_text())
+    assert {r["fidelity"] for r in rows} == {"photons", "lf", "hf"}
 
 
 def test_photon_field_config_needs_position_and_direction():

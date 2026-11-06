@@ -618,6 +618,13 @@ log loss on the validation photons. With `last_layer`, the selected checkpoints 
 Laplace posterior from one streaming pass over all training photons. Several GPUs:
 `torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are options.
 
+`model: {kind: mlp, architecture: ..., last_layer: ...}` trains the photon MLP instead: the
+same network on the normalized raw x, y, z, px, py, pz (internally a field with
+`encoding: {kind: none}` and `direction: {encoding: momentum}`, which keeps the momentum
+length, i.e. the wavelength; the spherical-harmonic direction of the field drops it). It
+differs from the voxel MLP, which takes the voxel centre and the emission offset as separate
+inputs; homogeneous photons have no voxel centre.
+
 The checkpoints are ordinary field checkpoints. `predict` and `score_event_model.py`
 evaluate them on voxel data: for a photon-trained field the provider's theta + offset is
 mapped into the field's physical units, so no equal normalization is required.

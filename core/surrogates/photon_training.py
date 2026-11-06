@@ -304,7 +304,7 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
     )
     normalization = train.normalization()
     torch.manual_seed(training.seed)
-    model = build_surrogate(config.model, 3, config.dim_phi, seed=training.seed)
+    model = build_surrogate(config.network, 3, config.dim_phi, seed=training.seed)
     model.module.set_photon_normalization(normalization)
     model.module.to(device)
     forward = _photon_module(model.module)
