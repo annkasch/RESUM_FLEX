@@ -40,7 +40,7 @@ data_directory: prepared
 output_directory: runs/mlp
 ```
 
-`gp.yaml` ([all settings](docs/configs.md#gp-config), [GP levels](docs/surrogates.md#multi-fidelity-gp-configurable-levels)):
+`gp.yaml` ([all settings](docs/configs.md#gp-config), [GP levels](docs/gp.md#multi-fidelity-gp-configurable-levels)):
 
 ```yaml
 levels:
@@ -55,13 +55,13 @@ output_directory: runs/gp
 As an alternative to the MFGP, `python -m core.surrogates binomial binomial.yaml` fits one GP
 directly to hit counts with a binomial likelihood (no event model).
 
-Test partitions are only evaluated with `unblind_test: true`. What a run writes and the
-validation metrics are described in [docs/surrogates.md](docs/surrogates.md#validation-metrics).
+Test partitions are only evaluated with `unblind_test: true`. What a run writes is in
+[docs/runs.md](docs/runs.md), the validation metrics in [docs/evaluation.md](docs/evaluation.md).
 
 ## Your own data
 
 By default, data are read from `<data_directory>/batches/<partition>/<fidelity>.npz`
-(the arrays of a [`StandardBatch`](docs/reference.md#input--standardbatch)). For other formats, write a dataset provider and name it
+(the arrays of a [`StandardBatch`](docs/data.md#standardbatch)). For other formats, write a dataset provider and name it
 in the config with `data_provider: my_package.module:MyDataset`:
 
 ```python
@@ -74,13 +74,13 @@ class MyDataset:
     def normalization(self): ...
 ```
 
-See [Datasets and providers](docs/surrogates.md#datasets-and-providers) and
+See [Datasets and providers](docs/data.md#datasets-and-providers) and
 `core/surrogates/datasets.py`.
 
 ## Documentation
 
+- [docs/index.md](docs/index.md): one file per topic (models, training, GPs, metrics, runs,
+  data, math, design, install), with when to read each
 - [docs/configs.md](docs/configs.md): every config setting with its default
-- [docs/surrogates.md](docs/surrogates.md): validation metrics, GP levels, outputs, background
-- [docs/reference.md](docs/reference.md): install details, data contracts, Python API
 - [docs/nersc.md](docs/nersc.md): running on NERSC Perlmutter / Slurm
 - `scripts/phase*.py`: end-to-end demonstrations on synthetic data

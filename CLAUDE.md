@@ -11,9 +11,10 @@ appear only in code names.
 If `docs/PROGRESS.md` exists (local notes), read it first. On a Slurm cluster (e.g. NERSC
 Perlmutter), read `docs/nersc.md` before running anything heavier than a single test file.
 
-Docs: `README.md` (usage), `docs/configs.md` (every config setting),
-`docs/surrogates.md` (metrics, GP levels, run outputs, model kinds),
-`docs/reference.md` (install, layout, data contracts, Python API, synthetic phases).
+Docs: `README.md` (usage); `docs/index.md` lists one file per topic and when to read it.
+Open only the file the task needs: `docs/design.md` before changing code (data flow, which
+file to open, why the rules exist), `docs/math.md` for losses and GP math, `docs/configs.md`
+for config settings.
 
 ## Concepts
 - `θ` design parameters (one per simulation trial / design point), `φ` event parameters,
@@ -68,14 +69,14 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
   (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
 - `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`, `notebooks/`,
   `tests/` (synthetic data only).
-  Module docstrings and `docs/reference.md` describe the files.
+  Module docstrings and `docs/design.md` describe the files.
 
 ## Conventions
 - Config: every YAML loads into a pydantic model in `schemas/`; change behaviour through YAML.
   No per-model scripts, no inert config fields. Paths resolve relative to the YAML file.
 - Run outputs: one `output_directory` per run, never overwritten. A run writes `experiment.json`
   (resolved config, input hashes, normalization), `checkpoints/{best,final}/`, `history.json`,
-  `metrics.json`, `compute.json`, evaluation arrays and plots (see `docs/surrogates.md`).
+  `metrics.json`, `compute.json`, evaluation arrays and plots (see `docs/runs.md`).
 - Seeding: explicit `seed` fields; derive streams with
   `np.random.default_rng(np.random.SeedSequence([seed, k]))` and `torch.manual_seed`. No unseeded
   RNG. Only exception: GPy needs `np.random.seed` (`mfgp_stage.py`, `binomial_gp.py`).
