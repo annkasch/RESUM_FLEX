@@ -211,8 +211,8 @@ class BernoulliField(nn.Module):
             theta_offset, theta_scale = affine("theta", self.dim_theta)
             cols = self.position_columns
             if self.uses_photon_units:
-                origin = self.position_origin.double()
-                unit = self.position_unit.double()
+                origin = self.position_origin.detach().cpu().double()
+                unit = self.position_unit.detach().cpu().double()
             else:
                 origin, unit = theta_offset, theta_scale
             self.theta_coefficient.copy_((theta_scale / unit).float())
