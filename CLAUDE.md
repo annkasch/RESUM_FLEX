@@ -8,7 +8,7 @@ bring their data through a dataset provider and keep their own configs, outputs 
 Keep the vocabulary generic (design point, event, outcome); application terms such as voxels
 appear only in code names.
 
-If `docs/PROGRESS.md` exists (local notes), read it first. On a Slurm cluster (e.g. NERSC
+If `.claude/status.md` exists (local, open items only), read it first. On a Slurm cluster (e.g. NERSC
 Perlmutter), read `docs/nersc.md` before running anything heavier than a single test file.
 
 Docs: `README.md` (usage); `docs/index.md` lists one file per topic and when to read it.
@@ -113,6 +113,6 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
 After each finished, tested step: commit the code, tests and docs you changed (stage files
 explicitly, leave the user's uncommitted edits out) and push the current branch to `origin`
 (the fork), never `upstream`. When you add, rename or remove modules, commands or rules, update
-this file in the same commit. Local notes (`docs/PROGRESS.md`, `.claude/`) are never committed.
-PROGRESS holds open state only (now, waiting on the user, next, known issues), one line per
+this file in the same commit. Local notes (`.claude/`, incl. `status.md`) are never committed.
+`status.md` holds open items only (now, waiting on the user, next, known issues), one line per
 item: at the end of each task delete finished items and add new ones; no history.
