@@ -2,7 +2,7 @@
 
 Python versions, extras, the pixi/uv split and the NumPy 1/2 matrix.
 
-Python 3.11–3.12 is supported; `.python-version` selects 3.12 for local
+Python 3.11–3.12 is supported; `.python-version` selects 3.11 (the minimum) for local
 development. PyTorch is a hard dependency. The `gp` extra installs
 `GPy>=1.14.2` and `emukit>=0.5.1` for MFGP / Phase 4 & 5. Test and lint tools
 live in the non-published `dev` dependency group and are installed by default.
