@@ -1,18 +1,18 @@
-"""Train a neural field on every photon of a photon store (``python -m core.surrogates photon``).
+"""Train a neural field on every event of an event store (``python -m core.surrogates stream``).
 
-Each optimizer step takes one batch of raw photon records from the photon source (random
+Each optimizer step takes one batch of raw event records from the event source (random
 order, see its documentation); the field normalizes positions with the store's train
-normalization (``BernoulliField.set_photon_normalization``) and encodes the direction from the
+normalization (``BernoulliField.set_stream_normalization``) and encodes the direction from the
 momentum. Checkpoints are selected by the Bernoulli log loss on the first
-``validation_photons`` validation photons, held on the device. With ``last_layer`` the
+``validation_events`` validation events, held on the device. With ``last_layer`` the
 selected checkpoints get a Laplace posterior from one streaming pass over all training
-photons (exact Bernoulli Hessian of the final layer, as for voxel training).
+events (exact Bernoulli Hessian of the final layer, as for voxel training).
 
 Several GPUs: launch with ``torchrun``; every rank reads its own blocks of each pass and
 DistributedDataParallel averages the gradients. Rank 0 validates and writes the outputs.
 
 The checkpoints are ordinary field checkpoints: ``predict`` / ``score_event_model.py``
-evaluate them on voxel data, mapping theta + offset into the field's photon units.
+evaluate them on voxel data, mapping theta + offset into the field's stream units.
 """
 
 import json
@@ -23,13 +23,13 @@ from pathlib import Path
 import numpy as np
 
 from core.compute import ComputeLog
-from core.photon_data import open_photon_source, photon_labels
+from core.event_stream import event_labels, open_event_source
 from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate, save_surrogate
 from core.surrogates.evaluation import calibration_bins, evaluate_surrogate
 from core.surrogates.last_layer import _layer, last_layer_weights
 from core.surrogates.models import build_surrogate
-from schemas.surrogates import PhotonFieldRunConfig
+from schemas.surrogates import StreamRunConfig
 
 VALIDATION_CHUNK = 2**20
 
@@ -42,42 +42,42 @@ def _distributed():
     return int(os.environ["RANK"]), world, int(os.environ.get("LOCAL_RANK", "0"))
 
 
-def _photon_module(field):
+def _stream_module(field):
     import torch
 
-    class PhotonForward(torch.nn.Module):
-        """forward(records) = field.forward_photons(records), for DDP and torch.compile."""
+    class StreamForward(torch.nn.Module):
+        """forward(records) = field.forward_events(records), for DDP and torch.compile."""
 
         def __init__(self, field):
             super().__init__()
             self.field = field
 
         def forward(self, records):
-            return self.field.forward_photons(records)
+            return self.field.forward_events(records)
 
-    return PhotonForward(field)
+    return StreamForward(field)
 
 
-def _log_loss(forward, photons, device, autocast) -> float:
-    """Mean Bernoulli log loss of photon records (on ``device``), in chunks, no gradients."""
+def _log_loss(forward, events, device, autocast) -> float:
+    """Mean Bernoulli log loss of event records (on ``device``), in chunks, no gradients."""
     import torch
 
     total, count = 0.0, 0
     with torch.no_grad():
-        for start in range(0, len(photons), VALIDATION_CHUNK):
-            chunk = photons[start : start + VALIDATION_CHUNK]
+        for start in range(0, len(events), VALIDATION_CHUNK):
+            chunk = events[start : start + VALIDATION_CHUNK]
             with autocast():
                 logits = forward(chunk)
             loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                logits.float(), photon_labels(chunk), reduction="sum"
+                logits.float(), event_labels(chunk), reduction="sum"
             )
             total += float(loss)
             count += len(chunk)
     return total / count
 
 
-def fit_photon_last_layer(model, source, *, batch_size, device):
-    """Laplace posterior of the final layer from one pass over all photons of ``source``."""
+def fit_stream_last_layer(model, source, *, batch_size, device):
+    """Laplace posterior of the final layer from one pass over all events of ``source``."""
     import torch
 
     from core.last_layer import laplace_posterior
@@ -97,7 +97,7 @@ def fit_photon_last_layer(model, source, *, batch_size, device):
         with torch.no_grad():
             for batch in source.batches(batch_size, 0, device=device):
                 captured.clear()
-                field.forward_photons(batch)
+                field.forward_events(batch)
                 features = captured[-1].double()
                 features = torch.cat([features, features.new_ones((len(features), 1))], dim=1)
                 p = torch.sigmoid(features @ weights)
@@ -116,12 +116,12 @@ def fit_photon_last_layer(model, source, *, batch_size, device):
         log_evidence=posterior.log_evidence,
         events=events,
         parameters=len(mean),
-        hessian="exact Bernoulli Hessian of the final layer over all training photons",
+        hessian="exact Bernoulli Hessian of the final layer over all training events",
     )
     return posterior
 
 
-def _voxel_episodes(config: PhotonFieldRunConfig):
+def _voxel_episodes(config: StreamRunConfig):
     """Labelled voxel episodes of ``config.evaluation`` (context-free: no context events).
 
     Returns (episodes {(split, fidelity): Episode}, the history episode, data record).
@@ -158,8 +158,8 @@ def _voxel_episodes(config: PhotonFieldRunConfig):
     return episodes, history_episode, data
 
 
-def photon_metrics(labels, logits, *, reference_rate):
-    """Event metrics of photons without voxel structure, as in voxel evaluation.
+def stream_metrics(labels, logits, *, reference_rate):
+    """Event metrics of events without voxel structure, as in voxel evaluation.
 
     labels, logits: [M] numpy. Returns (metrics, arrays) with calibration bins and the
     precision-recall curve.
@@ -214,7 +214,7 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
     """metrics.json, arrays and plots of best and final, as for voxel training.
 
     Voxel sets get the voxel-training metrics (and the last-layer predictive scores); the
-    validation photons get the event metrics under fidelity ``photons``.
+    validation events get the event metrics under fidelity ``stream``.
     """
     from core.surrogates.experiment import _voxel_predictive
     from core.surrogates.readout import readout_metrics
@@ -230,12 +230,12 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
         with torch.no_grad():
             for start in range(0, len(validation), VALIDATION_CHUNK):
                 logits.append(
-                    saved.module.forward_photons(validation[start : start + VALIDATION_CHUNK])
+                    saved.module.forward_events(validation[start : start + VALIDATION_CHUNK])
                     .float()
                     .cpu()
                 )
-        labels = photon_labels(validation).cpu().numpy()
-        summary, arrays = photon_metrics(
+        labels = event_labels(validation).cpu().numpy()
+        summary, arrays = stream_metrics(
             labels, torch.cat(logits).numpy(), reference_rate=prevalence
         )
         rows.append(
@@ -243,11 +243,11 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
                 checkpoint=checkpoint,
                 step=saved.metadata.get("step"),
                 split="validation",
-                fidelity="photons",
+                fidelity="stream",
                 **summary,
             )
         )
-        np.savez_compressed(output / f"photons_validation_{checkpoint}.npz", **arrays)
+        np.savez_compressed(output / f"stream_validation_{checkpoint}.npz", **arrays)
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
             summary.update(readout_metrics(episode.target, arrays, seed=seed))
@@ -266,13 +266,13 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
             )
             np.savez_compressed(output / f"{fidelity}_{split}_{checkpoint}.npz", **arrays)
     (output / "metrics.json").write_text(json.dumps(rows, indent=2, allow_nan=False))
-    from viz.surrogate import plot_photon_run, plot_surrogate_run
+    from viz.surrogate import plot_stream_run, plot_surrogate_run
 
     plot_surrogate_run(output)
-    plot_photon_run(output)
+    plot_stream_run(output)
 
 
-def run_photon_field(config: PhotonFieldRunConfig) -> dict:
+def run_stream(config: StreamRunConfig) -> dict:
     import torch
 
     rank, world, local_rank = _distributed()
@@ -292,10 +292,10 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
             raise FileExistsError(f"{output} is not empty; choose a new output directory")
         output.mkdir(parents=True, exist_ok=True)
     compute = ComputeLog()
-    loading = training.loading.model_dump()
-    train = open_photon_source(
-        config.photon_source,
-        config.photon_store,
+    loading = dict(config.event_source_options)
+    train = open_event_source(
+        config.event_source,
+        config.event_store,
         "train",
         seed=training.seed,
         rank=rank,
@@ -305,9 +305,9 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
     normalization = train.normalization()
     torch.manual_seed(training.seed)
     model = build_surrogate(config.network, 3, config.dim_phi, seed=training.seed)
-    model.module.set_photon_normalization(normalization)
+    model.module.set_stream_normalization(normalization)
     model.module.to(device)
-    forward = _photon_module(model.module)
+    forward = _stream_module(model.module)
     if training.compile:
         forward = torch.compile(forward)
     if world > 1:
@@ -323,19 +323,19 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         return torch.autocast(device.type, dtype=torch.bfloat16, enabled=enabled)
 
     # Training prevalence: constant-rate reference of the log-loss skill everywhere.
-    prevalence = train.n_detected / train.n_photons
+    prevalence = train.n_positive / train.n_events
     if not 0 < prevalence < 1:
-        raise ValueError("Training photons must contain detected and undetected photons")
+        raise ValueError("Training events must contain events with label 1 and with label 0")
     validation, episodes, history_episode = None, {}, None
     with compute.stage("validation_loading"):
         if rank == 0:
-            source = open_photon_source(
-                config.photon_source, config.photon_store, "validation", **loading
+            source = open_event_source(
+                config.event_source, config.event_store, "validation", **loading
             )
-            photons = source.load()
-            if training.validation_photons is not None:
-                photons = photons[: training.validation_photons]
-            validation = torch.as_tensor(np.ascontiguousarray(photons), device=device)
+            events = source.load()
+            if training.validation_events is not None:
+                events = events[: training.validation_events]
+            validation = torch.as_tensor(np.ascontiguousarray(events), device=device)
             if config.evaluation:
                 episodes, history_episode, data = _voxel_episodes(config)
                 model.configure_normalization(data["normalization"])
@@ -343,15 +343,15 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
     history, best = [], dict(loss=math.inf, step=0)
     metadata = dict(
         resolved_config=config.model_dump(mode="json"),
-        photon_store=str(config.photon_store),
-        photon_source=config.photon_source,
+        event_store=str(config.event_store),
+        event_source=config.event_source,
         data_provider=config.data_provider,
-        photon_normalization=normalization,
-        training_photons=train.n_photons,
+        stream_normalization=normalization,
+        training_events=train.n_events,
         training_prevalence=prevalence,
-        validation_photons=None if validation is None else len(validation),
+        validation_events=None if validation is None else len(validation),
         world_size=world,
-        selection="bernoulli_log_loss on the validation photons",
+        selection="bernoulli_log_loss on the validation events",
         uses_context=False,
         uncertainty=False,
     )
@@ -364,9 +364,9 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         if rank != 0:
             return
         model.module.eval()
-        loss = _log_loss(model.module.forward_photons, validation, device, autocast)
+        loss = _log_loss(model.module.forward_events, validation, device, autocast)
         model.module.train()
-        row = dict(step=step, pass_index=pass_index, training_loss=train_loss, photon_log_loss=loss)
+        row = dict(step=step, pass_index=pass_index, training_loss=train_loss, stream_log_loss=loss)
         if history_episode is not None:
             row.update(
                 evaluate_surrogate(model, history_episode.target, reference_rate=prevalence)[0]
@@ -375,10 +375,10 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         print(f"step {step} pass {pass_index}: train {train_loss:.6f} val {loss:.6f}", flush=True)
         if loss < best["loss"]:
             best.update(loss=loss, step=step, pass_index=pass_index)
-            model.metadata.update(best_step=step, best_photon_log_loss=loss)
+            model.metadata.update(best_step=step, best_stream_log_loss=loss)
             save_surrogate(checkpoints / "best", model, metadata={"step": step})
 
-    step, photons_seen, running = 0, 0, []
+    step, events_seen, running = 0, 0, []
     model.module.train()
     with compute.stage("training"):
         for pass_index in range(training.n_passes):
@@ -388,13 +388,13 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
                 with autocast():
                     logits = forward(batch)
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
-                    logits.float(), photon_labels(batch)
+                    logits.float(), event_labels(batch)
                 )
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
                 step += 1
-                photons_seen += len(batch)
+                events_seen += len(batch)
                 running.append(loss.detach())
                 if step % training.eval_every == 0:
                     evaluate(step, pass_index, float(torch.stack(running).mean()))
@@ -406,20 +406,18 @@ def run_photon_field(config: PhotonFieldRunConfig) -> dict:
         import torch.distributed as dist
 
         dist.barrier()
-    report = dict(steps=step, photons_seen=photons_seen * world, best=best, history=history)
+    report = dict(steps=step, events_seen=events_seen * world, best=best, history=history)
     if rank == 0:
-        model.metadata.update(steps=step, final_photon_log_loss=history[-1]["photon_log_loss"])
+        model.metadata.update(steps=step, final_stream_log_loss=history[-1]["stream_log_loss"])
         save_surrogate(checkpoints / "final", model, metadata={"step": step})
         (output / "history.json").write_text(json.dumps(history, indent=1, allow_nan=False))
         if config.model.last_layer is not None:
-            stream = open_photon_source(
-                config.photon_source, config.photon_store, "train", **loading
-            )
+            stream = open_event_source(config.event_source, config.event_store, "train", **loading)
             with compute.stage("last_layer"):
                 for name in ("best", "final"):
                     selected = load_surrogate(checkpoints / name)
                     selected.module.to(device)
-                    fit_photon_last_layer(
+                    fit_stream_last_layer(
                         selected, stream, batch_size=training.batch_size, device=device
                     )
                     selected.module.cpu()

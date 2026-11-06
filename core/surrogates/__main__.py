@@ -2,7 +2,7 @@
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 python -m core.surrogates mfgp GP.yaml
 python -m core.surrogates binomial BINOMIAL_GP.yaml
-python -m core.surrogates photon PHOTON_FIELD.yaml   (torchrun for several GPUs)"""
+python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)"""
 
 import argparse
 
@@ -29,7 +29,7 @@ def main():
         help="'module:Class' of the dataset provider (default: the one the model was trained on)",
     )
     predict.add_argument(
-        "--photons-from",
+        "--events-from",
         metavar="PARTITION/FIDELITY",
         help="use the event inputs of seeded random donor voxels of this partition (a fresh "
         "emission sample) instead of each voxel's own",
@@ -39,20 +39,20 @@ def main():
     mfgp.add_argument("config")
     binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
     binomial.add_argument("config")
-    photon = commands.add_parser("photon", help="Train a neural field on a photon store")
-    photon.add_argument("config")
+    stream = commands.add_parser("stream", help="Train a neural field on an event store")
+    stream.add_argument("config")
     args = parser.parse_args()
     import torch
 
     torch.set_num_threads(1)
-    if args.command == "photon":
-        from core.surrogates.photon_training import run_photon_field
-        from schemas.surrogates import load_photon_field_config
+    if args.command == "stream":
+        from core.surrogates.stream_training import run_stream
+        from schemas.surrogates import load_stream_config
 
-        config = load_photon_field_config(args.config)
-        print(f"Training a neural field on photons of {config.photon_store}", flush=True)
-        report = run_photon_field(config)
-        print({k: report[k] for k in ("steps", "photons_seen", "best")}, flush=True)
+        config = load_stream_config(args.config)
+        print(f"Training a neural field on events of {config.event_store}", flush=True)
+        report = run_stream(config)
+        print({k: report[k] for k in ("steps", "events_seen", "best")}, flush=True)
         return
     if args.command == "binomial":
         from core.surrogates.binomial_stage import run_binomial_config
@@ -81,7 +81,7 @@ def main():
                 args.fidelity,
                 threads=args.threads,
                 data_provider=args.data_provider,
-                photons_from=tuple(args.photons_from.split("/")) if args.photons_from else None,
+                events_from=tuple(args.events_from.split("/")) if args.events_from else None,
                 seed=args.seed,
             ),
             flush=True,

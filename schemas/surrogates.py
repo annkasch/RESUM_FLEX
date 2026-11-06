@@ -6,7 +6,7 @@ covers the single-logit models and BDT without silently reinterpreting settings.
 
 import math
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import Field, field_validator, model_validator
@@ -94,7 +94,7 @@ class FieldDirection(StrictConfigModel):
 
     ``harmonics``: real spherical harmonics up to ``degree`` of the unit vector (the length is
     dropped). ``momentum``: the vector itself in the normalized units of the training data,
-    length included (for photons: the wavelength); ``degree`` is unused.
+    length included (for events: the wavelength); ``degree`` is unused.
     """
 
     phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=3, max_length=3)
@@ -788,20 +788,10 @@ def load_surrogate_config(path: str | Path) -> SurrogateRunConfig:
     return config
 
 
-# --- Neural field trained on ungrouped photons (photon store) -------------------------------
+# --- Neural field trained on ungrouped events (event store) -------------------------------
 
 
-class PhotonLoading(StrictConfigModel):
-    """Reading and shuffling of the photon stream (see the photon source's documentation)."""
-
-    block_photons: int | None = Field(default=None, gt=0)  # None: the source's default
-    buffer_photons: int = Field(default=2**20, gt=0)
-    in_memory: bool = False
-    prefetch: int = Field(default=3, ge=1)
-    threads: int = Field(default=4, ge=1)
-
-
-class PhotonTraining(StrictConfigModel):
+class StreamTraining(StrictConfigModel):
     batch_size: int = Field(default=65536, gt=0)
     n_passes: int = Field(default=1, ge=1)
     learning_rate: float = Field(default=1e-3, gt=0)
@@ -809,15 +799,14 @@ class PhotonTraining(StrictConfigModel):
     seed: int = 0
     device: Literal["cpu", "cuda"] = "cuda"
     precision: Literal["fp32", "bf16"] = "bf16"  # bf16 autocast on CUDA; CPU always fp32
-    compile: bool = False  # torch.compile the photon forward pass
-    # Validation photons used for checkpoint selection (the first ones of the validation
+    compile: bool = False  # torch.compile the event forward pass
+    # Validation events used for checkpoint selection (the first ones of the validation
     # shards, which are already in random order); None = all.
-    validation_photons: int | None = Field(default=20_000_000, gt=0)
-    loading: PhotonLoading = Field(default_factory=PhotonLoading)
+    validation_events: int | None = Field(default=20_000_000, gt=0)
 
 
 class VoxelEvaluationSet(StrictConfigModel):
-    """A prepared voxel partition on which a photon-trained field is scored, under the split
+    """A prepared voxel partition on which a stream-trained field is scored, under the split
     name used in metrics.json and the plots (``{fidelity}_{split}_{checkpoint}.npz``)."""
 
     split: Literal["validation", "test"]
@@ -825,30 +814,33 @@ class VoxelEvaluationSet(StrictConfigModel):
     fidelity: Fidelity
 
 
-class PhotonFieldRunConfig(StrictConfigModel):
-    """A neural field trained on every photon of a photon store, selected on its validation
-    photons by the Bernoulli log loss; evaluated later on voxel data (``predict``).
+class StreamRunConfig(StrictConfigModel):
+    """A neural field trained on every event of an event store, selected on its validation
+    events by the Bernoulli log loss; evaluated later on voxel data (``predict``).
 
     ``dim_phi`` is the event-input width of the voxel data it will be evaluated on (offset
     and momentum: 6), so the checkpoint loads like any field. Position must be three phi
     columns added to a 3-D theta, and a direction is required.
 
-    ``model: {kind: mlp}`` trains the photon MLP: the same network on the normalized raw
+    ``model: {kind: mlp}`` trains the stream MLP: the same network on the normalized raw
     position and momentum, x, y, z, px, py, pz (``network``: a field without encodings).
-    Unlike the voxel MLP it has no separate voxel centre, which homogeneous photons lack.
+    Unlike the voxel MLP it has no separate voxel centre, which homogeneous events lack.
     """
 
     model: FieldModel | MLPModel = Field(discriminator="kind")
-    training: PhotonTraining = Field(default_factory=PhotonTraining)
-    photon_store: Path
-    photon_source: str = "legend_optical_map_ml.photon_loader:PhotonStream"
+    training: StreamTraining = Field(default_factory=StreamTraining)
+    event_store: Path
+    # The application's event source ('module:Class', see core.event_stream) and its own
+    # reading/shuffling options, passed to it unchanged.
+    event_source: str
+    event_source_options: dict[str, Any] = Field(default_factory=dict)
     # Voxel data the field is evaluated on, with the metrics and plots of voxel training.
-    data_provider: str = "legend_optical_map_ml.provider:OpticalDataset"
+    data_provider: str | None = None  # None: NpzBatches
     data_directory: Path | None = None
     data_config: Path | None = None  # prepares data_directory when outdated
     evaluation: list[VoxelEvaluationSet] = Field(default_factory=list)
     # Voxels of the first validation set scored at every validation step (validation history
-    # plot; seeded subset, None = all). Selection itself uses the validation photons.
+    # plot; seeded subset, None = all). Selection itself uses the validation events.
     history_voxels: int | None = Field(default=500, gt=0)
     evaluation_seed: int = 0
     unblind_test: bool = False
@@ -885,23 +877,23 @@ class PhotonFieldRunConfig(StrictConfigModel):
         )
 
     @model_validator(mode="after")
-    def photon_field(self):
+    def stream_field(self):
         model = self.network
         if model.position is None or len(model.position.phi_columns) != 3:
-            raise ValueError("A photon field needs position.phi_columns of length 3")
+            raise ValueError("A stream field needs position.phi_columns of length 3")
         if model.direction is None:
-            raise ValueError("A photon field needs a direction encoding")
+            raise ValueError("A stream field needs a direction encoding")
         used = {*model.position.phi_columns, *model.direction.phi_columns}
         if used != set(range(self.dim_phi)):
             raise ValueError("Position and direction must use all dim_phi event columns")
         return self
 
 
-def load_photon_field_config(path: str | Path) -> PhotonFieldRunConfig:
-    """Photon field config; paths resolve relative to the YAML file."""
+def load_stream_config(path: str | Path) -> StreamRunConfig:
+    """Stream field config; paths resolve relative to the YAML file."""
     path = Path(path).resolve()
-    config = PhotonFieldRunConfig.model_validate(yaml.safe_load(path.read_text()))
-    for name in ("photon_store", "output_directory", "data_directory", "data_config"):
+    config = StreamRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    for name in ("event_store", "output_directory", "data_directory", "data_config"):
         value = getattr(config, name)
         if value is None:
             continue

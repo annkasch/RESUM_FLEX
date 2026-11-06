@@ -598,36 +598,42 @@ normalized to unit length and encoded by real orthonormal spherical harmonics up
 `position`, theta alone is the position. Training, selection, inference, the GP levels and
 the Bayesian last layer work as for the MLP.
 
-### Neural field on photons (`python -m core.surrogates photon CONFIG.yaml`)
+### Neural field on an event stream (`python -m core.surrogates stream CONFIG.yaml`)
 
-A field can train on every photon of a homogeneous campaign instead of on voxels
-(`core/surrogates/photon_training.py`, config `PhotonFieldRunConfig`):
+A field can train on a large set of ungrouped events, e.g. a homogeneous simulation campaign,
+instead of on events grouped by design point (`core/surrogates/stream_training.py`, config
+`StreamRunConfig`):
 
 ```yaml
 model: {kind: field, position: {phi_columns: [0, 1, 2]}, direction: {phi_columns: [3, 4, 5]}, ...}
-training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16, loading: {in_memory: true}}
-photon_store: /pscratch/.../photon_stores/genesis_box_x+300+500
-photon_source: legend_optical_map_ml.photon_loader:PhotonStream   # default
-output_directory: ../outputs/optical_photon_field/RUN/seed0
+training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16}
+event_store: /path/to/store
+event_source: my_package.loader:MyEventStream   # required: the application's reader
+event_source_options: {in_memory: true}         # passed to it unchanged
+output_directory: runs/stream_field/seed0
 ```
 
-The photon source (`core/photon_data.py` protocol) streams raw records [M, 7]. The field fixes
-its own position units from the store's train normalization (`set_photon_normalization`)
-and computes the direction from the momentum. Checkpoints are selected by the Bernoulli
-log loss on the validation photons. With `last_layer`, the selected checkpoints get the
-Laplace posterior from one streaming pass over all training photons. Several GPUs:
-`torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are options.
+The stream format (`core/event_stream.py`): float32 records [M, 7] = 3-D position, 3-D
+direction vector and label bits in the last column. The event source implements the
+`EventSource` protocol there (`n_events`, `n_positive`, `normalization`, `n_batches`,
+`batches`, `load`); its reading and shuffling options are its own and go into
+`event_source_options`. The field fixes its own position units from the store's train
+normalization (`set_stream_normalization`) and computes the direction from the direction
+vector. Checkpoints are selected by the Bernoulli log loss on the validation events. With
+`last_layer`, the selected checkpoints get the Laplace posterior from one streaming pass over
+all training events. Several GPUs: `torchrun` (DistributedDataParallel). bf16 autocast and
+`torch.compile` are options. Run outputs label the stream metrics with fidelity `stream`.
 
-`model: {kind: mlp, architecture: ..., last_layer: ...}` trains the photon MLP instead: the
-same network on the normalized raw x, y, z, px, py, pz (internally a field with
-`encoding: {kind: none}` and `direction: {encoding: momentum}`, which keeps the momentum
-length, i.e. the wavelength; the spherical-harmonic direction of the field drops it). It
-differs from the voxel MLP, which takes the voxel centre and the emission offset as separate
-inputs; homogeneous photons have no voxel centre.
+`model: {kind: mlp, architecture: ..., last_layer: ...}` trains the stream MLP instead: the
+same network on the normalized raw position and direction vector (internally a field with
+`encoding: {kind: none}` and `direction: {encoding: momentum}`, which keeps the vector's
+length, e.g. an energy or wavelength; the spherical-harmonic direction of the field drops
+it). It differs from the design-point MLP, which takes θ and the event offset as separate
+inputs; ungrouped events have no design point.
 
-The checkpoints are ordinary field checkpoints. `predict` and `score_event_model.py`
-evaluate them on voxel data: for a photon-trained field the provider's theta + offset is
-mapped into the field's physical units, so no equal normalization is required.
+The checkpoints are ordinary field checkpoints. `predict` evaluates them on design-point
+data: for a stream-trained field the provider's theta + offset is mapped into the field's
+physical units, so no equal normalization is required.
 
 ### Log-space MFGP
 

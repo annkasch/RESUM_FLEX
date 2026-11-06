@@ -5,8 +5,8 @@ Application-independent toolkit for rare-event surrogates, a modular refactor of
 probabilities from simulated binary outcomes; a Bayesian last layer or a Gaussian process turns
 them into rates with uncertainty per design point. No application code lives here: applications
 bring their data through a dataset provider and keep their own configs, outputs and job scripts.
-Keep the vocabulary generic (design point, event, outcome); application terms such as voxels or
-photons appear only in code names.
+Keep the vocabulary generic (design point, event, outcome); application terms such as voxels
+appear only in code names.
 
 If `docs/PROGRESS.md` exists (local notes), read it first. On a Slurm cluster (e.g. NERSC
 Perlmutter), read `docs/nersc.md` before running anything heavier than a single test file.
@@ -27,7 +27,7 @@ Docs: `README.md` (usage), `docs/configs.md` (every config setting),
     (`mfgp`), or a binomial count GP directly on outcome counts (`binomial`, optional
     event-model covariate). The baseline.
 - Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field on encoded
-  coordinates; trainable on ungrouped events via `photon`), `transformer`, `bdt`, `legacy_cnp`.
+  coordinates; trainable on an event stream via `stream`), `transformer`, `bdt`, `legacy_cnp`.
 - Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based).
 
 ## Environment
@@ -52,7 +52,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]
-.venv/bin/python -m core.surrogates mfgp|binomial|photon CONFIG.yaml
+.venv/bin/python -m core.surrogates mfgp|binomial|stream CONFIG.yaml
 .venv/bin/python scripts/phase1_plot_ground_truth.py   # cheap synthetic sanity check
 ```
 No committed smoke config; smoke runs use a temporary config with a few steps.

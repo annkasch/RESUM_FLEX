@@ -7,21 +7,21 @@ Inputs per event (all optional, from schemas.surrogates.FieldModel):
   Fourier-encoded: [x, sin(2π f_k x), cos(2π f_k x)] for octave-spaced f_k up to f_max;
 * direction = a 3-vector of phi columns, normalized to unit length and encoded by real
   orthonormal spherical harmonics up to the configured degree, or (``encoding: momentum``)
-  the normalized vector itself, which keeps its length (the photon wavelength);
+  the normalized vector itself, which keeps its length (e.g. energy or wavelength);
 * every other phi column unencoded.
 
 With ``encoding: {kind: none}`` and a momentum direction the field is a plain MLP on
-(position, momentum): the photon-trained MLP (``kind: mlp`` in a photon run config).
+(position, momentum): the stream-trained MLP (``kind: mlp`` in a stream run config).
 
 An MLP maps the concatenated encodings to the logit. Without the encodings an MLP on raw
 coordinates learns mainly smooth (low-frequency) functions; the Fourier features let it
 represent structure down to a half-period of 1 / (2 f_max).
 
 Position units. By default the field position is in normalized theta units of the voxel
-data it is trained on. A field trained on ungrouped photons (``forward_photons``, e.g. a
-homogeneous photon store) instead fixes its own units with ``set_photon_normalization``:
+data it is trained on. A field trained on ungrouped events (``forward_events``, e.g. a
+homogeneous event store) instead fixes its own units with ``set_stream_normalization``:
 position = (x - origin) / unit in physical coordinates. ``set_normalization`` then maps voxel
-inputs (theta + offset) into those same units, so the photon-trained field is evaluated on
+inputs (theta + offset) into those same units, so the stream-trained field is evaluated on
 voxel data unchanged.
 """
 
@@ -128,14 +128,14 @@ class BernoulliField(nn.Module):
         self.register_buffer("theta_coefficient", torch.ones(dim_position))
         self.register_buffer("position_scale", torch.ones(n_pos))
         self.register_buffer("position_shift", torch.zeros(n_pos))
-        # Field units from photon data (set_photon_normalization); unused while photon_units = 0.
+        # Field units from stream data (set_stream_normalization); unused while stream_units = 0.
         self.register_buffer("position_origin", torch.zeros(dim_position))
         self.register_buffer("position_unit", torch.ones(dim_position))
-        self.register_buffer("photon_units", torch.zeros(()))
+        self.register_buffer("stream_units", torch.zeros(()))
         self.register_buffer("direction_scale", torch.ones(n_dir))
         self.register_buffer("direction_shift", torch.zeros(n_dir))
         # Momentum encoding: (vector - momentum_origin) / momentum_unit in physical units; the
-        # normalization of the training data (voxel phi or photon store).
+        # normalization of the training data (voxel phi or event store).
         self.register_buffer("momentum_origin", torch.zeros(n_dir))
         self.register_buffer("momentum_unit", torch.ones(n_dir))
         encoding = config.encoding
@@ -165,47 +165,49 @@ class BernoulliField(nn.Module):
         "theta_coefficient",
         "position_origin",
         "position_unit",
-        "photon_units",
+        "stream_units",
         "momentum_origin",
         "momentum_unit",
     )
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
+        if prefix + "photon_units" in state_dict:  # name before 2026-11-06
+            state_dict[prefix + "stream_units"] = state_dict.pop(prefix + "photon_units")
         for name in self._OPTIONAL_BUFFERS:
             state_dict.setdefault(prefix + name, getattr(self, name).detach().clone())
         super()._load_from_state_dict(state_dict, prefix, *args, **kwargs)
 
     @property
-    def uses_photon_units(self) -> bool:
-        return bool(self.photon_units)
+    def uses_stream_units(self) -> bool:
+        return bool(self.stream_units)
 
-    def set_photon_normalization(self, normalization):
-        """Fix the field units from photon data: position = (x - offset[:3]) / scale[:3].
+    def set_stream_normalization(self, normalization):
+        """Fix the field units from stream data: position = (x - offset[:3]) / scale[:3].
 
         ``normalization``: dict with ``offset`` and ``scale`` of x, y, z, px, py, pz (physical
-        units, as from a photon store). Needs a 3-D position (theta + position columns) and
+        units, as from an event store). Needs a 3-D position (theta + position columns) and
         a direction; call before ``set_normalization`` of any voxel data.
         """
         if self.dim_theta != 3 or len(self.position_columns) != 3 or not self.direction_columns:
-            raise ValueError("Photon training needs a 3-D position and a direction encoding")
+            raise ValueError("Stream training needs a 3-D position and a direction encoding")
         if self.extra_columns:
-            raise ValueError("Photon training supports no unencoded extra phi columns")
+            raise ValueError("Stream training supports no unencoded extra phi columns")
         offset = torch.as_tensor(normalization["offset"], dtype=torch.float64)
         scale = torch.as_tensor(normalization["scale"], dtype=torch.float64)
         if offset.shape != (6,) or scale.shape != (6,) or torch.any(scale <= 0):
-            raise ValueError("Photon normalization needs offset and positive scale of 6 columns")
+            raise ValueError("Stream normalization needs offset and positive scale of 6 columns")
         self.position_origin.copy_(offset[:3].float())
         self.position_unit.copy_(scale[:3].float())
         self.momentum_origin.copy_(offset[3:].float())
         self.momentum_unit.copy_(scale[3:].float())
-        self.photon_units.fill_(1.0)
+        self.stream_units.fill_(1.0)
 
-    def forward_photons(self, photons: torch.Tensor) -> torch.Tensor:
-        """Logits [M] of raw photon records [M, >= 6]: x, y, z (m), px, py, pz (any unit)."""
-        if not self.uses_photon_units:
-            raise ValueError("Call set_photon_normalization before forward_photons")
-        position = (photons[:, :3] - self.position_origin) / self.position_unit
-        parts = [self._position_features(position), self._direction_features(photons[:, 3:6])]
+    def forward_events(self, events: torch.Tensor) -> torch.Tensor:
+        """Logits [M] of raw event records [M, >= 6]: x, y, z (m), px, py, pz (any unit)."""
+        if not self.uses_stream_units:
+            raise ValueError("Call set_stream_normalization before forward_events")
+        position = (events[:, :3] - self.position_origin) / self.position_unit
+        parts = [self._position_features(position), self._direction_features(events[:, 3:6])]
         return self.decoder(torch.cat(parts, dim=-1)).squeeze(-1)
 
     def _position_features(self, position):
@@ -220,12 +222,12 @@ class BernoulliField(nn.Module):
     def set_normalization(self, normalization):
         """Read the affine normalization x_n = (x - offset) / scale of theta and phi.
 
-        None (unnormalized data) keeps the identity maps. With photon units the voxel inputs
+        None (unnormalized data) keeps the identity maps. With stream units the voxel inputs
         are mapped into those units; otherwise normalized theta units are the field units.
         """
         if normalization is None or not (self.position_columns or self.direction_columns):
-            if self.uses_photon_units:
-                raise ValueError("A photon-trained field needs the voxel data normalization")
+            if self.uses_stream_units:
+                raise ValueError("A stream-trained field needs the voxel data normalization")
             return
 
         def affine(group, size):
@@ -244,7 +246,7 @@ class BernoulliField(nn.Module):
         if self.position_columns:
             theta_offset, theta_scale = affine("theta", self.dim_theta)
             cols = self.position_columns
-            if self.uses_photon_units:
+            if self.uses_stream_units:
                 origin = self.position_origin.detach().cpu().double()
                 unit = self.position_unit.detach().cpu().double()
             else:
@@ -256,7 +258,7 @@ class BernoulliField(nn.Module):
             cols = self.direction_columns
             self.direction_scale.copy_(phi_scale[cols].float())
             self.direction_shift.copy_(phi_offset[cols].float())
-            if not self.uses_photon_units:  # momentum in the units of the training data
+            if not self.uses_stream_units:  # momentum in the units of the training data
                 self.momentum_origin.copy_(phi_offset[cols].float())
                 self.momentum_unit.copy_(phi_scale[cols].float())
 

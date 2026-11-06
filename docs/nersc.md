@@ -29,7 +29,7 @@ srun --cpu-bind=none .venv/bin/python -u -m core.surrogates train CONFIG.yaml
   `scontrol update`, but usually not raised.
 - Chain stages with `--dependency=afterok:JOBID` (train → predict → mfgp).
 
-## GPU jobs (`photon`, `training.device: cuda`)
+## GPU jobs (`stream`, `training.device: cuda`)
 
 The `.venv` Torch is CPU-only, so GPU jobs use the NERSC PyTorch module with this repository
 on `PYTHONPATH`:
@@ -41,8 +41,8 @@ on `PYTHONPATH`:
 module load pytorch
 export PYTHONPATH="/path/to/RESUM_FLEX${PYTHONPATH:+:$PYTHONPATH}"
 export OMP_NUM_THREADS=4     # data-loader threads per rank
-srun --cpu-bind=none python -u -m core.surrogates photon CONFIG.yaml
-# several GPUs: srun --cpu-bind=none torchrun --standalone --nproc-per-node=4 -m core.surrogates photon CONFIG.yaml
+srun --cpu-bind=none python -u -m core.surrogates stream CONFIG.yaml
+# several GPUs: srun --cpu-bind=none torchrun --standalone --nproc-per-node=4 -m core.surrogates stream CONFIG.yaml
 ```
 
 ## Accounting

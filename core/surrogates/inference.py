@@ -21,10 +21,10 @@ from core.surrogates.evaluation import _predict, evaluation_threads
 FROM_CHECKPOINT = "checkpoint"
 
 
-def photon_units(model) -> bool:
-    """True for a field trained on a photon store (its own physical position units)."""
+def stream_units(model) -> bool:
+    """True for a field trained on an event store (its own physical position units)."""
     module = getattr(model, "module", None)
-    return bool(getattr(module, "uses_photon_units", False))
+    return bool(getattr(module, "uses_stream_units", False))
 
 
 def normalization_matches(saved: dict | None, current: dict | None) -> bool:
@@ -42,12 +42,12 @@ def predict_partition(
     *,
     threads=1,
     data_provider=FROM_CHECKPOINT,
-    photons_from=None,
+    events_from=None,
     seed=0,
 ):
     """Predict every voxel of a prepared partition with a context-free checkpoint.
 
-    ``photons_from`` = (partition, fidelity): each voxel keeps its own theta but takes the
+    ``events_from`` = (partition, fidelity): each voxel keeps its own theta but takes the
     event inputs (phi) of a randomly drawn donor voxel of that partition (seeded). For event
     features defined relative to the voxel (offset, direction), this is a fresh emission
     sample: the prediction then uses nothing from the voxel's own simulation, as for a
@@ -68,8 +68,8 @@ def predict_partition(
     if data_provider == FROM_CHECKPOINT:
         data_provider = model.metadata.get("data_provider")
     provider = load_provider(data_provider, data_directory)
-    if photon_units(model):
-        # A field trained on ungrouped photons works in physical units: map this data's
+    if stream_units(model):
+        # A field trained on ungrouped events works in physical units: map this data's
         # voxel inputs (theta + offset) into them instead of requiring equal normalization.
         model.configure_normalization(provider.normalization())
     elif not normalization_matches(
@@ -81,16 +81,16 @@ def predict_partition(
         )
     output = checkpoint.parent.parent / "inference" / checkpoint.name
     stem = output / f"{partition}_{fidelity}"
-    if photons_from is not None:
-        stem = output / f"{partition}_{fidelity}_photons-{photons_from[0]}_{photons_from[1]}"
+    if events_from is not None:
+        stem = output / f"{partition}_{fidelity}_events-{events_from[0]}_{events_from[1]}"
     if stem.with_suffix(".npz").exists():
         raise FileExistsError(f"{stem}.npz exists; inference results are never overwritten")
     with compute.stage("data_loading"):
         batch, data = provider.load(partition, fidelity, labels=False)
         ids = provider.theta(partition, fidelity)[1]
         donors = None
-        if photons_from is not None:
-            donor = provider.load(*photons_from, labels=False)[0]
+        if events_from is not None:
+            donor = provider.load(*events_from, labels=False)[0]
             batch, donors = _donor_batch(batch, donor, seed)
     uncertainty = {}
     with evaluation_threads(threads), compute.stage("prediction"):
@@ -125,8 +125,8 @@ def predict_partition(
         voxels=int(batch.batch_size),
         events=int(batch.events_per_voxel.sum()),
         normalization_check=(
-            "voxel inputs mapped into the photon-trained field's physical units"
-            if photon_units(model)
+            "voxel inputs mapped into the stream-trained field's physical units"
+            if stream_units(model)
             else "provider normalization equals checkpoint normalization"
         ),
         labels="not used (inputs only)",
@@ -141,10 +141,10 @@ def predict_partition(
         ),
         event_inputs=(
             "own"
-            if photons_from is None
+            if events_from is None
             else dict(
-                donor_partition=photons_from[0],
-                donor_fidelity=photons_from[1],
+                donor_partition=events_from[0],
+                donor_fidelity=events_from[1],
                 seed=seed,
                 donor_index=donors.tolist(),
             )
@@ -160,7 +160,7 @@ def _donor_batch(batch, donor, seed):
     from schemas.data_models import StandardBatch
 
     if donor.phi is None or batch.phi is None:
-        raise ValueError("photons_from needs event inputs (phi) in both partitions")
+        raise ValueError("events_from needs event inputs (phi) in both partitions")
     index = np.random.default_rng(np.random.SeedSequence([seed, 0])).integers(
         donor.batch_size, size=batch.batch_size
     )

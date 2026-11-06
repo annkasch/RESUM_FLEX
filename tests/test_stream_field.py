@@ -1,4 +1,4 @@
-"""Neural field trained on ungrouped photons: units, voxel evaluation, training run, schema."""
+"""Neural field trained on ungrouped events: units, voxel evaluation, training run, schema."""
 
 import json
 
@@ -7,10 +7,10 @@ import pytest
 import torch
 from pydantic import ValidationError
 
-from core.photon_data import photon_labels
+from core.event_stream import event_labels
 from core.surrogates import load_surrogate
-from core.surrogates.photon_training import run_photon_field
-from schemas.surrogates import PhotonFieldRunConfig
+from core.surrogates.stream_training import run_stream
+from schemas.surrogates import StreamRunConfig
 from tests.test_bernoulli_field import (
     NORMALIZATION,
     SPEC,
@@ -20,13 +20,13 @@ from tests.test_bernoulli_field import (
 )
 
 # Store normalization of x, y, z (m) and px, py, pz (MeV), deliberately unlike the voxel one.
-PHOTON_NORMALIZATION = {
+STREAM_NORMALIZATION = {
     "offset": [0.45, -0.21, 1.02, 0.0, 0.0, 0.0],
     "scale": [0.08, 0.04, 0.09, 5.6e-6, 5.6e-6, 5.6e-6],
 }
 
 
-# Photon MLP: raw position and momentum (what ``model: {kind: mlp}`` trains on photons).
+# Stream MLP: raw position and momentum (what ``model: {kind: mlp}`` trains on events).
 MLP_CHANGES = {
     "encoding": {"kind": "none"},
     "direction": {"phi_columns": [3, 4, 5], "encoding": "momentum"},
@@ -34,7 +34,7 @@ MLP_CHANGES = {
 
 
 def _records(position, momentum, label=None):
-    """Raw photon records [M, 7] float32 with label bits in the last column."""
+    """Raw event records [M, 7] float32 with label bits in the last column."""
     out = np.zeros((len(position), 7), dtype=np.float32)
     out[:, :3], out[:, 3:6] = position, momentum
     bits = np.zeros(len(position), dtype=np.int32) if label is None else label.astype(np.int32)
@@ -42,17 +42,20 @@ def _records(position, momentum, label=None):
     return out
 
 
-class FakePhotonSource:
-    """In-memory photon source over ``<store>/<split>.npy`` records (see core.photon_data)."""
+class FakeEventSource:
+    """In-memory event source over ``<store>/<split>.npy`` records (see core.event_stream)."""
 
-    def __init__(self, store, split, *, seed=0, rank=0, world_size=1, **_loading):
+    opened_with: list = []  # the options of every source opened (event_source_options)
+
+    def __init__(self, store, split, *, seed=0, rank=0, world_size=1, **options):
+        FakeEventSource.opened_with.append(options)
         self.records = np.load(f"{store}/{split}.npy")
         self.seed, self.rank, self.world_size = seed, rank, world_size
-        self.n_photons = len(self.records)
-        self.n_detected = int(photon_labels(torch.as_tensor(self.records)).sum())
+        self.n_events = len(self.records)
+        self.n_positive = int(event_labels(torch.as_tensor(self.records)).sum())
 
     def normalization(self):
-        return PHOTON_NORMALIZATION
+        return STREAM_NORMALIZATION
 
     def n_batches(self, batch_size, pass_index, *, drop_last=False):
         n = len(self.records) // self.world_size
@@ -70,9 +73,9 @@ class FakePhotonSource:
 
 
 @pytest.mark.parametrize("changes", [{}, MLP_CHANGES], ids=["field", "mlp"])
-def test_photon_trained_field_gives_the_same_logits_on_voxel_inputs(changes):
+def test_stream_trained_field_gives_the_same_logits_on_voxel_inputs(changes):
     model = _field(**changes)
-    model.module.set_photon_normalization(PHOTON_NORMALIZATION)
+    model.module.set_stream_normalization(STREAM_NORMALIZATION)
     model.configure_normalization(NORMALIZATION)  # voxel data of the evaluation
     rng = np.random.default_rng(1)
     centre, offset, direction = _random_physical(rng)
@@ -81,33 +84,34 @@ def test_photon_trained_field_gives_the_same_logits_on_voxel_inputs(changes):
     with torch.no_grad():
         voxel = model.module(None, batch)  # [B, N]
         position = (centre[:, None, :] + offset).reshape(-1, 3)
-        photons = torch.as_tensor(_records(position, direction.reshape(-1, 3)))
-        direct = model.module.forward_photons(photons).reshape(voxel.shape)
+        events = torch.as_tensor(_records(position, direction.reshape(-1, 3)))
+        direct = model.module.forward_events(events).reshape(voxel.shape)
     torch.testing.assert_close(voxel, direct, rtol=1e-4, atol=1e-4)
 
 
-def test_photon_mlp_sees_the_momentum_length_and_the_field_does_not():
+def test_stream_mlp_sees_the_momentum_length_and_the_field_does_not():
     rng = np.random.default_rng(3)
-    position = rng.normal(PHOTON_NORMALIZATION["offset"][:3], 0.05, (50, 3))
+    position = rng.normal(STREAM_NORMALIZATION["offset"][:3], 0.05, (50, 3))
     momentum = rng.normal(size=(50, 3)) * 9.7e-6
     outputs = {}
     for name, changes in (("field", {}), ("mlp", MLP_CHANGES)):
         model = _field(**changes)
-        model.module.set_photon_normalization(PHOTON_NORMALIZATION)
+        model.module.set_stream_normalization(STREAM_NORMALIZATION)
         with torch.no_grad():
             short, long = (
-                model.module.forward_photons(torch.as_tensor(_records(position, k * momentum)))
+                model.module.forward_events(torch.as_tensor(_records(position, k * momentum)))
                 for k in (1.0, 1.05)
             )
         outputs[name] = float((short - long).abs().max())
     assert outputs["field"] < 1e-5 < outputs["mlp"]
 
 
-def test_photon_mlp_config_is_the_unencoded_field():
-    config = PhotonFieldRunConfig.model_validate(
+def test_stream_mlp_config_is_the_unencoded_field():
+    config = StreamRunConfig.model_validate(
         {
             "model": {"kind": "mlp", "architecture": {"hidden_dims": [32, 32]}},
-            "photon_store": "s",
+            "event_store": "s",
+            "event_source": "m:C",
             "output_directory": "o",
         }
     )
@@ -128,14 +132,14 @@ def test_voxel_trained_field_is_unchanged_and_old_weights_load():
     restored.module.load_state_dict(old)
     with torch.no_grad():
         torch.testing.assert_close(restored.module(None, batch), model.module(None, batch))
-    assert not restored.module.uses_photon_units
-    with pytest.raises(ValueError, match="set_photon_normalization"):
-        model.module.forward_photons(torch.zeros((2, 7)))
+    assert not restored.module.uses_stream_units
+    with pytest.raises(ValueError, match="set_stream_normalization"):
+        model.module.forward_events(torch.zeros((2, 7)))
 
 
-def _photon_split(rng, n):
-    """Photons in a box with p(detected) rising along x (a learnable rate)."""
-    offset = np.asarray(PHOTON_NORMALIZATION["offset"][:3])
+def _stream_split(rng, n):
+    """Events in a box with p(detected) rising along x (a learnable rate)."""
+    offset = np.asarray(STREAM_NORMALIZATION["offset"][:3])
     position = offset + rng.uniform(-0.1, 0.1, (n, 3))
     momentum = rng.normal(size=(n, 3)) * 9.7e-6
     p = 1 / (1 + np.exp(-(-3.0 + 25.0 * (position[:, 0] - offset[0]))))
@@ -143,8 +147,8 @@ def _photon_split(rng, n):
 
 
 def _voxel_data(root, rng):
-    """Voxel evaluation data (NpzBatches layout) with the same rate as the photons."""
-    x0 = PHOTON_NORMALIZATION["offset"][0]
+    """Voxel evaluation data (NpzBatches layout) with the same rate as the events."""
+    x0 = STREAM_NORMALIZATION["offset"][0]
     for partition, fidelity in (("cnp_validation", "lf"), ("gp_validation", "hf")):
         centre, offset, direction = _random_physical(rng, b=6, n=60)
         x = centre[:, None, 0] + offset[..., 0]
@@ -166,9 +170,9 @@ def _run_config(tmp_path, **training):
     store.mkdir()
     rng = np.random.default_rng(0)
     for split, n in (("train", 6000), ("validation", 2000)):
-        np.save(store / f"{split}.npy", _photon_split(rng, n))
+        np.save(store / f"{split}.npy", _stream_split(rng, n))
     _voxel_data(tmp_path / "voxels", rng)
-    return PhotonFieldRunConfig.model_validate(
+    return StreamRunConfig.model_validate(
         {
             "model": {**SPEC, "last_layer": {"prior_precision": "evidence", "draws": 100}},
             "training": {
@@ -177,11 +181,11 @@ def _run_config(tmp_path, **training):
                 "eval_every": 20,
                 "learning_rate": 3e-3,
                 "device": "cpu",
-                "validation_photons": 1500,
+                "validation_events": 1500,
                 **training,
             },
-            "photon_store": str(store),
-            "photon_source": "tests.test_photon_field:FakePhotonSource",
+            "event_store": str(store),
+            "event_source": "tests.test_stream_field:FakeEventSource",
             "output_directory": str(tmp_path / "run"),
             "data_provider": "tests.test_bernoulli_field:FieldNpz",
             "data_directory": str(tmp_path / "voxels"),
@@ -194,90 +198,113 @@ def _run_config(tmp_path, **training):
     )
 
 
-def test_photon_training_learns_selects_and_fits_the_last_layer(tmp_path):
+def test_stream_training_learns_selects_and_fits_the_last_layer(tmp_path):
     config = _run_config(tmp_path)
-    report = run_photon_field(config)
+    report = run_stream(config)
     history = report["history"]
     assert report["steps"] == 3 * -(-6000 // 256)
-    assert history[-1]["photon_log_loss"] < history[0]["photon_log_loss"]
+    assert history[-1]["stream_log_loss"] < history[0]["stream_log_loss"]
     # Every validation step also scores the (subsampled) LF validation voxels.
     assert all(r["voxels"] == 4 and "voxel_rate_mae" in r for r in history)
     run = tmp_path / "run"
     experiment = json.loads((run / "experiment.json").read_text())
-    assert experiment["photon_normalization"] == PHOTON_NORMALIZATION
-    assert experiment["validation_photons"] == 1500
+    assert experiment["stream_normalization"] == STREAM_NORMALIZATION
+    assert experiment["validation_events"] == 1500
     assert (run / "compute.json").is_file()
     best = load_surrogate(run / "checkpoints" / "best")
-    assert best.module.uses_photon_units and best.last_layer is not None
+    assert best.module.uses_stream_units and best.last_layer is not None
     assert best.metadata["last_layer"]["events"] == 6000
-    assert best.metadata["best_photon_log_loss"] == pytest.approx(report["best"]["loss"])
+    assert best.metadata["best_stream_log_loss"] == pytest.approx(report["best"]["loss"])
     assert best.metadata["step"] == report["best"]["step"]
-    # Same metrics and plots as voxel training, plus the photon ones.
+    # Same metrics and plots as voxel training, plus the stream ones.
     rows = json.loads((run / "metrics.json").read_text())
     keys = {(r["checkpoint"], r["split"], r["fidelity"]) for r in rows}
-    assert keys == {
-        (c, "validation", f) for c in ("best", "final") for f in ("photons", "lf", "hf")
-    }
+    assert keys == {(c, "validation", f) for c in ("best", "final") for f in ("stream", "lf", "hf")}
     voxel = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
     for key in ("voxel_rate_mae", "voxel_count_nll", "log_loss_skill", "voxel_predictive"):
         assert voxel[key] is not None
-    photons = next(r for r in rows if r["fidelity"] == "photons" and r["checkpoint"] == "best")
-    assert photons["bernoulli_log_loss"] == pytest.approx(report["best"]["loss"], rel=1e-5)
+    events = next(r for r in rows if r["fidelity"] == "stream" and r["checkpoint"] == "best")
+    assert events["bernoulli_log_loss"] == pytest.approx(report["best"]["loss"], rel=1e-5)
     for name in (
         "validation_history",
         "lf_validation_zscore",
         "lf_calibration",
         "hf_precision_recall_log",
-        "photon_history",
-        "photons_calibration",
-        "photons_precision_recall_log",
+        "stream_history",
+        "stream_calibration",
+        "stream_precision_recall_log",
     ):
         assert (run / f"{name}.png").is_file(), name
     assert (run / "hf_validation_best_predictive_coverage.png").is_file()
     # The selected checkpoint reproduces its recorded validation loss.
     validation = torch.as_tensor(np.load(tmp_path / "store" / "validation.npy")[:1500])
     with torch.no_grad():
-        logits = best.module.forward_photons(validation)
-    loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, photon_labels(validation))
+        logits = best.module.forward_events(validation)
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(logits, event_labels(validation))
     assert float(loss) == pytest.approx(report["best"]["loss"], rel=1e-5)
     with pytest.raises(FileExistsError):
-        run_photon_field(config)
+        run_stream(config)
 
 
-def test_photon_mlp_trains_and_scores_on_voxels(tmp_path):
+def test_stream_mlp_trains_and_scores_on_voxels(tmp_path):
     config = _run_config(tmp_path, n_passes=1)
     config = config.model_copy(
         update={
-            "model": PhotonFieldRunConfig.model_validate(
+            "model": StreamRunConfig.model_validate(
                 {
                     "model": {
                         "kind": "mlp",
                         "architecture": {"hidden_dims": [16, 16]},
                         "last_layer": {"prior_precision": "evidence", "draws": 100},
                     },
-                    "photon_store": "s",
+                    "event_store": "s",
+                    "event_source": "tests.test_stream_field:FakeEventSource",
                     "output_directory": "o",
                 }
             ).model
         }
     )
-    report = run_photon_field(config)
-    assert report["history"][-1]["photon_log_loss"] < report["history"][0]["photon_log_loss"]
+    report = run_stream(config)
+    assert report["history"][-1]["stream_log_loss"] < report["history"][0]["stream_log_loss"]
     best = load_surrogate(tmp_path / "run" / "checkpoints" / "best")
     assert best.module.momentum and best.module.fourier is None
     assert best.last_layer is not None
     experiment = json.loads((tmp_path / "run" / "experiment.json").read_text())
     assert experiment["resolved_config"]["model"]["kind"] == "mlp"
     rows = json.loads((tmp_path / "run" / "metrics.json").read_text())
-    assert {r["fidelity"] for r in rows} == {"photons", "lf", "hf"}
+    assert {r["fidelity"] for r in rows} == {"stream", "lf", "hf"}
 
 
-def test_photon_field_config_needs_position_and_direction():
-    base = {"photon_store": "s", "output_directory": "o"}
-    PhotonFieldRunConfig.model_validate({"model": SPEC, **base})
+def test_stream_field_config_needs_position_and_direction():
+    base = {"event_store": "s", "event_source": "m:C", "output_directory": "o"}
+    StreamRunConfig.model_validate({"model": SPEC, **base})
     with pytest.raises(ValidationError, match="direction"):
-        PhotonFieldRunConfig.model_validate(
+        StreamRunConfig.model_validate(
             {"model": {k: v for k, v in SPEC.items() if k != "direction"}, **base}
         )
     with pytest.raises(ValidationError, match="all dim_phi"):
-        PhotonFieldRunConfig.model_validate({"model": SPEC, "dim_phi": 7, **base})
+        StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 7, **base})
+
+
+def test_event_source_options_reach_the_source_unchanged(tmp_path):
+    config = _run_config(tmp_path, n_passes=1)
+    config.event_source_options = {"in_memory": True, "block": 7}
+    FakeEventSource.opened_with.clear()
+    run_stream(config)
+    assert FakeEventSource.opened_with
+    assert all(o == {"in_memory": True, "block": 7} for o in FakeEventSource.opened_with)
+
+
+def test_event_source_is_required():
+    with pytest.raises(ValidationError, match="event_source"):
+        StreamRunConfig.model_validate({"model": SPEC, "event_store": "s", "output_directory": "o"})
+
+
+def test_field_checkpoint_with_the_old_buffer_name_loads():
+    model = _field()
+    model.module.set_stream_normalization(STREAM_NORMALIZATION)
+    state = model.module.state_dict()
+    state["photon_units"] = state.pop("stream_units")  # name before 2026-11-06
+    fresh = _field()
+    fresh.module.load_state_dict(state)
+    assert fresh.module.uses_stream_units
