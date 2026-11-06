@@ -160,8 +160,8 @@ def test_legacy_full_runner(loss, tmp_path):
             validation_context_events=4,
         )
     )
-    assert (output / "lf_means.png").exists()
-    assert (output / "lf_precision_recall.png").exists()
+    assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
+    assert (output / "lf_precision_recall_log.png").exists()
     with np.load(output / "lf_validation_best.npz") as arrays:
         assert arrays["legacy_scale"].shape == arrays["labels"].shape
         assert np.isin(arrays["labels"], [0, 1]).all()

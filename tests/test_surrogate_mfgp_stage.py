@@ -103,7 +103,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     if not lf_validation:
         assert not (out / "lf_means.png").exists()
         assert (out / "training_history.png").exists()
-        assert (out / "lf_precision_recall.png").exists()
+        assert (out / "lf_precision_recall_log.png").exists()
         manifest = json.loads((out / "experiment.json").read_text())
         assert manifest["selection_split"] is None
         best = json.loads((out / "checkpoints/best/model.json").read_text())

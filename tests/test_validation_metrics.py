@@ -219,6 +219,5 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
     history = json.loads((output / "history.json").read_text())
     assert all("log_loss_skill" in r for r in history if "bernoulli_log_loss" in r)
     assert (output / "lf_calibration.png").exists()
-    assert (output / "lf_means.png").exists()
-    assert (output / "lf_test_means.png").exists()
+    assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
     assert (output / "context_sweep.png").exists()

@@ -184,11 +184,9 @@ def test_photon_training_learns_selects_and_fits_the_last_layer(tmp_path):
     assert photons["bernoulli_log_loss"] == pytest.approx(report["best"]["loss"], rel=1e-5)
     for name in (
         "validation_history",
-        "lf_means",
-        "hf_means",
         "lf_validation_zscore",
         "lf_calibration",
-        "hf_precision_recall",
+        "hf_precision_recall_log",
         "photon_history",
         "photons_calibration",
         "photons_precision_recall_log",

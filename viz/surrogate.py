@@ -44,27 +44,9 @@ def plot_surrogate_run(directory):
         ax.set(xlabel="Training step", ylabel="Training loss")
         save(fig, "training_history")
     for fidelity in ("lf", "hf"):
-        # Per-voxel predicted vs observed fraction; validation keeps its old file name.
-        for split, name in (
-            ("validation", f"{fidelity}_means"),
-            ("test", f"{fidelity}_test_means"),
-        ):
+        for split in ("validation", "test"):
             if not (directory / f"{fidelity}_{split}_best.npz").exists():
                 continue
-            fig, axes = plt.subplots(2, 1, figsize=(12, 7), sharex=True, layout="constrained")
-            for checkpoint in ("best", "final"):
-                with np.load(directory / f"{fidelity}_{split}_{checkpoint}.npz") as arrays:
-                    observed, predicted = arrays["observed"], arrays["predicted"]
-                axes[0].plot(predicted, "o-", label=checkpoint)
-                axes[1].plot(predicted - observed, "o-", label=checkpoint)
-            axes[0].plot(observed, "ko-", label="Observed target fraction")
-            axes[0].set(ylabel="Detection fraction", title=f"{fidelity.upper()} {split}")
-            axes[1].axhline(0, color="black", ls="--")
-            axes[1].set(xlabel=f"{split.capitalize()} voxel index", ylabel="Predicted − observed")
-            for ax in axes:
-                ax.legend()
-                ax.grid(alpha=0.2)
-            save(fig, name)
             # z-scores of the selected checkpoint: binomial counting noise only.
             with np.load(directory / f"{fidelity}_{split}_best.npz") as arrays:
                 if "voxel_z" in arrays:
@@ -77,36 +59,35 @@ def plot_surrogate_run(directory):
                         title=f"{fidelity.upper()} {split}, best checkpoint: "
                         "z = (hits − Σp) / √Σp(1−p)",
                     )
-        for logscale in (False, True):
-            fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
-            for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
-                for split in ("train", "validation") if fidelity == "lf" else ("validation",):
-                    if not (directory / f"{fidelity}_{split}_{checkpoint}.npz").exists():
-                        continue
-                    row = next(
-                        r
-                        for r in records
-                        if r["fidelity"] == fidelity
-                        and r["split"] == split
-                        and r["checkpoint"] == checkpoint
-                    )
-                    with np.load(directory / f"{fidelity}_{split}_{checkpoint}.npz") as arrays:
-                        ax.step(
-                            arrays["recall"],
-                            arrays["precision"],
-                            where="pre",
-                            label=f"{split}, AP={row['average_precision']}",
-                        )
-                    ax.axhline(row["prevalence"], ls="--", alpha=0.4)
-                ax.set(xlabel="Recall", ylabel="Precision", title=checkpoint, xlim=(0, 1))
-                ax.set(
-                    yscale="log" if logscale else "linear",
-                    ylim=(1e-4, 1.05) if logscale else (0, 1.05),
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
+        for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
+            for split in ("train", "validation") if fidelity == "lf" else ("validation",):
+                if not (directory / f"{fidelity}_{split}_{checkpoint}.npz").exists():
+                    continue
+                row = next(
+                    r
+                    for r in records
+                    if r["fidelity"] == fidelity
+                    and r["split"] == split
+                    and r["checkpoint"] == checkpoint
                 )
-                if ax.get_legend_handles_labels()[0]:
-                    ax.legend(fontsize=8)
-                ax.grid(alpha=0.2)
-            save(fig, f"{fidelity}_precision_recall" + ("_log" if logscale else ""))
+                with np.load(directory / f"{fidelity}_{split}_{checkpoint}.npz") as arrays:
+                    ax.step(
+                        arrays["recall"],
+                        arrays["precision"],
+                        where="pre",
+                        label=f"{split}, AP={row['average_precision']}",
+                    )
+                ax.axhline(row["prevalence"], ls="--", alpha=0.4)
+            ax.set(xlabel="Recall", ylabel="Precision", title=checkpoint, xlim=(0, 1))
+            ax.set(
+                yscale="log",
+                ylim=(1e-4, 1.05),
+            )
+            if ax.get_legend_handles_labels()[0]:
+                ax.legend(fontsize=8)
+            ax.grid(alpha=0.2)
+        save(fig, f"{fidelity}_precision_recall_log")
         plot_calibration(directory, fidelity, save)
     if (directory / "context_sweep.json").exists():
         plot_context_sweep(directory, save)
@@ -408,28 +389,27 @@ def plot_photon_run(directory):
     ax.grid(alpha=0.2)
     save(fig, "photon_history")
     plot_calibration(directory, "photons", save)
-    for logscale in (False, True):
-        fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
-        for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
-            path = directory / f"photons_validation_{checkpoint}.npz"
-            if not path.exists():
-                continue
-            row = next(
-                r for r in records if r["fidelity"] == "photons" and r["checkpoint"] == checkpoint
+    fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
+    for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
+        path = directory / f"photons_validation_{checkpoint}.npz"
+        if not path.exists():
+            continue
+        row = next(
+            r for r in records if r["fidelity"] == "photons" and r["checkpoint"] == checkpoint
+        )
+        with np.load(path) as arrays:
+            ax.step(
+                arrays["recall"],
+                arrays["precision"],
+                where="pre",
+                label=f"validation photons, AP={row['average_precision']}",
             )
-            with np.load(path) as arrays:
-                ax.step(
-                    arrays["recall"],
-                    arrays["precision"],
-                    where="pre",
-                    label=f"validation photons, AP={row['average_precision']}",
-                )
-            ax.axhline(row["prevalence"], ls="--", alpha=0.4)
-            ax.set(xlabel="Recall", ylabel="Precision", title=checkpoint, xlim=(0, 1))
-            ax.set(
-                yscale="log" if logscale else "linear",
-                ylim=(1e-4, 1.05) if logscale else (0, 1.05),
-            )
-            ax.legend(fontsize=8)
-            ax.grid(alpha=0.2)
-        save(fig, "photons_precision_recall" + ("_log" if logscale else ""))
+        ax.axhline(row["prevalence"], ls="--", alpha=0.4)
+        ax.set(xlabel="Recall", ylabel="Precision", title=checkpoint, xlim=(0, 1))
+        ax.set(
+            yscale="log",
+            ylim=(1e-4, 1.05),
+        )
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.2)
+    save(fig, "photons_precision_recall_log")

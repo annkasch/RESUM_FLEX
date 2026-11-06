@@ -224,8 +224,8 @@ def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
     rows = json.loads((output / "metrics.json").read_text())
     assert len(rows) == 6
     assert {r["split"] for r in rows} == {"train", "validation"}
-    assert (output / "lf_means.png").exists()
-    assert (output / "lf_precision_recall.png").exists()
+    assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
+    assert (output / "lf_precision_recall_log.png").exists()
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
     assert len(manifest["metadata"]["data"]["train/lf"]["sha256"]) == 64
     with pytest.raises(FileExistsError):
