@@ -17,11 +17,17 @@ Docs: `README.md` (usage), `docs/configs.md` (every config setting),
 - `θ` design parameters (per simulation/voxel), `φ` event parameters (per event), `X` binary
   labels. Modes FULL (θ,φ,X), EVENT_ONLY (φ,X), DESIGN_ONLY (θ,X): missing inputs use learnable
   null embeddings (`core/networks.py`), never separate code paths.
-- Pipeline: event model → mean p per voxel (`predict`) → GP over configurable fidelity levels
-  (`mfgp`). Alternative: binomial count GP directly on hit counts (`binomial`, optional
-  event-model covariate). Optional: IVR/EI active learning (`core/optimizer.py`).
-- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field), `transformer`,
-  `bdt`, `legacy_cnp`. Optional Bayesian last layer (Laplace) for mlp, cnp, field.
+- Approach under test (2026-11): event model + Bayesian last layer (`model.last_layer`, Laplace
+  over the final linear layer) gives per-voxel rates with uncertainty directly, without GP
+  regression. Main candidates: `mlp` and `field` (neural field; on photons via `photon`). Its
+  `voxel_predictive` metrics (count NLL, coverage, CRPS) match the GP metrics, so the two
+  approaches compare directly (see `docs/surrogates.md`, "Bayesian last layer").
+- Established pipeline, kept as baseline: event model → mean p per voxel (`predict`) → GP over
+  configurable fidelity levels (`mfgp`), or a binomial count GP directly on hit counts
+  (`binomial`, optional event-model covariate). Optional: IVR/EI active learning
+  (`core/optimizer.py`, GP-based).
+- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field`, `transformer`, `bdt`,
+  `legacy_cnp`. Bayesian last layer available for mlp, cnp, field.
 
 ## Environment
 - Repo-local `.venv` (Python 3.11) from `pyproject.toml` + `uv.lock`; call `.venv/bin/python`,
