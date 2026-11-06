@@ -73,6 +73,8 @@ exclude = ["tests*"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+# Notebooks: plotting idioms (semicolons, late imports); not linted.
+extend-exclude = ["notebooks"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]

@@ -1,6 +1,8 @@
 """Configuration for numerical feature-token attention."""
 from typing import Literal
+
 from pydantic import Field, model_validator
+
 from schemas.config import StrictConfigModel
 
 

@@ -31,7 +31,6 @@ import torch.nn as nn
 from schemas.config import EncoderConfig
 from schemas.data_models import StandardBatch
 
-
 # ---------------------------------------------------------------------------
 # Inner encoders.
 # ---------------------------------------------------------------------------

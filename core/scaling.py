@@ -51,7 +51,8 @@ class MinMaxScaler:
 
     The forward map is::
 
-        y = target_low + (x - feature_min) * (target_high - target_low) / (feature_max - feature_min)
+        y = target_low
+            + (x - feature_min) * (target_high - target_low) / (feature_max - feature_min)
 
     applied independently along the last axis of the input array.
     Constant features (where ``feature_min == feature_max``) are left
@@ -88,8 +89,7 @@ class MinMaxScaler:
             )
         if not self.target_low < self.target_high:
             raise ValueError(
-                f"target_low ({self.target_low}) must be < target_high "
-                f"({self.target_high})"
+                f"target_low ({self.target_low}) must be < target_high ({self.target_high})"
             )
         object.__setattr__(self, "feature_min", fmin)
         object.__setattr__(self, "feature_max", fmax)
@@ -105,7 +105,7 @@ class MinMaxScaler:
         *,
         target_low: float = -1.0,
         target_high: float = 1.0,
-    ) -> "MinMaxScaler":
+    ) -> MinMaxScaler:
         """Fit the scaler to the per-feature min / max of ``X``.
 
         ``X`` may be 2-D ``[B, D]`` or 3-D ``[B, N, D]``; min/max are
@@ -113,8 +113,7 @@ class MinMaxScaler:
         """
         if X.ndim < 2:
             raise ValueError(
-                f"X must have ≥ 2 dimensions (last axis is the feature "
-                f"axis); got shape {X.shape}"
+                f"X must have ≥ 2 dimensions (last axis is the feature axis); got shape {X.shape}"
             )
         reduce_axes = tuple(range(X.ndim - 1))
         return cls(
@@ -132,7 +131,7 @@ class MinMaxScaler:
         *,
         target_low: float = -1.0,
         target_high: float = 1.0,
-    ) -> "MinMaxScaler":
+    ) -> MinMaxScaler:
         """Build a scaler from known per-feature bounds.
 
         Preferred when the design space is constrained a priori — by a
@@ -163,9 +162,7 @@ class MinMaxScaler:
         safe_span = np.where(nonzero, span, 1.0)
         linear = (
             self.target_low
-            + (X - self.feature_min)
-            * (self.target_high - self.target_low)
-            / safe_span
+            + (X - self.feature_min) * (self.target_high - self.target_low) / safe_span
         )
         return np.where(nonzero, linear, midpoint)
 

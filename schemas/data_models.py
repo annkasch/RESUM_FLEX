@@ -26,7 +26,6 @@ from typing import Annotated, Any
 import numpy as np
 from pydantic import BaseModel, BeforeValidator, ConfigDict, model_validator
 
-
 # Per-feature range ratio above which we emit a scale-imbalance warning.
 # Empirically — see CLAUDE.md / README §Scaling — the CNP encoder goes
 # scale-blind around 10× and is severely degraded by ~100×.
@@ -45,7 +44,7 @@ class ScaleImbalanceWarning(UserWarning):
     """
 
 
-class InputMode(str, Enum):
+class InputMode(str, Enum):  # noqa: UP042 (StrEnum changes str() of members)
     """The three input modalities the pipeline must support."""
 
     FULL = "full"
@@ -81,9 +80,7 @@ class DesignPoint(BaseModel):
     @model_validator(mode="after")
     def _check_shape(self) -> DesignPoint:
         if self.theta.ndim != 1:
-            raise ValueError(
-                f"DesignPoint.theta must be 1D [D_θ], got shape {self.theta.shape}"
-            )
+            raise ValueError(f"DesignPoint.theta must be 1D [D_θ], got shape {self.theta.shape}")
         return self
 
 
@@ -243,9 +240,7 @@ class StandardBatch(BaseModel):
             if self.theta.ndim != 2:
                 raise ValueError(f"theta must be [B, D_θ], got shape {self.theta.shape}")
             if self.theta.shape[0] != B:
-                raise ValueError(
-                    f"theta B={self.theta.shape[0]} does not match labels B={B}"
-                )
+                raise ValueError(f"theta B={self.theta.shape[0]} does not match labels B={B}")
         if self.phi is not None:
             if self.phi.ndim != 3:
                 raise ValueError(f"phi must be [B, N, D_φ], got shape {self.phi.shape}")
@@ -255,9 +250,7 @@ class StandardBatch(BaseModel):
                 )
         if self.beta is not None:
             if self.beta.shape != (B, N):
-                raise ValueError(
-                    f"beta must have shape (B, N) = {(B, N)}, got {self.beta.shape}"
-                )
+                raise ValueError(f"beta must have shape (B, N) = {(B, N)}, got {self.beta.shape}")
             if np.any((self.beta < 0.0) | (self.beta > 1.0)):
                 raise ValueError("beta values must lie in [0, 1].")
 
@@ -348,9 +341,7 @@ class ModelPrediction(BaseModel):
                 f"variance shape {self.variance.shape} != mean shape {self.mean.shape}"
             )
         if self.theta_query.ndim != 2:
-            raise ValueError(
-                f"theta_query must be [B, D_θ], got shape {self.theta_query.shape}"
-            )
+            raise ValueError(f"theta_query must be [B, D_θ], got shape {self.theta_query.shape}")
         if self.theta_query.shape[0] != self.mean.shape[0]:
             raise ValueError(
                 f"theta_query B={self.theta_query.shape[0]} != mean B={self.mean.shape[0]}"

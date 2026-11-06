@@ -33,7 +33,6 @@ from data.pseudo_generator import PseudoDataGenerator
 from schemas.config import CNPConfig, EncoderConfig, TrainingConfig
 from schemas.data_models import InputMode, StandardBatch
 
-
 # ---------------------------------------------------------------------------
 # Training history.
 # ---------------------------------------------------------------------------

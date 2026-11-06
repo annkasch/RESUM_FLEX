@@ -1,5 +1,7 @@
 """Real-event target oversampling with per-voxel sampling corrections."""
+
 import numpy as np
+
 from schemas.data_models import StandardBatch
 
 
@@ -20,16 +22,26 @@ class RealTargetSampler:
     by the same non-context draws, so both modes see identical events per seed.
     """
 
-    def __init__(self, batch, *, seed, batch_size, n_events, n_context_min,
-                 n_context_max, positive_fraction=None, joint=False):
+    def __init__(
+        self,
+        batch,
+        *,
+        seed,
+        batch_size,
+        n_events,
+        n_context_min,
+        n_context_max,
+        positive_fraction=None,
+        joint=False,
+    ):
         if positive_fraction is not None and not 0 < positive_fraction < 1:
-            raise ValueError('positive_fraction must be strictly between zero and one')
+            raise ValueError("positive_fraction must be strictly between zero and one")
         if joint and positive_fraction is not None:
-            raise ValueError('Joint targets require natural sampling')
+            raise ValueError("Joint targets require natural sampling")
         if not 1 <= n_context_min <= n_context_max <= n_events - (1 if joint else 2):
-            raise ValueError('Context range must leave enough target events')
+            raise ValueError("Context range must leave enough target events")
         if batch_size < 1 or n_events > int(batch.events_per_voxel.min()):
-            raise ValueError('Invalid batch or episode size')
+            raise ValueError("Invalid batch or episode size")
         self.batch, self.batch_size, self.n_events = batch, batch_size, n_events
         self.n_context_min, self.n_context_max = n_context_min, n_context_max
         self.positive_fraction = positive_fraction
@@ -63,21 +75,30 @@ class RealTargetSampler:
             else:
                 npos = min(nt - 1, max(1, round(nt * self.positive_fraction)))
                 nneg = nt - npos
-                target = np.concatenate([
-                    trng.choice(positive, npos, replace=npos > len(positive)),
-                    trng.choice(negative, nneg, replace=nneg > len(negative))])
+                target = np.concatenate(
+                    [
+                        trng.choice(positive, npos, replace=npos > len(positive)),
+                        trng.choice(negative, nneg, replace=nneg > len(negative)),
+                    ]
+                )
                 q = npos / nt
-                weight = np.concatenate([np.full(npos, p / q),
-                                         np.full(nneg, (1-p) / (1-q))])
+                weight = np.concatenate([np.full(npos, p / q), np.full(nneg, (1 - p) / (1 - q))])
                 permutation = trng.permutation(nt)
                 target, weight = target[permutation], weight[permutation]
-            contexts.append(context); targets.append(target); weights.append(weight)
-            self.last_provenance.append(dict(trial=int(trial), context=context,
-                target=target, pool_positive_fraction=p))
+            contexts.append(context)
+            targets.append(target)
+            weights.append(weight)
+            self.last_provenance.append(
+                dict(trial=int(trial), context=context, target=target, pool_positive_fraction=p)
+            )
+
         def gather(indices):
             indices = np.asarray(indices)
-            return StandardBatch(mode=b.mode,
+            return StandardBatch(
+                mode=b.mode,
                 theta=None if b.theta is None else b.theta[trials],
                 phi=None if b.phi is None else b.phi[trials[:, None], indices],
-                labels=b.labels[trials[:, None], indices])
+                labels=b.labels[trials[:, None], indices],
+            )
+
         return gather(contexts), gather(targets), np.asarray(weights)

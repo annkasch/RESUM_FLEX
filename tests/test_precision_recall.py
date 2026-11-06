@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+
 from core.precision_recall import precision_recall
 
 

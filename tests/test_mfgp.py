@@ -219,6 +219,7 @@ def test_save_unfitted_raises(tmp_path) -> None:
 
 def test_load_wrong_type_raises(tmp_path) -> None:
     import pickle
+
     from core import load_mfgp
     path = tmp_path / "wrong.pkl"
     with open(path, "wb") as f:

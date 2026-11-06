@@ -1,6 +1,7 @@
 """Event MLP with one raw Bernoulli logit; no context conditioning."""
 import torch
 from torch import nn
+
 from core.networks import MLPEncoder
 
 

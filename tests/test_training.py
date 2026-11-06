@@ -58,9 +58,7 @@ def _train_cfg(steps: int = 50, n_events: int = 32, eval_every: int = 0) -> Trai
 def test_train_cnp_returns_history_with_expected_keys() -> None:
     gen = for_scenario("S5", seed=0)
     cnp = build_cnp(_enc_cfg(), gen.dim_theta, gen.dim_phi)
-    history = train_cnp(
-        cnp, gen, cnp_config=_cnp_cfg(), training_config=_train_cfg(steps=20)
-    )
+    history = train_cnp(cnp, gen, cnp_config=_cnp_cfg(), training_config=_train_cfg(steps=20))
     assert set(history.keys()) >= {"step", "loss", "eval_step", "eval_mae"}
     assert len(history["step"]) == 20
     assert len(history["loss"]) == 20
@@ -96,7 +94,9 @@ def test_progress_callback_invoked() -> None:
     assert seen_steps == list(range(10))
 
 
-@pytest.mark.parametrize("objective,gamma", [("theory-truth", 0.), ("theory-truth", 2.), ("practice-truth", 0.)])
+@pytest.mark.parametrize(
+    "objective,gamma", [("theory-truth", 0.0), ("theory-truth", 2.0), ("practice-truth", 0.0)]
+)
 def test_train_cnp_routes_configured_truth_objective(monkeypatch, objective, gamma) -> None:
     import core.training as training_module
 
@@ -241,6 +241,7 @@ def test_load_checkpoint_predicts_identically(tmp_path: Path) -> None:
 
     eval_batch = gen.generate(n_trials=4, n_events=16)
     from core.surrogate_cnp import split_context_target
+
     ctx, tgt = split_context_target(eval_batch, n_context=8, seed=0)
 
     cnp.eval()

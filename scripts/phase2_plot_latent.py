@@ -49,8 +49,7 @@ def write_shape_table(out_path: Path) -> None:
     """Run an encoder forward for every scenario and tabulate I/O shapes."""
     config = _make_config()
     header = (
-        f"{'scenario':<10}{'mode':<14}{'dim_θ':<8}{'dim_φ':<8}"
-        f"{'z_θ.shape':<18}{'z_φ.shape':<18}"
+        f"{'scenario':<10}{'mode':<14}{'dim_θ':<8}{'dim_φ':<8}{'z_θ.shape':<18}{'z_φ.shape':<18}"
     )
     rows = [header, "-" * len(header)]
     for name in PseudoDataGenerator.SCENARIOS:
@@ -97,7 +96,6 @@ def plot_latent_S1_vs_S5(out_path: Path, *, B: int = 64, seed: int = 0) -> None:
     with torch.no_grad():
         z_s1, _ = encoder(s1)
         z_s5, _ = encoder(s5)
-        null_token = encoder.theta_null.detach().cpu().numpy()
 
     Z = torch.cat([z_s1, z_s5], dim=0).detach().cpu().numpy()
     coords, explained = _pca_2d(Z)
@@ -109,13 +107,20 @@ def plot_latent_S1_vs_S5(out_path: Path, *, B: int = 64, seed: int = 0) -> None:
 
     fig, ax = plt.subplots(figsize=(7.5, 6.5))
     ax.scatter(
-        coords_s1[:, 0], coords_s1[:, 1],
-        s=22, alpha=0.7, c="C0",
+        coords_s1[:, 0],
+        coords_s1[:, 1],
+        s=22,
+        alpha=0.7,
+        c="C0",
         label=f"S1: θ provided, n={B} (spread)",
     )
     ax.scatter(
-        coords_s5[:, 0], coords_s5[:, 1],
-        s=160, alpha=0.45, c="C3", marker="*",
+        coords_s5[:, 0],
+        coords_s5[:, 1],
+        s=160,
+        alpha=0.45,
+        c="C3",
+        marker="*",
         label=f"S5: θ=None → null token, n={B} (collapsed)",
     )
     ax.set_title(

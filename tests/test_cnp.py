@@ -30,9 +30,7 @@ ALL_SCENARIOS = list(PseudoDataGenerator.SCENARIOS.keys())
 
 
 def _config(latent_dim: int = 16) -> EncoderConfig:
-    return EncoderConfig(
-        type="mlp", latent_dim=latent_dim, hidden_dims=[32, 32], dropout=0.0
-    )
+    return EncoderConfig(type="mlp", latent_dim=latent_dim, hidden_dims=[32, 32], dropout=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +111,6 @@ def test_ctx_target_mode_mismatch_raises() -> None:
 
 
 def test_binary_moments_match_original_resum_formula() -> None:
-    B, N = 2, 16
     x = torch.tensor([[1.0, 0.0] * 8, [0.0, 1.0] * 8])
     mu = torch.where(x == 1.0, torch.tensor(8.0), torch.tensor(-8.0))
     raw_sigma = torch.full_like(mu, -2.0)
@@ -138,9 +135,7 @@ def test_practice_truth_matches_original_resum_normal_log_prob() -> None:
     mean, scale = resum_binary_moments(out)
     expected = -torch.distributions.Normal(mean, scale).log_prob(x).mean()
     torch.testing.assert_close(practice_truth_loss(out, x), expected)
-    torch.testing.assert_close(
-        cnp_loss(out, x, objective="practice-truth"), expected
-    )
+    torch.testing.assert_close(cnp_loss(out, x, objective="practice-truth"), expected)
 
 
 def test_theory_truth_is_marginalized_bernoulli_nll() -> None:

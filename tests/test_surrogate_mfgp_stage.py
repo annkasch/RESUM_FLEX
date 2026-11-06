@@ -50,14 +50,14 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             "n_context": 4,
             "output_transform": transform,
             "levels": [
-            {"source": "model_mean", "partition": "train", "fidelity": "lf"},
-            {"source": "model_mean", "partition": "train", "fidelity": "hf"},
-            {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
-        ],
+                {"source": "model_mean", "partition": "train", "fidelity": "lf"},
+                {"source": "model_mean", "partition": "train", "fidelity": "hf"},
+                {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
+            ],
             "evaluation": (
-                [{"partition": "validation", "fidelity": "lf", "level": 0}] if lf_validation
-                else []
-            ) + [{"partition": "validation", "fidelity": "hf"}],
+                [{"partition": "validation", "fidelity": "lf", "level": 0}] if lf_validation else []
+            )
+            + [{"partition": "validation", "fidelity": "hf"}],
         },
         data_directory=root,
         output_directory=tmp_path / "run",
@@ -68,12 +68,14 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     fine_tuned = transform == "log" and lf_validation
     if fine_tuned:
         from schemas.surrogates import LastLayerFineTuning
+
         config.training.fine_tuning = LastLayerFineTuning(n_steps=2, eval_every=1)
     out = run_experiment(config)
     if fine_tuned:
         from core.mfgp_pipeline import model_mean
         from core.surrogates.checkpoints import load_surrogate
         from core.surrogates.datasets import NpzBatches
+
         lf = NpzBatches(root).load("train", "lf")[0]
         hf = NpzBatches(root).load("train", "hf")[0]
         seed = config.mfgp.seed
@@ -91,7 +93,9 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     meta = json.loads((out / "mfgp/model.json").read_text())
     assert meta["mode"] == "combined" and meta["target_level"] == 2
     assert meta["levels"] == [
-        "model_mean train/lf", "model_mean train/hf", "observed_fraction train/hf"
+        "model_mean train/lf",
+        "model_mean train/hf",
+        "observed_fraction train/hf",
     ]
     levels = json.loads((out / "mfgp/levels.json").read_text())
     assert [r["voxels"] for r in levels] == [4, 4, 4]
@@ -108,7 +112,10 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert manifest["selection_split"] is None
         best = json.loads((out / "checkpoints/best/model.json").read_text())
         assert best["metadata"]["step"] == 2
-        with np.load(out / "hf_validation_best.npz") as best_arrays, np.load(out / "hf_validation_final.npz") as final_arrays:
+        with (
+            np.load(out / "hf_validation_best.npz") as best_arrays,
+            np.load(out / "hf_validation_final.npz") as final_arrays,
+        ):
             np.testing.assert_array_equal(best_arrays["predicted"], final_arrays["predicted"])
     for row in scores:
         assert row["mean_bias"] == pytest.approx(row["mean_predicted"] - row["mean_observed"])
@@ -129,8 +136,10 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         np.testing.assert_allclose(data["events_2"], 24)
 
     if transform == "log":
-        with (np.load(out / "mfgp/training_arrays.npz") as raw,
-              np.load(out / "mfgp/fit_arrays.npz") as fit):
+        with (
+            np.load(out / "mfgp/training_arrays.npz") as raw,
+            np.load(out / "mfgp/fit_arrays.npz") as fit,
+        ):
             assert raw["Y_2"][0, 0] == 0
             assert fit["Y_2"][0, 0] > 0
             np.testing.assert_allclose(fit["Y_2"], (raw["Y_2"] * 24 + 0.5) / 25)

@@ -48,7 +48,6 @@ from core.training import cnp_trial_predictive
 from data.pseudo_generator import PseudoDataGenerator
 from schemas.data_models import InputMode, StandardBatch
 
-
 # ---------------------------------------------------------------------------
 # Posterior covariance helper.
 # ---------------------------------------------------------------------------
@@ -364,7 +363,8 @@ class ExpectedImprovementAcquisition:
         positive_sigma = sigma > 1.0e-12
         z = np.where(positive_sigma, improvement / np.where(positive_sigma, sigma, 1.0), 0.0)
         # Standard-normal CDF / PDF without scipy dependency at call site.
-        from math import erf, sqrt as _sqrt
+        from math import erf
+        from math import sqrt as _sqrt
         phi = np.exp(-0.5 * z * z) / _sqrt(2.0 * np.pi)
         cdf = 0.5 * (1.0 + np.vectorize(erf)(z / _sqrt(2.0)))
         ei_pos = improvement * cdf + sigma * phi

@@ -50,7 +50,7 @@ for config settings.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/pytest -q tests/test_schemas.py    # single files: fast
 .venv/bin/pytest -q                          # full suite: heavy, not on shared login nodes
-.venv/bin/ruff check <files>                 # repo-wide check has pre-existing errors
+.venv/bin/ruff check .                       # repo-wide; must stay clean (notebooks excluded)
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]

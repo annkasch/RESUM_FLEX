@@ -1,5 +1,6 @@
 """Configuration for the event-level boosted decision-tree baseline."""
 from pydantic import Field
+
 from schemas.config import StrictConfigModel
 
 

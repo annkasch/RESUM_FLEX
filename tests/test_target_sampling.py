@@ -1,7 +1,8 @@
 import numpy as np
 import pytest
+
 from core.target_sampling import RealTargetSampler
-from schemas.data_models import StandardBatch, InputMode
+from schemas.data_models import InputMode, StandardBatch
 
 
 def batch():

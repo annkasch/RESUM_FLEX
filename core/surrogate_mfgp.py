@@ -21,14 +21,13 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
-import numpy as np
 import GPy
+import numpy as np
 from emukit.multi_fidelity.convert_lists_to_array import convert_xy_lists_to_arrays
 from emukit.multi_fidelity.kernels import LinearMultiFidelityKernel
 from emukit.multi_fidelity.models import GPyLinearMultiFidelityModel
 
 from schemas.data_models import ModelPrediction
-
 
 _KERNEL_FACTORIES = {
     "rbf": lambda d, ard: GPy.kern.RBF(d, ARD=ard),
@@ -92,7 +91,7 @@ class MultiFidelityGP:
         *,
         n_restarts: int = 5,
         verbose: bool = False,
-    ) -> "MultiFidelityGP":
+    ) -> MultiFidelityGP:
         """Fit the GP on per-fidelity ``(X, Y)`` arrays.
 
         ``X_list[i]`` has shape ``(n_i, dim_theta)`` and ``Y_list[i]``

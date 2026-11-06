@@ -1,10 +1,12 @@
 import pytest
 import torch
+
 from core.bernoulli_cnp import BernoulliCNP, evaluate_bernoulli
-from core.surrogate_cnp import split_context_target
 from core.binary_losses import binary_focal_loss_with_logits
+from core.surrogate_cnp import split_context_target
 from data.pseudo_generator import for_scenario
 from schemas.config import EncoderConfig
+
 
 @pytest.mark.parametrize('scenario',[f'S{i}' for i in range(1,9)])
 def test_single_output(scenario):

@@ -1,7 +1,9 @@
 """Mean-only CNP with one Bernoulli logit per target event."""
+
 import numpy as np
 import torch
 from torch.nn import functional as F
+
 from core.networks import MLPEncoder, build_encoder
 from core.surrogate_cnp import ConditionalNeuralProcess, ContextPointEncoder
 
@@ -14,12 +16,12 @@ class BernoulliCNP(ConditionalNeuralProcess):
         super().__init__(
             build_encoder(encoder_config, dim_theta, dim_phi),
             ContextPointEncoder(z, encoder_config.hidden_dims, z, encoder_config.dropout),
-            MLPEncoder(2*z, encoder_config.hidden_dims, 1, encoder_config.dropout),
+            MLPEncoder(2 * z, encoder_config.hidden_dims, 1, encoder_config.dropout),
         )
 
     def forward(self, context, target):
         if context.batch_size != target.batch_size or context.mode is not target.mode:
-            raise ValueError('Context and target must have matching voxel count and mode')
+            raise ValueError("Context and target must have matching voxel count and mode")
         representation = self.aggregate(context)
         _, features = self._encode_per_event(target)
         expanded = representation[:, None, :].expand(-1, target.n_events, -1)
@@ -31,7 +33,7 @@ class BernoulliCNP(ConditionalNeuralProcess):
 
 def evaluate_bernoulli(model, context, target):
     """Exact fixed-target mean diagnostics; no Gaussian uncertainty approximation."""
-    target.require_rectangular('evaluate_bernoulli (use core.surrogates.evaluate_surrogate)')
+    target.require_rectangular("evaluate_bernoulli (use core.surrogates.evaluate_surrogate)")
     was_training = model.training
     try:
         model.eval()
@@ -40,20 +42,33 @@ def evaluate_bernoulli(model, context, target):
             labels = torch.as_tensor(target.labels, dtype=logits.dtype, device=logits.device)
             p = logits.sigmoid()
             if not torch.isfinite(logits).all():
-                raise ValueError('Nonfinite validation logits')
+                raise ValueError("Nonfinite validation logits")
             predicted = p.mean(1).cpu().numpy().astype(float)
             observed = target.labels.mean(1)
-            residual = predicted-observed
-            correlation = (float(np.corrcoef(predicted,observed)[0,1])
-                           if predicted.std()>0 and observed.std()>0 else None)
-            summary = dict(voxels=len(observed), target_events_per_voxel=target.n_events,
-                mean_observed=float(observed.mean()), mean_predicted=float(predicted.mean()),
-                ratio_of_means=float(predicted.mean()/observed.mean()) if observed.mean()>0 else None,
-                pearson_r=correlation, voxel_rate_mae=float(np.abs(residual).mean()),
+            residual = predicted - observed
+            correlation = (
+                float(np.corrcoef(predicted, observed)[0, 1])
+                if predicted.std() > 0 and observed.std() > 0
+                else None
+            )
+            summary = dict(
+                voxels=len(observed),
+                target_events_per_voxel=target.n_events,
+                mean_observed=float(observed.mean()),
+                mean_predicted=float(predicted.mean()),
+                ratio_of_means=float(predicted.mean() / observed.mean())
+                if observed.mean() > 0
+                else None,
+                pearson_r=correlation,
+                voxel_rate_mae=float(np.abs(residual).mean()),
                 voxel_rate_rmse=float(np.sqrt(np.square(residual).mean())),
-                bernoulli_log_loss=float(F.binary_cross_entropy_with_logits(logits.double(),labels.double())),
-                brier_score=float(((p.double()-labels.double())**2).mean()),
-                min_predicted_rate=float(predicted.min()), max_predicted_rate=float(predicted.max()))
+                bernoulli_log_loss=float(
+                    F.binary_cross_entropy_with_logits(logits.double(), labels.double())
+                ),
+                brier_score=float(((p.double() - labels.double()) ** 2).mean()),
+                min_predicted_rate=float(predicted.min()),
+                max_predicted_rate=float(predicted.max()),
+            )
     finally:
         model.train(was_training)
-    return summary, dict(observed=observed,predicted=predicted)
+    return summary, dict(observed=observed, predicted=predicted)

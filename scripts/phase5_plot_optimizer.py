@@ -78,16 +78,19 @@ def _enc_cfg() -> EncoderConfig:
 
 def _cnp_cfg() -> CNPConfig:
     return CNPConfig(
-        n_context_min=32, n_context_max=96,
+        n_context_min=32,
+        n_context_max=96,
     )
 
 
 def _train_cfg(name: str) -> TrainingConfig:
     return TrainingConfig(
         n_steps=CNP_STEPS[name],
-        learning_rate=1.0e-3, batch_size=16,
+        learning_rate=1.0e-3,
+        batch_size=16,
         n_events_per_trial=128,
-        eval_every=0, seed=0,
+        eval_every=0,
+        seed=0,
     )
 
 
@@ -106,7 +109,8 @@ def _train_pipeline(name: str, n_hf_trials: int = N_HF_TRIALS):
 
     # The paper's recipe: LF CNP mean -> HF CNP mean -> HF observed fraction (target).
     data = synthetic_levels(
-        cnp, gen,
+        cnp,
+        gen,
         [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")],
         n_trials={"lf": N_LF_TRIALS, "hf": n_hf_trials},
         n_events={"lf": N_LF_EVENTS, "hf": N_HF_EVENTS},
@@ -131,13 +135,16 @@ def _truth_curve_1d(gen: PseudoDataGenerator, theta_grid: np.ndarray) -> np.ndar
     n_phi = 2000
     phi = rng.uniform(-1.0, 1.0, size=(n_phi, gen.dim_phi))
     p = gen.truth.evaluate(
-        theta=theta_grid[:, None, :], phi=phi[None, :, :],
-    )                                       # [G, n_phi]
+        theta=theta_grid[:, None, :],
+        phi=phi[None, :, :],
+    )  # [G, n_phi]
     return p.mean(axis=1)
 
 
 def _truth_grid_2d(
-    gen: PseudoDataGenerator, ax0: np.ndarray, ax1: np.ndarray,
+    gen: PseudoDataGenerator,
+    ax0: np.ndarray,
+    ax1: np.ndarray,
 ) -> np.ndarray:
     """Analytical t̄(θ_0, θ_1) on a 2-D θ grid (FULL or DESIGN_ONLY).
 
@@ -146,16 +153,17 @@ def _truth_grid_2d(
     :class:`ActiveLearningStep.acquisition`.
     """
     g0, g1 = np.meshgrid(ax0, ax1, indexing="ij")
-    flat = np.stack([g0.ravel(), g1.ravel()], axis=1)         # [G, 2]
+    flat = np.stack([g0.ravel(), g1.ravel()], axis=1)  # [G, 2]
     if gen.dim_phi is None:
         # DESIGN_ONLY — t̄(θ) ≡ t(θ).
         return gen.truth.evaluate(theta=flat).reshape(g0.shape)
     rng = np.random.default_rng(0)
     n_phi = 1500
-    phi = rng.uniform(-1.0, 1.0, size=(n_phi, gen.dim_phi))   # [n_phi, D_φ]
+    phi = rng.uniform(-1.0, 1.0, size=(n_phi, gen.dim_phi))  # [n_phi, D_φ]
     p = gen.truth.evaluate(
-        theta=flat[:, None, :], phi=phi[None, :, :],
-    )                                                         # [G, n_phi]
+        theta=flat[:, None, :],
+        phi=phi[None, :, :],
+    )  # [G, n_phi]
     return p.mean(axis=1).reshape(g0.shape)
 
 
@@ -201,8 +209,12 @@ def _plot_step_1d(
     # about for the active-learning question), analytical t̄(θ) on the
     # RIGHT (context only). Without this, σ ~0.03 vs t̄ ~0.2 makes the
     # σ curve visually flat against the larger truth signal.
-    sigma_line, = ax_s.plot(
-        grid, sigma, color="C2", linewidth=2.2, label="GP σ(θ)",
+    (sigma_line,) = ax_s.plot(
+        grid,
+        sigma,
+        color="C2",
+        linewidth=2.2,
+        label="GP σ(θ)",
     )
     sigma_pad = max(0.05 * sigma.max(), 1e-6)
     ax_s.set_ylim(max(0.0, sigma.min() - sigma_pad), sigma.max() + sigma_pad)
@@ -212,18 +224,29 @@ def _plot_step_1d(
     ax_s.set_title("posterior σ(θ)  +  analytical t̄(θ) for context")
     ax_s.grid(alpha=0.3)
     true_line = ax_s.axvline(
-        theta_true_opt, color="C0", linestyle=":", linewidth=1.6,
+        theta_true_opt,
+        color="C0",
+        linestyle=":",
+        linewidth=1.6,
         label=f"true {target_label}",
     )
     pred_line = ax_s.axvline(
-        theta_pred_opt, color="C3", linestyle="-.", linewidth=1.4,
+        theta_pred_opt,
+        color="C3",
+        linestyle="-.",
+        linewidth=1.4,
         label=f"predicted {target_label}",
     )
 
     ax_t = ax_s.twinx()
-    truth_line, = ax_t.plot(
-        grid, truth, color="C0", linewidth=1.4, alpha=0.55,
-        linestyle="--", label="analytical t̄(θ)",
+    (truth_line,) = ax_t.plot(
+        grid,
+        truth,
+        color="C0",
+        linewidth=1.4,
+        alpha=0.55,
+        linestyle="--",
+        label="analytical t̄(θ)",
     )
     ax_t.set_ylabel("analytical t̄(θ)", color="C0")
     ax_t.tick_params(axis="y", labelcolor="C0")
@@ -233,36 +256,57 @@ def _plot_step_1d(
     # their position stays meaningful even after the y-limits change.
     y_marker = ax_s.get_ylim()[0]
     sampled_dots = ax_s.scatter(
-        prior, np.full_like(prior, y_marker),
-        color="black", s=36, zorder=4, label="sampled θ",
+        prior,
+        np.full_like(prior, y_marker),
+        color="black",
+        s=36,
+        zorder=4,
+        label="sampled θ",
     )
     chosen_star = ax_s.scatter(
-        [chosen], [y_marker],
-        color="red", s=200, marker="*", zorder=5,
-        edgecolor="black", linewidths=0.6, label="θ_next",
+        [chosen],
+        [y_marker],
+        color="red",
+        s=200,
+        marker="*",
+        zorder=5,
+        edgecolor="black",
+        linewidths=0.6,
+        label="θ_next",
     )
     ax_s.legend(
         handles=[sigma_line, truth_line, true_line, pred_line, sampled_dots, chosen_star],
-        loc="best", fontsize=7,
+        loc="best",
+        fontsize=7,
     )
 
-    acq_label = {"ivr": "IVR acquisition", "ei": "EI acquisition"}.get(
-        acquisition, "acquisition"
-    )
+    acq_label = {"ivr": "IVR acquisition", "ei": "EI acquisition"}.get(acquisition, "acquisition")
     ax_a.plot(grid, acq, color="C3", linewidth=2.0, label=acq_label)
-    ax_a.axvline(theta_true_opt, color="C0", linestyle=":", linewidth=1.6,
-                 label=f"true {target_label}")
-    ax_a.axvline(theta_pred_opt, color="C3", linestyle="-.", linewidth=1.4,
-                 label=f"predicted {target_label}")
-    ax_a.scatter(
-        prior, np.zeros_like(prior),
-        color="black", s=36, zorder=4, label="sampled θ",
+    ax_a.axvline(
+        theta_true_opt, color="C0", linestyle=":", linewidth=1.6, label=f"true {target_label}"
+    )
+    ax_a.axvline(
+        theta_pred_opt, color="C3", linestyle="-.", linewidth=1.4, label=f"predicted {target_label}"
     )
     ax_a.scatter(
-        [chosen], [acq.max()],
-        color="red", s=180, marker="*", zorder=5, label="θ_next",
+        prior,
+        np.zeros_like(prior),
+        color="black",
+        s=36,
+        zorder=4,
+        label="sampled θ",
     )
-    ax_a.set_xlabel("θ"); ax_a.set_ylabel("acquisition")
+    ax_a.scatter(
+        [chosen],
+        [acq.max()],
+        color="red",
+        s=180,
+        marker="*",
+        zorder=5,
+        label="θ_next",
+    )
+    ax_a.set_xlabel("θ")
+    ax_a.set_ylabel("acquisition")
     ax_a.set_title(f"{acq_label} surface")
     ax_a.legend(loc="best", fontsize=7)
     ax_a.grid(alpha=0.3)
@@ -305,28 +349,55 @@ def _plot_step_2d(
     fig, axes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
     for ax, arr, panel_title, cmap in [
         (axes[0], sigma, "posterior σ(θ)", "viridis"),
-        (axes[1], acq, {"ivr": "IVR acquisition", "ei": "EI acquisition"}.get(acquisition, "acquisition"), "magma"),
+        (
+            axes[1],
+            acq,
+            {"ivr": "IVR acquisition", "ei": "EI acquisition"}.get(acquisition, "acquisition"),
+            "magma",
+        ),
     ]:
         im = ax.imshow(arr, origin="lower", extent=extent, aspect="auto", cmap=cmap)
         ax.scatter(
-            prior[:, 1], prior[:, 0],
-            color="white", edgecolor="black", s=42, zorder=4, label="sampled θ",
+            prior[:, 1],
+            prior[:, 0],
+            color="white",
+            edgecolor="black",
+            s=42,
+            zorder=4,
+            label="sampled θ",
         )
         ax.scatter(
-            [chosen[1]], [chosen[0]],
-            color="red", marker="*", s=240, edgecolor="black", zorder=5,
+            [chosen[1]],
+            [chosen[0]],
+            color="red",
+            marker="*",
+            s=240,
+            edgecolor="black",
+            zorder=5,
             label="θ_next",
         )
         # True optimum (cyan X) + predicted optimum (red diamond).
         ax.scatter(
-            [theta_true_opt[1]], [theta_true_opt[0]],
-            color="cyan", marker="X", s=180, edgecolor="black", linewidths=1.0,
-            zorder=6, label=f"true {target_label}",
+            [theta_true_opt[1]],
+            [theta_true_opt[0]],
+            color="cyan",
+            marker="X",
+            s=180,
+            edgecolor="black",
+            linewidths=1.0,
+            zorder=6,
+            label=f"true {target_label}",
         )
         ax.scatter(
-            [theta_pred_opt[1]], [theta_pred_opt[0]],
-            color="red", marker="D", s=110, edgecolor="black", linewidths=0.8,
-            zorder=6, label=f"predicted {target_label}",
+            [theta_pred_opt[1]],
+            [theta_pred_opt[0]],
+            color="red",
+            marker="D",
+            s=110,
+            edgecolor="black",
+            linewidths=0.8,
+            zorder=6,
+            label=f"predicted {target_label}",
         )
         ax.set_title(panel_title)
         ax.set_xlabel("θ_1")
@@ -354,10 +425,12 @@ def _plot_iv_trace(
     ax.plot(steps, iv, marker="o", linewidth=2, color="C2")
     ax.fill_between(steps, 0, iv, alpha=0.18, color="C2")
     for s, v in zip(steps, iv, strict=True):
-        ax.annotate(f"{v:.2e}", (s, v), textcoords="offset points",
-                    xytext=(0, 8), ha="center", fontsize=8)
+        ax.annotate(
+            f"{v:.2e}", (s, v), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8
+        )
     ax.set_title(f"{name} — integrated posterior variance ∫σ²(θ)dθ across AL steps")
-    ax.set_xlabel("active-learning step"); ax.set_ylabel("integrated σ²")
+    ax.set_xlabel("active-learning step")
+    ax.set_ylabel("integrated σ²")
     ax.set_xticks(steps)
     ax.set_ylim(0, max(iv) * 1.15)
     ax.grid(alpha=0.3)
@@ -391,17 +464,32 @@ def _plot_trajectory_1d(
 
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.plot(grid, truth, color="C0", linewidth=2.4, label="analytical t̄(θ)")
-    ax.plot(grid, final_mu, color="C3", linewidth=2.0, linestyle="--",
-            label=f"MFGP μ(θ) after {len(al_thetas)} AL steps")
+    ax.plot(
+        grid,
+        final_mu,
+        color="C3",
+        linewidth=2.0,
+        linestyle="--",
+        label=f"MFGP μ(θ) after {len(al_thetas)} AL steps",
+    )
     ax.fill_between(
-        grid, final_mu - final_sigma, final_mu + final_sigma,
-        color="C3", alpha=0.18, label="μ ± σ",
+        grid,
+        final_mu - final_sigma,
+        final_mu + final_sigma,
+        color="C3",
+        alpha=0.18,
+        label="μ ± σ",
     )
 
     y_marker = ax.get_ylim()[0]
-    init_dots = ax.scatter(
-        initial_hf_theta[:, 0], np.full(initial_hf_theta.shape[0], y_marker),
-        color="gray", s=28, zorder=4, alpha=0.8, label="initial HF θ",
+    ax.scatter(
+        initial_hf_theta[:, 0],
+        np.full(initial_hf_theta.shape[0], y_marker),
+        color="gray",
+        s=28,
+        zorder=4,
+        alpha=0.8,
+        label="initial HF θ",
     )
     # Numbered AL stars in the order they were chosen. When several
     # stars sit at (nearly) the same θ — common when IVR keeps probing
@@ -411,26 +499,41 @@ def _plot_trajectory_1d(
     label_stack: dict[float, int] = {}
     for k, theta in enumerate(al_thetas, start=1):
         ax.scatter(
-            [theta[0]], [y_marker],
-            color="red", marker="*", s=240, edgecolor="black",
-            linewidths=0.6, zorder=5,
+            [theta[0]],
+            [y_marker],
+            color="red",
+            marker="*",
+            s=240,
+            edgecolor="black",
+            linewidths=0.6,
+            zorder=5,
         )
         rounded = float(np.round(theta[0] / label_collision_tol) * label_collision_tol)
         stack_idx = label_stack.get(rounded, 0)
         label_stack[rounded] = stack_idx + 1
         ax.annotate(
-            str(k), (theta[0], y_marker),
+            str(k),
+            (theta[0], y_marker),
             textcoords="offset points",
             xytext=(0, 10 + 14 * stack_idx),
-            ha="center", fontsize=9, fontweight="bold", color="red",
+            ha="center",
+            fontsize=9,
+            fontweight="bold",
+            color="red",
         )
 
-    true_line = ax.axvline(
-        theta_true_opt, color="C0", linestyle=":", linewidth=2.0,
+    ax.axvline(
+        theta_true_opt,
+        color="C0",
+        linestyle=":",
+        linewidth=2.0,
         label=f"true {target_label} (θ={theta_true_opt:+.3f})",
     )
-    pred_line = ax.axvline(
-        theta_pred_opt, color="C3", linestyle="-.", linewidth=1.6,
+    ax.axvline(
+        theta_pred_opt,
+        color="C3",
+        linestyle="-.",
+        linewidth=1.6,
         label=f"predicted {target_label} (θ={theta_pred_opt:+.3f})",
     )
 
@@ -439,10 +542,7 @@ def _plot_trajectory_1d(
     ax.set_ylabel("response")
     gap = abs(theta_true_opt - theta_pred_opt)
     mae = float(np.abs(final_mu - truth).mean())
-    ax.set_title(
-        f"{name} — search history (target = {target}, "
-        f"gap={gap:.3f}, MAE={mae:.3e})"
-    )
+    ax.set_title(f"{name} — search history (target = {target}, gap={gap:.3f}, MAE={mae:.3e})")
     ax.legend(loc="best", fontsize=8)
     ax.grid(alpha=0.3)
     fig.tight_layout()
@@ -484,12 +584,21 @@ def _plot_trajectory_2d(
         (axes[1], final_mu, f"MFGP μ(θ) after {len(al_thetas)} AL steps"),
     ]:
         im = ax.imshow(
-            arr, origin="lower", extent=extent, aspect="auto",
-            cmap="viridis", vmin=vmin, vmax=vmax,
+            arr,
+            origin="lower",
+            extent=extent,
+            aspect="auto",
+            cmap="viridis",
+            vmin=vmin,
+            vmax=vmax,
         )
         ax.scatter(
-            initial_hf_theta[:, 1], initial_hf_theta[:, 0],
-            color="lightgray", edgecolor="black", s=34, zorder=3,
+            initial_hf_theta[:, 1],
+            initial_hf_theta[:, 0],
+            color="lightgray",
+            edgecolor="black",
+            s=34,
+            zorder=3,
             label="initial HF θ",
         )
         label_stack_2d: dict[tuple[float, float], int] = {}
@@ -497,9 +606,14 @@ def _plot_trajectory_2d(
         tol_1 = 0.04 * (ax1[-1] - ax1[0])
         for k, theta in enumerate(al_thetas, start=1):
             ax.scatter(
-                [theta[1]], [theta[0]],
-                color="red", marker="*", s=260, edgecolor="black",
-                linewidths=0.6, zorder=4,
+                [theta[1]],
+                [theta[0]],
+                color="red",
+                marker="*",
+                s=260,
+                edgecolor="black",
+                linewidths=0.6,
+                zorder=4,
             )
             key = (
                 float(np.round(theta[0] / tol_0) * tol_0),
@@ -508,20 +622,35 @@ def _plot_trajectory_2d(
             stack_idx = label_stack_2d.get(key, 0)
             label_stack_2d[key] = stack_idx + 1
             ax.annotate(
-                str(k), (theta[1], theta[0]),
+                str(k),
+                (theta[1], theta[0]),
                 textcoords="offset points",
                 xytext=(8, 6 + 12 * stack_idx),
-                color="red", fontsize=10, fontweight="bold",
+                color="red",
+                fontsize=10,
+                fontweight="bold",
             )
         ax.scatter(
-            [theta_true_opt[1]], [theta_true_opt[0]],
-            color="cyan", marker="X", s=220, edgecolor="black",
-            linewidths=1.0, zorder=5, label=f"true {target_label}",
+            [theta_true_opt[1]],
+            [theta_true_opt[0]],
+            color="cyan",
+            marker="X",
+            s=220,
+            edgecolor="black",
+            linewidths=1.0,
+            zorder=5,
+            label=f"true {target_label}",
         )
         ax.scatter(
-            [theta_pred_opt[1]], [theta_pred_opt[0]],
-            color="orange", marker="D", s=130, edgecolor="black",
-            linewidths=0.8, zorder=5, label=f"predicted {target_label}",
+            [theta_pred_opt[1]],
+            [theta_pred_opt[0]],
+            color="orange",
+            marker="D",
+            s=130,
+            edgecolor="black",
+            linewidths=0.8,
+            zorder=5,
+            label=f"predicted {target_label}",
         )
         ax.set_title(panel_title)
         ax.set_xlabel("θ_1")
@@ -529,10 +658,7 @@ def _plot_trajectory_2d(
     axes[0].set_ylabel("θ_0")
     axes[0].legend(loc="upper left", fontsize=7)
 
-    fig.suptitle(
-        f"{name} — search history (target = {target}, "
-        f"gap={gap:.3f}, MAE={mae:.3e})"
-    )
+    fig.suptitle(f"{name} — search history (target = {target}, gap={gap:.3f}, MAE={mae:.3e})")
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
     plt.close(fig)
@@ -556,21 +682,25 @@ def _plot_metrics_trajectory(
     ax_g.set_title(f"{name} — optimization gap |θ_true − θ_pred|")
     ax_g.set_xlabel("active-learning step (0 = initial fit)")
     ax_g.set_ylabel("gap")
-    ax_g.set_xticks(steps); ax_g.grid(alpha=0.3)
+    ax_g.set_xticks(steps)
+    ax_g.grid(alpha=0.3)
     ax_g.set_ylim(0, max(gap_history) * 1.15 + 1e-6)
     for s, v in zip(steps, gap_history, strict=True):
-        ax_g.annotate(f"{v:.3f}", (s, v), textcoords="offset points",
-                      xytext=(0, 8), ha="center", fontsize=8)
+        ax_g.annotate(
+            f"{v:.3f}", (s, v), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8
+        )
 
     ax_m.plot(steps, mae_history, marker="o", color="C2", linewidth=2)
     ax_m.set_title(f"{name} — surrogate MAE(μ, t̄)")
     ax_m.set_xlabel("active-learning step (0 = initial fit)")
     ax_m.set_ylabel("MAE")
-    ax_m.set_xticks(steps); ax_m.grid(alpha=0.3)
+    ax_m.set_xticks(steps)
+    ax_m.grid(alpha=0.3)
     ax_m.set_ylim(0, max(mae_history) * 1.15 + 1e-6)
     for s, v in zip(steps, mae_history, strict=True):
-        ax_m.annotate(f"{v:.3e}", (s, v), textcoords="offset points",
-                      xytext=(0, 8), ha="center", fontsize=8)
+        ax_m.annotate(
+            f"{v:.3e}", (s, v), textcoords="offset points", xytext=(0, 8), ha="center", fontsize=8
+        )
 
     fig.tight_layout()
     fig.savefig(out_path, dpi=130)
@@ -583,7 +713,8 @@ def _plot_metrics_trajectory(
 
 
 def _predict_on_grid_axes(
-    mfgp, grid_axes: list[np.ndarray],
+    mfgp,
+    grid_axes: list[np.ndarray],
 ) -> np.ndarray:
     """Run ``mfgp.predict`` on the candidate grid implied by ``grid_axes``.
 
@@ -604,7 +735,8 @@ def _predict_on_grid_axes(
 
 
 def _eval_grid(
-    bounds: BoxBounds, dim: int,
+    bounds: BoxBounds,
+    dim: int,
 ) -> tuple[np.ndarray, list[np.ndarray]]:
     """Fine grid for trajectory / metrics evaluation."""
     if dim == 1:
@@ -667,20 +799,31 @@ def _run_scenario(
     # Step 0 metrics — initial MFGP fit, no AL yet.
     mu0_flat, _ = mfgp.predict(eval_pts)
     g0, m0, _, _ = _gap_and_mae(
-        truth_flat, mu0_flat, eval_pts, target, gen.dim_theta,
+        truth_flat,
+        mu0_flat,
+        eval_pts,
+        target,
+        gen.dim_theta,
     )
     gap_history = [g0]
     mae_history = [m0]
 
     loop = ActiveLearningLoop(
-        mfgp=mfgp, generator=gen, cnp=cnp, bounds=bounds,
-        X_list=data[0], Y_list=data[1],
+        mfgp=mfgp,
+        generator=gen,
+        cnp=cnp,
+        bounds=bounds,
+        X_list=data[0],
+        Y_list=data[1],
         # New HF simulations add to both HF levels.
         observed_levels={1: "model_mean", 2: "observed_fraction"},
-        n_hf_events=N_HF_EVENTS, n_mc_samples=N_MC_SAMPLES,
+        n_hf_events=N_HF_EVENTS,
+        n_mc_samples=N_MC_SAMPLES,
         n_candidates_per_axis=N_CAND_PER_AXIS,
-        seed=0, refit_n_restarts=REFIT_N_RESTARTS,
-        acquisition=acquisition, target=target,
+        seed=0,
+        refit_n_restarts=REFIT_N_RESTARTS,
+        acquisition=acquisition,
+        target=target,
     )
 
     # Run AL one step at a time so we can grab post-step μ snapshots
@@ -696,13 +839,18 @@ def _run_scenario(
         al_thetas.append(rec.theta_next.copy())
         mu_eval, _ = loop.mfgp.predict(eval_pts)
         gap_k, mae_k, _, _ = _gap_and_mae(
-            truth_flat, mu_eval, eval_pts, target, gen.dim_theta,
+            truth_flat,
+            mu_eval,
+            eval_pts,
+            target,
+            gen.dim_theta,
         )
         gap_history.append(gap_k)
         mae_history.append(mae_k)
 
     for k, (rec, mu_after) in enumerate(
-        zip(records, mu_afters, strict=True), start=1,
+        zip(records, mu_afters, strict=True),
+        start=1,
     ):
         out = out_dir / f"optimizer_{name}_step{k}.png"
         title = (
@@ -712,13 +860,23 @@ def _run_scenario(
         )
         if gen.dim_theta == 1:
             _plot_step_1d(
-                gen, rec, out, title,
-                target=target, mu_after=mu_after, acquisition=acquisition,
+                gen,
+                rec,
+                out,
+                title,
+                target=target,
+                mu_after=mu_after,
+                acquisition=acquisition,
             )
         else:
             _plot_step_2d(
-                gen, rec, out, title,
-                target=target, mu_after=mu_after, acquisition=acquisition,
+                gen,
+                rec,
+                out,
+                title,
+                target=target,
+                mu_after=mu_after,
+                acquisition=acquisition,
             )
         print(f"  wrote {out}")
 
@@ -730,22 +888,31 @@ def _run_scenario(
     traj_path = out_dir / f"optimizer_{name}_trajectory.png"
     if gen.dim_theta == 1:
         _plot_trajectory_1d(
-            name, gen, bounds, initial_hf_theta, al_thetas_arr,
-            final_mu_flat, final_sigma_flat,
-            grid=eval_axes[0], truth=truth_flat,
-            target=target, out_path=traj_path,
+            name,
+            gen,
+            bounds,
+            initial_hf_theta,
+            al_thetas_arr,
+            final_mu_flat,
+            final_sigma_flat,
+            grid=eval_axes[0],
+            truth=truth_flat,
+            target=target,
+            out_path=traj_path,
         )
     else:
-        truth_grid_2d_local = truth_flat.reshape(
-            len(eval_axes[0]), len(eval_axes[1])
-        )
-        final_mu_grid_2d = final_mu_flat.reshape(
-            len(eval_axes[0]), len(eval_axes[1])
-        )
+        truth_grid_2d_local = truth_flat.reshape(len(eval_axes[0]), len(eval_axes[1]))
+        final_mu_grid_2d = final_mu_flat.reshape(len(eval_axes[0]), len(eval_axes[1]))
         _plot_trajectory_2d(
-            name, gen, initial_hf_theta, al_thetas_arr,
-            final_mu_grid_2d, truth_grid_2d_local,
-            grid_axes=eval_axes, target=target, out_path=traj_path,
+            name,
+            gen,
+            initial_hf_theta,
+            al_thetas_arr,
+            final_mu_grid_2d,
+            truth_grid_2d_local,
+            grid_axes=eval_axes,
+            target=target,
+            out_path=traj_path,
         )
     print(f"  wrote {traj_path}")
 
@@ -780,13 +947,17 @@ def _run_scenario(
 
 def main(argv: list[str] | None = None) -> None:
     import argparse
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--scenarios", default=",".join(OPTIMIZER_SCENARIOS),
+        "--scenarios",
+        default=",".join(OPTIMIZER_SCENARIOS),
         help="Comma-separated scenario names to run (default: all six).",
     )
     parser.add_argument(
-        "--target", choices=["max", "min"], default="max",
+        "--target",
+        choices=["max", "min"],
+        default="max",
         help=(
             "Optimization target. With ``--acquisition ivr`` (default), "
             "this only controls which point is annotated as the true / "
@@ -796,7 +967,9 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
-        "--acquisition", choices=["ivr", "ei"], default="ivr",
+        "--acquisition",
+        choices=["ivr", "ei"],
+        default="ivr",
         help=(
             "Active-learning acquisition. 'ivr' (default) is pure "
             "exploration — minimizes integrated posterior variance. "
@@ -805,7 +978,9 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
-        "--n-initial-hf", type=int, default=N_HF_TRIALS,
+        "--n-initial-hf",
+        type=int,
+        default=N_HF_TRIALS,
         help=(
             f"Number of HF trials in the initial dataset before AL "
             f"begins (default: {N_HF_TRIALS}). Lower values = more "
@@ -814,7 +989,8 @@ def main(argv: list[str] | None = None) -> None:
         ),
     )
     parser.add_argument(
-        "--out-dir", default=str(OUT_DIR),
+        "--out-dir",
+        default=str(OUT_DIR),
         help=(
             f"Directory where plots are written. Default: "
             f"{OUT_DIR}. Use a separate subfolder when running "
@@ -826,9 +1002,7 @@ def main(argv: list[str] | None = None) -> None:
     requested = [s.strip().upper() for s in args.scenarios.split(",") if s.strip()]
     unknown = [s for s in requested if s not in OPTIMIZER_SCENARIOS]
     if unknown:
-        raise SystemExit(
-            f"unknown scenario(s) {unknown}; valid: {OPTIMIZER_SCENARIOS}"
-        )
+        raise SystemExit(f"unknown scenario(s) {unknown}; valid: {OPTIMIZER_SCENARIOS}")
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     summary: dict[str, dict] = {}
@@ -852,16 +1026,20 @@ def main(argv: list[str] | None = None) -> None:
 
     print(f"\n  Optimization summary (target = {args.target}):")
     print(
-        f"    scenario   θ_true_opt              θ_pred_opt              "
-        f"gap_init  gap_final  MAE_init     MAE_final"
+        "    scenario   θ_true_opt              θ_pred_opt              "
+        "gap_init  gap_final  MAE_init     MAE_final"
     )
     for name, s in summary.items():
         true_str = np.array2string(
-            s["theta_true_opt"], precision=3, separator=",",
+            s["theta_true_opt"],
+            precision=3,
+            separator=",",
             suppress_small=True,
         )
         pred_str = np.array2string(
-            s["theta_pred_opt"], precision=3, separator=",",
+            s["theta_pred_opt"],
+            precision=3,
+            separator=",",
             suppress_small=True,
         )
         print(
