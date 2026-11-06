@@ -82,4 +82,5 @@ See [Datasets and providers](docs/surrogates.md#datasets-and-providers) and
 - [docs/configs.md](docs/configs.md): every config setting with its default
 - [docs/surrogates.md](docs/surrogates.md): validation metrics, GP levels, outputs, background
 - [docs/reference.md](docs/reference.md): install details, data contracts, Python API
+- [docs/nersc.md](docs/nersc.md): running on NERSC Perlmutter / Slurm
 - `scripts/phase*.py`: end-to-end demonstrations on synthetic data
