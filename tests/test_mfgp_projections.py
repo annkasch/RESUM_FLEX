@@ -109,8 +109,7 @@ def test_saved_projection_cache_tracks_settings_and_model(tmp_path, monkeypatch)
 
     def plot(directory):
         for name in ("curves", "curves_observed", "planes", "planes_observed"):
-            for ext in ("png", "pdf"):
-                (directory / f"{name}.{ext}").write_bytes(b"plot")
+            (directory / f"{name}.png").write_bytes(b"plot")
 
     monkeypatch.setattr("core.surrogate_mfgp.load_mfgp", load)
     monkeypatch.setattr("viz.mfgp_projections.plot_mfgp_projections", plot)

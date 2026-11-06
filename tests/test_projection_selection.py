@@ -82,7 +82,5 @@ def test_renderer_only_saves_selected_figures(tmp_path, monkeypatch):
     plot_spatial_projections(tmp_path)
     assert set(saved) == {
         "curves_observed.png",
-        "curves_observed.pdf",
         "planes_observed.png",
-        "planes_observed.pdf",
     }

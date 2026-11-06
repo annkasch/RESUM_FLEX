@@ -111,8 +111,7 @@ def plot_spatial_projections(directory):
         a = dict(data)
 
     def save(fig, name):
-        for ext in ("png", "pdf"):
-            fig.savefig(directory / f"{name}.{ext}", dpi=160)
+        fig.savefig(directory / f"{name}.png", dpi=160)
         plt.close(fig)
 
     counts = (

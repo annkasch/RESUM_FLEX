@@ -442,7 +442,7 @@ Alongside the CNP artifacts, `mfgp/` contains:
 - `model.json`: fitted parameters, input hashes, configuration, and conventions.
 - `training_arrays.npz`: exact three-level GP training inputs and outputs.
 - `metrics.json` and `{lf,hf}_validation.npz`: predictions on real target fractions.
-- `{lf,hf}_means.{png,pdf}` and `{lf,hf}_coverage.{png,pdf}`.
+- `{lf,hf}_means.png` and `{lf,hf}_coverage.png`.
 - `development_map.npz`: highest-fidelity predictions at available development
   coordinates, with normalized and physical coordinates; a spatial plot when 3D.
 - `normalization.json`: original preprocessing needed for new spatial queries.
@@ -695,11 +695,11 @@ covariance scales quadratically in valid grid points; grid_steps is capped at 16
 
 Artifacts under `RUN_DIR/mfgp/projections/`:
 
-- `curves.png/pdf`: three coordinate curves with all three bands.
-- `curves_observed.png/pdf`: the same curves with individual HF training and
+- `curves.png`: three coordinate curves with all three bands.
+- `curves_observed.png`: the same curves with individual HF training and
   validation target fractions overlaid and identified separately.
-- `planes.png/pdf`: xy/xz/yz means and three interval-width maps.
-- `planes_observed.png/pdf`: mean maps with observed target fractions as colored
+- `planes.png`: xy/xz/yz means and three interval-width maps.
+- `planes_observed.png`: mean maps with observed target fractions as colored
   markers, on the same color scale; training circles and validation diamonds.
 - `projections.npz`: physical grids, domain mask, projected means/interval bounds,
   and unchanged raw target fractions/positions from the saved run.

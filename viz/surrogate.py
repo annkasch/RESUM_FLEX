@@ -16,8 +16,7 @@ def plot_surrogate_run(directory):
     history = json.loads((directory / "history.json").read_text())
 
     def save(fig, name):
-        for suffix in ("png", "pdf"):
-            fig.savefig(directory / f"{name}.{suffix}", dpi=150)
+        fig.savefig(directory / f"{name}.png", dpi=150)
         plt.close(fig)
 
     has_validation = any("voxel_rate_mae" in r for r in history)
@@ -194,8 +193,7 @@ def plot_fine_tuning_comparison(directory):
             for ax in axes:
                 ax.grid(alpha=0.2)
                 ax.legend()
-            for suffix in ("png", "pdf"):
-                fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_means.{suffix}", dpi=150)
+            fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_means.png", dpi=150)
             plt.close(fig)
             fig, ax = plt.subplots(figsize=(7, 5), layout="constrained")
             for arrays, checkpoint, label in (
@@ -227,8 +225,7 @@ def plot_fine_tuning_comparison(directory):
             )
             ax.legend()
             ax.grid(alpha=0.2)
-            for suffix in ("png", "pdf"):
-                fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_pr.{suffix}", dpi=150)
+            fig.savefig(directory / f"{fidelity}_{split}_fine_tuning_pr.png", dpi=150)
             plt.close(fig)
 
 
@@ -273,8 +270,7 @@ def plot_mfgp_training_inputs(directory):
             ax.legend(fontsize=8)
     axes[0, 0].set_ylabel("Detection fraction")
     fig.suptitle("GP training levels, lowest to highest fidelity")
-    for suffix in ("png", "pdf"):
-        fig.savefig(directory / f"training_inputs.{suffix}", dpi=150)
+    fig.savefig(directory / "training_inputs.png", dpi=150)
     plt.close(fig)
     return directory / "training_inputs.png"
 
@@ -326,31 +322,29 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         axes[1].plot(x, mean - obs, "o-", label="MFGP residual")
         axes[1].axhline(0, color="black", ls="--")
         axes[1].set(xlabel="Evaluation voxel index", ylabel="Predicted − observed")
-        for suffix in ("png", "pdf"):
-            fig.savefig(directory / f"{name}_means.{suffix}", dpi=150)
+        fig.savefig(directory / f"{name}_means.png", dpi=150)
         plt.close(fig)
         from viz.dispatch import plot_coverage_test
 
         low = min(float(obs.min()), float(intervals[3][0].min()))
         high = max(float(obs.max()), float(intervals[3][1].max()))
         padding = max((high - low) * 0.05, 1e-6)
-        for suffix in ("png", "pdf"):
-            plot_coverage_test(
-                obs,
-                mean,
-                sigma,
-                out_path=directory / f"{name}_coverage.{suffix}",
-                title=f"{label}: MFGP observation-predictive coverage",
-                xlabel="Evaluation voxel index",
-                predicted_label="MFGP mean",
-                raw_label="Observed fraction",
-                ylim=tuple(coverage_ylim)
-                if coverage_ylim
-                else (max(0, low - padding) if is_log else low - padding, high + padding),
-                intervals=intervals,
-                interval_label="σ in log space" if is_log else "σ",
-                show_predicted=False,  # the bands carry the mean; the line hid the points
-            )
+        plot_coverage_test(
+            obs,
+            mean,
+            sigma,
+            out_path=directory / f"{name}_coverage.png",
+            title=f"{label}: MFGP observation-predictive coverage",
+            xlabel="Evaluation voxel index",
+            predicted_label="MFGP mean",
+            raw_label="Observed fraction",
+            ylim=tuple(coverage_ylim)
+            if coverage_ylim
+            else (max(0, low - padding) if is_log else low - padding, high + padding),
+            intervals=intervals,
+            interval_label="σ in log space" if is_log else "σ",
+            show_predicted=False,  # the bands carry the mean; the line hid the points
+        )
     with np.load(directory / "development_map.npz") as a:
         theta, mean = a["theta_physical"], a["mean"]
     if theta.shape[1] == 3:
@@ -359,8 +353,7 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         points = ax.scatter(*theta.T, c=mean, cmap="viridis")
         ax.set(xlabel="x", ylabel="y", zlabel="z", title="Target-level map at development voxels")
         fig.colorbar(points, ax=ax, label="Predicted detection fraction", shrink=0.7)
-        for suffix in ("png", "pdf"):
-            fig.savefig(directory / f"development_map.{suffix}", dpi=150)
+        fig.savefig(directory / "development_map.png", dpi=150)
         plt.close(fig)
 
 
@@ -373,8 +366,7 @@ def plot_photon_run(directory):
     history = json.loads((directory / "history.json").read_text())
 
     def save(fig, name):
-        for suffix in ("png", "pdf"):
-            fig.savefig(directory / f"{name}.{suffix}", dpi=150)
+        fig.savefig(directory / f"{name}.png", dpi=150)
         plt.close(fig)
 
     reference = next((r["reference_log_loss"] for r in records if r["fidelity"] == "photons"), None)

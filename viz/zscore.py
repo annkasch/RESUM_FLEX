@@ -38,8 +38,8 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
     """Histogram of z against N(0, 1), and z against the predicted rate with ±1/2/3σ bands.
 
     z, predicted: [B] per voxel. The z axis is fixed to ±limit; values beyond are drawn at
-    the edge and counted in the legend (summary statistics use the unclipped z). Writes PNG
-    and PDF next to ``out_path`` (no suffix). Returns the summary (mean, std, fraction
+    the edge and counted in the legend (summary statistics use the unclipped z). Writes a PNG
+    next to ``out_path`` (no suffix). Returns the summary (mean, std, fraction
     |z| > 2, number beyond ±limit).
     """
     z, predicted = np.asarray(z, dtype=float), np.asarray(predicted, dtype=float)
@@ -93,7 +93,6 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
     ax_rate.grid(alpha=0.2)
     fig.suptitle(title)
     out_path = Path(out_path)
-    for suffix in ("png", "pdf"):
-        fig.savefig(out_path.with_suffix(f".{suffix}"), dpi=150)
+    fig.savefig(out_path.with_suffix(".png"), dpi=150)
     plt.close(fig)
     return summary

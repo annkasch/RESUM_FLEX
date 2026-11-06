@@ -133,7 +133,7 @@ def ensure_mfgp_projections(directory, settings):
         not valid
         or stale_labels
         or missing_counts
-        or any(not (output / f"{name}.{ext}").exists() for name in names for ext in ("png", "pdf"))
+        or any(not (output / f"{name}.png").exists() for name in names)
     ):
         plot_mfgp_projections(output)
     return output
