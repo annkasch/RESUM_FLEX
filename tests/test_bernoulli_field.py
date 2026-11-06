@@ -158,6 +158,7 @@ class FieldNpz(NpzBatches):
         return NORMALIZATION
 
 
+@pytest.mark.slow
 def test_field_runs_through_the_pipeline(tmp_path):
     from core.surrogates.experiment import run_experiment
     from core.surrogates.inference import predict_partition

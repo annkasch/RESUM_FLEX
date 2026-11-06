@@ -5,6 +5,7 @@ import pytest
 pytest.importorskip("GPy")
 
 
+@pytest.mark.slow
 @pytest.mark.smoke
 def test_every_cli_stage_runs_on_synthetic_data(tmp_path):
     from scripts.smoke import run

@@ -54,7 +54,10 @@ Every Phase 5 run also emits an `optimizer_{S}_trajectory.png` and an
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest -q                              # full suite, a few minutes on CPU
-.venv/bin/python -m pytest -q --ignore=tests/test_mfgp_recovery.py   # without the slow GP gate
-.venv/bin/python -m pytest tests/test_mfgp_recovery.py -v  # MFGP coverage gate, ~4 min
+.venv/bin/python -m pytest -q                    # full suite, ~12 min on one CPU core
+.venv/bin/python -m pytest -q -m 'not slow'      # quick check without the 12 slowest tests
+.venv/bin/python -m pytest -q -m slow            # only the slow ones (MFGP gate, smoke, ...)
+.venv/bin/python -m pytest tests/test_mfgp_recovery.py -v  # MFGP coverage gate, ~3 min
 ```
+
+`slow` marks tests of 15 s or more (`pyproject.toml`); tag new ones that cross that line.

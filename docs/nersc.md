@@ -5,8 +5,14 @@ their own `sbatch` files. This page lists what such scripts and interactive work
 
 ## Login nodes
 
-Never train, fit GPs or run the full test suite on login nodes. Fine there: single test files,
-`--help`, config validation, the synthetic `scripts/phase1_plot_ground_truth.py`.
+Login nodes are shared. Allowed there: single-threaded work (`OMP_NUM_THREADS=1
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`) of up to about 15 min, one such process at a time,
+a few GB of memory. That covers test files, the full suite (~12 min), `pytest -m 'not slow'`
+(~5 min), `scripts/smoke.py`, `ruff` and config validation.
+
+Everything else goes to a compute node: longer runs, multi-threaded work, training on real data,
+large GP fits. Interactive: `salloc --account=<project> --constraint=cpu --qos=interactive
+--time=01:00:00 --nodes=1`; batch: a `debug` job (below).
 
 ## CPU jobs (`train`, `predict`, `mfgp`, `binomial`)
 

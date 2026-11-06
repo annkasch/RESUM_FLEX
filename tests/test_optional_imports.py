@@ -5,9 +5,12 @@ from __future__ import annotations
 import subprocess
 import sys
 
+import pytest
 
+
+@pytest.mark.slow
 def test_core_non_gp_exports_work_when_gpy_is_blocked() -> None:
-    code = r'''
+    code = r"""
 import builtins
 real_import = builtins.__import__
 def blocked(name, *args, **kwargs):
@@ -17,12 +20,13 @@ def blocked(name, *args, **kwargs):
 builtins.__import__ = blocked
 from core import MinMaxScaler, build_cnp
 assert MinMaxScaler is not None and build_cnp is not None
-'''
+"""
     subprocess.run([sys.executable, "-c", code], check=True)
 
 
+@pytest.mark.slow
 def test_gp_export_has_actionable_error_when_gpy_is_blocked() -> None:
-    code = r'''
+    code = r"""
 import builtins
 real_import = builtins.__import__
 def blocked(name, *args, **kwargs):
@@ -36,5 +40,5 @@ except ImportError as exc:
     assert ".[gp]" in str(exc)
 else:
     raise AssertionError("GP export unexpectedly imported")
-'''
+"""
     subprocess.run([sys.executable, "-c", code], check=True)

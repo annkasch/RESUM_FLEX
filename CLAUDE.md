@@ -8,8 +8,9 @@ bring their data through a dataset provider and keep their own configs, outputs 
 Keep the vocabulary generic (design point, event, outcome); application terms such as voxels
 appear only in code names.
 
-If `.claude/status.md` exists (local, open items only), read it first. On a Slurm cluster (e.g. NERSC
-Perlmutter), read `docs/nersc.md` before running anything heavier than a single test file.
+If `.claude/status.md` exists (local, open items only), read it first. On a Slurm cluster (e.g.
+NERSC Perlmutter), read `docs/nersc.md` first: login nodes take one single-threaded process of up
+to ~15 min.
 
 Docs: `README.md` (usage); `docs/index.md` lists one file per topic and when to read it.
 Open only the file the task needs: `docs/design.md` before changing code (data flow, which
@@ -49,7 +50,8 @@ for config settings.
 ```bash
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/pytest -q tests/test_schemas.py    # single files: fast
-.venv/bin/pytest -q                          # full suite: heavy, not on shared login nodes
+.venv/bin/pytest -q                          # full suite, ~12 min on one core
+.venv/bin/pytest -q -m 'not slow'             # without the 12 slowest tests, ~5 min
 .venv/bin/ruff check .                       # repo-wide; must stay clean (notebooks excluded)
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml

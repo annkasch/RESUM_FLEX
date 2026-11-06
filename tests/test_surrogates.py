@@ -139,6 +139,7 @@ def test_no_positive_validation_has_explicit_undefined_ap():
         m.fit(b, training("mlp"), validation=Episode(c, t), selection="average_precision")
 
 
+@pytest.mark.slow
 def test_optional_backends_do_not_block_neural_models():
     code = """
 import builtins

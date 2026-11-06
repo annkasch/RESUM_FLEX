@@ -83,6 +83,7 @@ select = ["E", "F", "I", "B", "UP"]
 testpaths = ["tests"]
 addopts = "-ra -q"
 markers = [
+    "slow: tests of 15 s or more; quick check: pytest -m 'not slow'",
     "smoke: end-to-end CLI pipeline check (scripts/smoke.py, ~30 s); skip with -m 'not smoke'",
 ]
 filterwarnings = [

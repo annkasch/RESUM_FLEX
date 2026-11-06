@@ -360,6 +360,7 @@ def test_active_loop_rejects_invalid_provider_rates() -> None:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.slow
 def test_active_learning_loop_shrinks_integrated_variance() -> None:
     """End-to-end: 3 IVR steps must reach an integrated variance below
     the start.

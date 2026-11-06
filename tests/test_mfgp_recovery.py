@@ -51,14 +51,13 @@ TOL_3S = 0.05
 
 
 def _enc_cfg() -> EncoderConfig:
-    return EncoderConfig(
-        type="mlp", latent_dim=32, hidden_dims=[64, 64], dropout=0.0
-    )
+    return EncoderConfig(type="mlp", latent_dim=32, hidden_dims=[64, 64], dropout=0.0)
 
 
 def _cnp_cfg() -> CNPConfig:
     return CNPConfig(
-        n_context_min=32, n_context_max=96,
+        n_context_min=32,
+        n_context_max=96,
     )
 
 
@@ -73,6 +72,7 @@ def _train_cfg(name: str) -> TrainingConfig:
     )
 
 
+@pytest.mark.slow
 @pytest.mark.parametrize("name", MFGP_SCENARIOS)
 def test_mfgp_coverage(name: str) -> None:
     torch.manual_seed(0)
@@ -81,22 +81,28 @@ def test_mfgp_coverage(name: str) -> None:
     gen = for_scenario(name, seed=0)
     cnp = build_cnp(_enc_cfg(), gen.dim_theta, gen.dim_phi)
     train_cnp(
-        cnp, gen,
+        cnp,
+        gen,
         cnp_config=_cnp_cfg(),
         training_config=_train_cfg(name),
     )
 
     # The paper's recipe: LF CNP mean -> HF CNP mean -> HF observed fraction.
     X_list, Y_list = synthetic_levels(
-        cnp, gen,
+        cnp,
+        gen,
         [("model_mean", "lf"), ("model_mean", "hf"), ("observed_fraction", "hf")],
-        n_trials={"lf": 200, "hf": 50}, n_events={"lf": 64, "hf": 128},
+        n_trials={"lf": 200, "hf": 50},
+        n_events={"lf": 64, "hf": 128},
         seed=0,
     )
     mfgp = fit_mfgp(X_list, Y_list, n_restarts=10)
     result = evaluate_mfgp_coverage(
-        mfgp, gen,
-        n_test_trials=100, n_test_events=128, seed=12345,
+        mfgp,
+        gen,
+        n_test_trials=100,
+        n_test_events=128,
+        seed=12345,
     )
 
     s1, s2, s3 = result["1sigma"], result["2sigma"], result["3sigma"]
