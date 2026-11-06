@@ -9,8 +9,10 @@ from pydantic import ValidationError
 
 from core.event_stream import event_labels
 from core.surrogates import load_surrogate
+from core.surrogates.models import build_surrogate
 from core.surrogates.stream_training import run_stream
-from schemas.surrogates import StreamRunConfig
+from schemas.data_models import InputMode, StandardBatch
+from schemas.surrogates import FieldPosition, StreamRunConfig
 from tests.test_bernoulli_field import (
     NORMALIZATION,
     SPEC,
@@ -113,11 +115,14 @@ def test_stream_mlp_config_is_the_unencoded_field():
             "event_store": "s",
             "event_source": "m:C",
             "output_directory": "o",
+            "dim_theta": 3,
+            "dim_phi": 6,
+            "mlp_position": {"phi_columns": [0, 1, 2]},
         }
     )
     network = config.network
     assert network.kind == "field" and network.encoding.kind == "none"
-    assert network.direction.encoding == "momentum"
+    assert network.direction is None
     assert network.position.phi_columns == [0, 1, 2]
     assert list(network.architecture.hidden_dims) == [32, 32]
 
@@ -194,6 +199,8 @@ def _run_config(tmp_path, **training):
                 {"split": "validation", "partition": "gp_validation", "fidelity": "hf"},
             ],
             "history_voxels": 4,
+            "dim_theta": 3,
+            "dim_phi": 6,
         }
     )
 
@@ -260,14 +267,18 @@ def test_stream_mlp_trains_and_scores_on_voxels(tmp_path):
                     "event_store": "s",
                     "event_source": "tests.test_stream_field:FakeEventSource",
                     "output_directory": "o",
+                    "dim_theta": 3,
+                    "dim_phi": 6,
                 }
-            ).model
+            ).model,
+            "mlp_position": FieldPosition(phi_columns=[0, 1, 2]),
         }
     )
     report = run_stream(config)
     assert report["history"][-1]["stream_log_loss"] < report["history"][0]["stream_log_loss"]
     best = load_surrogate(tmp_path / "run" / "checkpoints" / "best")
-    assert best.module.momentum and best.module.fourier is None
+    assert best.module.fourier is None and best.module.direction_columns == []
+    assert best.module.extra_columns == [3, 4, 5]
     assert best.last_layer is not None
     experiment = json.loads((tmp_path / "run" / "experiment.json").read_text())
     assert experiment["resolved_config"]["model"]["kind"] == "mlp"
@@ -275,15 +286,17 @@ def test_stream_mlp_trains_and_scores_on_voxels(tmp_path):
     assert {r["fidelity"] for r in rows} == {"stream", "lf", "hf"}
 
 
-def test_stream_field_config_needs_position_and_direction():
-    base = {"event_store": "s", "event_source": "m:C", "output_directory": "o"}
-    StreamRunConfig.model_validate({"model": SPEC, **base})
-    with pytest.raises(ValidationError, match="direction"):
+def test_stream_config_checks_the_columns():
+    base = {"event_store": "s", "event_source": "m:C", "output_directory": "o", "dim_theta": 3}
+    StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **base})
+    with pytest.raises(ValidationError, match="match dim_theta"):
+        StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **{**base, "dim_theta": 2}})
+    with pytest.raises(ValidationError, match="dim_phi > 5"):
+        StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 5, **base})
+    with pytest.raises(ValidationError, match="mlp_position is for kind: mlp"):
         StreamRunConfig.model_validate(
-            {"model": {k: v for k, v in SPEC.items() if k != "direction"}, **base}
+            {"model": SPEC, "dim_phi": 6, "mlp_position": {"phi_columns": [0, 1, 2]}, **base}
         )
-    with pytest.raises(ValidationError, match="all dim_phi"):
-        StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 7, **base})
 
 
 def test_event_source_options_reach_the_source_unchanged(tmp_path):
@@ -297,7 +310,15 @@ def test_event_source_options_reach_the_source_unchanged(tmp_path):
 
 def test_event_source_is_required():
     with pytest.raises(ValidationError, match="event_source"):
-        StreamRunConfig.model_validate({"model": SPEC, "event_store": "s", "output_directory": "o"})
+        StreamRunConfig.model_validate(
+            {
+                "model": SPEC,
+                "event_store": "s",
+                "output_directory": "o",
+                "dim_theta": 3,
+                "dim_phi": 6,
+            }
+        )
 
 
 def test_field_checkpoint_with_the_old_buffer_name_loads():
@@ -308,3 +329,69 @@ def test_field_checkpoint_with_the_old_buffer_name_loads():
     fresh = _field()
     fresh.module.load_state_dict(state)
     assert fresh.module.uses_stream_units
+
+
+@pytest.mark.parametrize(
+    "dims, model, position",
+    [
+        ((2, 3), {"kind": "mlp"}, [0, 1]),  # 2-D position (theta + offset) and one more input
+        ((2, 2), {"kind": "mlp"}, None),  # theta alone is the position, both phi columns extra
+        ((1, 5), {"kind": "mlp"}, [4]),  # position offset in the last phi column
+        (
+            (2, 6),  # field: 2-D position, 3-D direction, one more input
+            {**SPEC, "position": {"phi_columns": [0, 1]}, "direction": {"phi_columns": [2, 3, 4]}},
+            None,
+        ),
+    ],
+    ids=["mlp_2+1", "mlp_theta_only", "mlp_1+4", "field_2+3+1"],
+)
+def test_stream_models_take_other_record_layouts(dims, model, position):
+    """Logits from stream records equal those from the same events as design-point data."""
+    dim_theta, dim_phi = dims
+    config = StreamRunConfig.model_validate(
+        {
+            "model": {"architecture": {"hidden_dims": [16, 16]}, **model},
+            "event_store": "s",
+            "event_source": "m:C",
+            "output_directory": "o",
+            "dim_theta": dim_theta,
+            "dim_phi": dim_phi,
+            **({"mlp_position": {"phi_columns": position}} if position else {}),
+        }
+    )
+    network = config.network
+    rng = np.random.default_rng(4)
+    b, n = 3, 20
+    theta = rng.normal(5.0, 2.0, (b, dim_theta))  # physical units
+    phi = rng.normal(-1.0, 0.5, (b, n, dim_phi))
+    pos = [] if network.position is None else network.position.phi_columns
+    rest = [c for c in range(dim_phi) if c not in pos]
+    record_position = theta[:, None, :] + (phi[..., pos] if pos else np.zeros((b, n, 1)))
+    records = np.concatenate([record_position, phi[..., rest]], axis=-1).reshape(b * n, -1)
+    data_norm = {
+        "theta": {"offset": [4.0] * dim_theta, "scale": [3.0] * dim_theta},
+        "phi": {"offset": [-0.5] * dim_phi, "scale": [0.7] * dim_phi},
+    }
+    width = records.shape[1]
+    stream_norm = {"offset": list(records.mean(0)), "scale": list(records.std(0))}
+    surrogate = build_surrogate(network, dim_theta, dim_phi, seed=0)
+    surrogate.module.set_stream_normalization(stream_norm)
+    surrogate.configure_normalization(data_norm)
+
+    def normalized(values, group):
+        entry = data_norm[group]
+        return (values - np.asarray(entry["offset"])) / np.asarray(entry["scale"])
+
+    batch = StandardBatch(
+        mode=InputMode.FULL,
+        theta=normalized(theta, "theta"),
+        phi=normalized(phi, "phi").astype(np.float32),
+        labels=np.zeros((b, n), dtype=np.int8),
+    )
+    labels = np.zeros((b * n, 1), dtype=np.float32)
+    stream = torch.as_tensor(np.concatenate([records, labels], axis=1), dtype=torch.float32)
+    assert surrogate.module.record_width == width
+    with torch.no_grad():
+        design = surrogate.module(None, batch)  # [B, N]
+        direct = surrogate.module.forward_events(stream).reshape(b, n)
+    torch.testing.assert_close(design, direct, rtol=1e-4, atol=1e-4)

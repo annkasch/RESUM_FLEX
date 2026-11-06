@@ -304,7 +304,7 @@ def run_stream(config: StreamRunConfig) -> dict:
     )
     normalization = train.normalization()
     torch.manual_seed(training.seed)
-    model = build_surrogate(config.network, 3, config.dim_phi, seed=training.seed)
+    model = build_surrogate(config.network, config.dim_theta, config.dim_phi, seed=training.seed)
     model.module.set_stream_normalization(normalization)
     model.module.to(device)
     forward = _stream_module(model.module)

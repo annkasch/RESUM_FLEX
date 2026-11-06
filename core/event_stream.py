@@ -1,12 +1,15 @@
-"""Ungrouped events for context-free event models (the neural field), streamed by an
+"""Ungrouped events for context-free event models (stream MLP, neural field), streamed by an
 application's event source.
 
-Record layout (the stream format): float32 [M, 7] = 3-D position (x, y, z), 3-D direction
-vector (px, py, pz; its length is kept for the stream MLP) and label bits in the last column
-(label = any bit set). An event source delivers these records in random order; the run
-config names it by import path (``event_source: module:Class``) and passes
-``event_source_options`` to its constructor unchanged. RESUM_FLEX never imports a data
-package directly.
+Record layout (the stream format): float32 [M, W + 1] = W input columns, then label bits in
+the last column (label = any bit set, stored as int32 bits in the float32 slot). The input
+columns are the position (``dim_theta`` columns), then the other event inputs in phi order
+(``StreamRunConfig``). The stream MLP takes any W; the neural field is meant for point
+clouds, e.g. x, y, z, px, py, pz with a 3-D direction for its spherical harmonics.
+
+An event source delivers these records in random order; the run config names it by import
+path (``event_source: module:Class``) and passes ``event_source_options`` to its constructor
+unchanged. RESUM_FLEX never imports a data package directly.
 """
 
 import importlib
@@ -17,7 +20,7 @@ class EventSource(Protocol):
     n_events: int
     n_positive: int  # events with label 1 (training prevalence for the log-loss skill)
 
-    def normalization(self) -> dict: ...  # offset/scale of the 6 physical columns
+    def normalization(self) -> dict: ...  # offset/scale of the W input columns
 
     def n_batches(self, batch_size: int, pass_index: int, *, drop_last: bool = False) -> int: ...
 
@@ -25,14 +28,14 @@ class EventSource(Protocol):
         self, batch_size: int, pass_index: int = 0, *, start_batch=0, drop_last=False, device="cpu"
     ): ...
 
-    def load(self): ...  # all events of the split as float32 [N, 7]
+    def load(self): ...  # all events of the split as float32 [N, W + 1]
 
 
 def event_labels(batch):
-    """Labels [M] float of raw records [M, 7] (label bits stored in the last column)."""
+    """Labels [M] float of raw records [M, W + 1] (label bits stored in the last column)."""
     import torch
 
-    return batch[:, 6].contiguous().view(torch.int32).to(batch.dtype)
+    return (batch[:, -1].contiguous().view(torch.int32) != 0).to(batch.dtype)
 
 
 def open_event_source(spec: str, store, split: str, **options) -> EventSource:

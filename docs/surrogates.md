@@ -576,6 +576,12 @@ held-out voxels before relying on the error bars.
 
 ## Neural field (kind: field)
 
+The neural field is meant for point-cloud data: events with a continuous position (any
+dimension) and optionally a 3-D direction vector, e.g. particles or rays with a start point
+and a direction. The spherical-harmonic direction encoding needs exactly 3 direction
+columns. For other event inputs use the MLP, CNP, transformer or BDT, which take any number
+of θ and φ columns.
+
 ```yaml
 model:
   kind: field
@@ -598,42 +604,48 @@ normalized to unit length and encoded by real orthonormal spherical harmonics up
 `position`, theta alone is the position. Training, selection, inference, the GP levels and
 the Bayesian last layer work as for the MLP.
 
-### Neural field on an event stream (`python -m core.surrogates stream CONFIG.yaml`)
+### Training on an event stream (`python -m core.surrogates stream CONFIG.yaml`)
 
-A field can train on a large set of ungrouped events, e.g. a homogeneous simulation campaign,
-instead of on events grouped by design point (`core/surrogates/stream_training.py`, config
-`StreamRunConfig`):
+A context-free model (MLP or neural field) can train on a large set of ungrouped events, e.g.
+a homogeneous simulation campaign, instead of on events grouped by design point
+(`core/surrogates/stream_training.py`, config `StreamRunConfig`). CNP, transformer and BDT
+need grouped events and train on design-point data only.
 
 ```yaml
-model: {kind: field, position: {phi_columns: [0, 1, 2]}, direction: {phi_columns: [3, 4, 5]}, ...}
+model: {kind: mlp, architecture: {hidden_dims: [256, 256, 256]}, last_layer: {}}
+dim_theta: 2                     # input widths of the design-point data it is evaluated on
+dim_phi: 3
+mlp_position: {phi_columns: [0, 1]}   # phi columns added to theta = record position (optional)
 training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16}
 event_store: /path/to/store
 event_source: my_package.loader:MyEventStream   # required: the application's reader
 event_source_options: {in_memory: true}         # passed to it unchanged
-output_directory: runs/stream_field/seed0
+output_directory: runs/stream_mlp/seed0
 ```
 
-The stream format (`core/event_stream.py`): float32 records [M, 7] = 3-D position, 3-D
-direction vector and label bits in the last column. The event source implements the
-`EventSource` protocol there (`n_events`, `n_positive`, `normalization`, `n_batches`,
-`batches`, `load`); its reading and shuffling options are its own and go into
-`event_source_options`. The field fixes its own position units from the store's train
-normalization (`set_stream_normalization`) and computes the direction from the direction
-vector. Checkpoints are selected by the Bernoulli log loss on the validation events. With
-`last_layer`, the selected checkpoints get the Laplace posterior from one streaming pass over
-all training events. Several GPUs: `torchrun` (DistributedDataParallel). bf16 autocast and
-`torch.compile` are options. Run outputs label the stream metrics with fidelity `stream`.
+The stream format (`core/event_stream.py`): float32 records [M, W + 1] = the position
+(`dim_theta` columns), then the other φ columns in φ order, then the label bits. In the
+example: θ + φ[0:2], φ[2], label (W = 3). At evaluation on design-point data, the record
+position is θ plus the position φ columns, so the model sees the same inputs in both cases.
 
-`model: {kind: mlp, architecture: ..., last_layer: ...}` trains the stream MLP instead: the
-same network on the normalized raw position and direction vector (internally a field with
-`encoding: {kind: none}` and `direction: {encoding: momentum}`, which keeps the vector's
-length, e.g. an energy or wavelength; the spherical-harmonic direction of the field drops
-it). It differs from the design-point MLP, which takes θ and the event offset as separate
-inputs; ungrouped events have no design point.
+- `kind: mlp`: an MLP on all W normalized record columns, any layout. `mlp_position` names
+  the φ columns added to θ (none: θ alone is the position, all φ columns follow).
+- `kind: field`: the neural field (point clouds); its `position` and `direction` settings
+  define the layout, e.g. `dim_theta: 3`, `dim_phi: 6`, position φ[0:3], direction φ[3:6]
+  gives records x, y, z, px, py, pz, label.
 
-The checkpoints are ordinary field checkpoints. `predict` evaluates them on design-point
-data: for a stream-trained field the provider's theta + offset is mapped into the field's
-physical units, so no equal normalization is required.
+The event source implements the `EventSource` protocol (`n_events`, `n_positive`,
+`normalization` of the W input columns, `n_batches`, `batches`, `load`); its reading and
+shuffling options are its own and go into `event_source_options`. The model fixes its own
+units from the store's train normalization (`set_stream_normalization`). Checkpoints are
+selected by the Bernoulli log loss on the validation events. With `last_layer`, the selected
+checkpoints get the Laplace posterior from one streaming pass over all training events.
+Several GPUs: `torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are
+options. Run outputs label the stream metrics with fidelity `stream`.
+
+The checkpoints are ordinary field checkpoints (the stream MLP is a field without
+encodings). `predict` evaluates them on design-point data: θ, offsets and other φ columns
+are mapped into the model's stream units, so no equal normalization is required.
 
 ### Log-space MFGP
 

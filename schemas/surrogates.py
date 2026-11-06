@@ -121,7 +121,8 @@ class RawPosition(StrictConfigModel):
 
 
 class FieldModel(StrictConfigModel):
-    """Neural field: an MLP on encoded event coordinates, p(position, direction, rest).
+    """Neural field for point-cloud data: an MLP on encoded event coordinates,
+    p(position, direction, rest). The direction is a 3-vector (spherical harmonics).
 
     Position = theta (+ ``position.phi_columns`` in physical units) through the Fourier
     encoding; ``direction`` columns through spherical harmonics; all other phi columns
@@ -815,16 +816,18 @@ class VoxelEvaluationSet(StrictConfigModel):
 
 
 class StreamRunConfig(StrictConfigModel):
-    """A neural field trained on every event of an event store, selected on its validation
-    events by the Bernoulli log loss; evaluated later on voxel data (``predict``).
+    """An event model trained on every event of an event store, selected on its validation
+    events by the Bernoulli log loss; evaluated later on design-point data (``predict``).
 
-    ``dim_phi`` is the event-input width of the voxel data it will be evaluated on (offset
-    and momentum: 6), so the checkpoint loads like any field. Position must be three phi
-    columns added to a 3-D theta, and a direction is required.
+    ``dim_theta`` and ``dim_phi`` are the input widths of the design-point data it will be
+    evaluated on, so the checkpoint loads like any field. A stream record holds the
+    position (``dim_theta`` columns: theta + the position phi columns at evaluation), then
+    the other phi columns in phi order, then the label.
 
-    ``model: {kind: mlp}`` trains the stream MLP: the same network on the normalized raw
-    position and momentum, x, y, z, px, py, pz (``network``: a field without encodings).
-    Unlike the voxel MLP it has no separate voxel centre, which homogeneous events lack.
+    ``model: {kind: field}``: the neural field for point-cloud data (3-D direction for the
+    spherical harmonics; see ``core.bernoulli_field``). ``model: {kind: mlp}``: an MLP on all
+    normalized record columns, any number of them; ``mlp_position`` names the phi columns
+    that are added to theta to give the record position (None: theta alone).
     """
 
     model: FieldModel | MLPModel = Field(discriminator="kind")
@@ -845,7 +848,9 @@ class StreamRunConfig(StrictConfigModel):
     evaluation_seed: int = 0
     unblind_test: bool = False
     output_directory: Path
-    dim_phi: int = Field(default=6, ge=6)
+    dim_theta: int = Field(ge=1)
+    dim_phi: int = Field(ge=0)
+    mlp_position: FieldPosition | None = None
 
     @model_validator(mode="after")
     def evaluation_sets(self):
@@ -870,22 +875,22 @@ class StreamRunConfig(StrictConfigModel):
             return self.model
         return FieldModel(
             architecture=self.model.architecture,
-            position=FieldPosition(phi_columns=[0, 1, 2]),
-            direction=FieldDirection(phi_columns=[3, 4, 5], encoding="momentum"),
+            position=self.mlp_position,
             encoding=RawPosition(),
             last_layer=self.model.last_layer,
         )
 
     @model_validator(mode="after")
-    def stream_field(self):
+    def stream_columns(self):
+        if self.mlp_position is not None and not isinstance(self.model, MLPModel):
+            raise ValueError("mlp_position is for kind: mlp; a field uses model.position")
         model = self.network
-        if model.position is None or len(model.position.phi_columns) != 3:
-            raise ValueError("A stream field needs position.phi_columns of length 3")
-        if model.direction is None:
-            raise ValueError("A stream field needs a direction encoding")
-        used = {*model.position.phi_columns, *model.direction.phi_columns}
-        if used != set(range(self.dim_phi)):
-            raise ValueError("Position and direction must use all dim_phi event columns")
+        groups = [g for g in (model.position, model.direction) if g is not None]
+        used = [c for g in groups for c in g.phi_columns]
+        if used and max(used) >= self.dim_phi:
+            raise ValueError(f"phi_columns {used} need dim_phi > {max(used)}")
+        if model.position is not None and len(model.position.phi_columns) != self.dim_theta:
+            raise ValueError("position phi_columns must match dim_theta one to one")
         return self
 
 

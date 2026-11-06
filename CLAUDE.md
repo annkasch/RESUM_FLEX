@@ -26,8 +26,9 @@ Docs: `README.md` (usage), `docs/configs.md` (every config setting),
   - Event model → mean p per design point (`predict`) → GP over configurable fidelity levels
     (`mfgp`), or a binomial count GP directly on outcome counts (`binomial`, optional
     event-model covariate). The baseline.
-- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field on encoded
-  coordinates; trainable on an event stream via `stream`), `transformer`, `bdt`, `legacy_cnp`.
+- Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field for
+  point-cloud data, 3-D direction), `transformer`, `bdt`, `legacy_cnp`. `mlp` and `field` also
+  train on an event stream (`stream`, any record layout for the MLP).
 - Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based).
 
 ## Environment

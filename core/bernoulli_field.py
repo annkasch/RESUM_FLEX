@@ -10,19 +10,24 @@ Inputs per event (all optional, from schemas.surrogates.FieldModel):
   the normalized vector itself, which keeps its length (e.g. energy or wavelength);
 * every other phi column unencoded.
 
-With ``encoding: {kind: none}`` and a momentum direction the field is a plain MLP on
-(position, momentum): the stream-trained MLP (``kind: mlp`` in a stream run config).
+With ``encoding: {kind: none}`` and no direction the field is a plain MLP on its
+normalized inputs: the stream-trained MLP (``kind: mlp`` in a stream run config), for any
+number of position and other columns.
 
 An MLP maps the concatenated encodings to the logit. Without the encodings an MLP on raw
 coordinates learns mainly smooth (low-frequency) functions; the Fourier features let it
 represent structure down to a half-period of 1 / (2 f_max).
 
-Position units. By default the field position is in normalized theta units of the voxel
-data it is trained on. A field trained on ungrouped events (``forward_events``, e.g. a
-homogeneous event store) instead fixes its own units with ``set_stream_normalization``:
-position = (x - origin) / unit in physical coordinates. ``set_normalization`` then maps voxel
-inputs (theta + offset) into those same units, so the stream-trained field is evaluated on
-voxel data unchanged.
+Position units. By default the field position is in normalized theta units of the
+design-point data it is trained on. A field trained on ungrouped events (``forward_events``)
+instead fixes its own units with ``set_stream_normalization``: position = (x - origin) / unit
+in physical coordinates, and the same for the other inputs. ``set_normalization`` then maps
+design-point inputs (theta + offset, other phi columns) into those units, so the
+stream-trained field is evaluated on design-point data unchanged.
+
+Stream record layout (``forward_events``): the position (theta dimensions; theta + the
+position phi columns at evaluation), then the other phi columns in phi order, then the label
+column. With the default 3-D position and a 3-D direction: x, y, z, px, py, pz, label.
 """
 
 import math
@@ -121,11 +126,17 @@ class BernoulliField(nn.Module):
         self.direction_columns = [] if direction is None else list(direction.phi_columns)
         self.extra_columns = [c for c in range(dim_phi or 0) if c not in used]
         dim_position = dim_theta or 0
+        # Stream record columns: position first, then the non-position phi columns in order.
+        rest = [c for c in range(dim_phi or 0) if c not in self.position_columns]
+        self.record_width = dim_position + len(rest)
+        self.direction_record = [dim_position + rest.index(c) for c in self.direction_columns]
+        self.extra_record = [dim_position + rest.index(c) for c in self.extra_columns]
         # Affine maps from normalized inputs to physical-unit combinations (set_normalization):
-        # field position = theta * theta_coefficient + phi[position] * position_scale
+        # field position = theta * theta_coefficient + theta_shift + phi[position] * position_scale
         # + position_shift; direction (up to scale) = phi * direction_scale + direction_shift.
         n_pos, n_dir = len(self.position_columns), len(self.direction_columns)
         self.register_buffer("theta_coefficient", torch.ones(dim_position))
+        self.register_buffer("theta_shift", torch.zeros(dim_position))
         self.register_buffer("position_scale", torch.ones(n_pos))
         self.register_buffer("position_shift", torch.zeros(n_pos))
         # Field units from stream data (set_stream_normalization); unused while stream_units = 0.
@@ -138,6 +149,14 @@ class BernoulliField(nn.Module):
         # normalization of the training data (voxel phi or event store).
         self.register_buffer("momentum_origin", torch.zeros(n_dir))
         self.register_buffer("momentum_unit", torch.ones(n_dir))
+        # Other phi columns: phi * extra_scale + extra_shift (identity for design-point
+        # training; data units -> stream units for a stream-trained field), and their stream
+        # normalization (extra_origin, extra_unit).
+        n_extra = len(self.extra_columns)
+        self.register_buffer("extra_scale", torch.ones(n_extra))
+        self.register_buffer("extra_shift", torch.zeros(n_extra))
+        self.register_buffer("extra_origin", torch.zeros(n_extra))
+        self.register_buffer("extra_unit", torch.ones(n_extra))
         encoding = config.encoding
         self.fourier = (
             FourierFeatures(encoding.n_frequencies, encoding.max_frequency)
@@ -163,11 +182,16 @@ class BernoulliField(nn.Module):
     # Buffers added after the first field checkpoints; older weights load with their defaults.
     _OPTIONAL_BUFFERS = (
         "theta_coefficient",
+        "theta_shift",
         "position_origin",
         "position_unit",
         "stream_units",
         "momentum_origin",
         "momentum_unit",
+        "extra_scale",
+        "extra_shift",
+        "extra_origin",
+        "extra_unit",
     )
 
     def _load_from_state_dict(self, state_dict, prefix, *args, **kwargs):
@@ -182,32 +206,42 @@ class BernoulliField(nn.Module):
         return bool(self.stream_units)
 
     def set_stream_normalization(self, normalization):
-        """Fix the field units from stream data: position = (x - offset[:3]) / scale[:3].
+        """Fix the field units from stream data: column = (x - offset) / scale.
 
-        ``normalization``: dict with ``offset`` and ``scale`` of x, y, z, px, py, pz (physical
-        units, as from an event store). Needs a 3-D position (theta + position columns) and
-        a direction; call before ``set_normalization`` of any voxel data.
+        ``normalization``: dict with ``offset`` and ``scale`` of the record's input columns
+        (``record_width``: position, then the other phi columns; physical units, as from an
+        event store). Call before ``set_normalization`` of any design-point data.
         """
-        if self.dim_theta != 3 or len(self.position_columns) != 3 or not self.direction_columns:
-            raise ValueError("Stream training needs a 3-D position and a direction encoding")
-        if self.extra_columns:
-            raise ValueError("Stream training supports no unencoded extra phi columns")
         offset = torch.as_tensor(normalization["offset"], dtype=torch.float64)
         scale = torch.as_tensor(normalization["scale"], dtype=torch.float64)
-        if offset.shape != (6,) or scale.shape != (6,) or torch.any(scale <= 0):
-            raise ValueError("Stream normalization needs offset and positive scale of 6 columns")
-        self.position_origin.copy_(offset[:3].float())
-        self.position_unit.copy_(scale[:3].float())
-        self.momentum_origin.copy_(offset[3:].float())
-        self.momentum_unit.copy_(scale[3:].float())
+        width = self.record_width
+        if offset.shape != (width,) or scale.shape != (width,) or torch.any(scale <= 0):
+            raise ValueError(
+                f"Stream normalization needs offset and positive scale of {width} columns "
+                "(position, then the other phi columns)"
+            )
+        n_pos = self.dim_theta or 0
+        self.position_origin.copy_(offset[:n_pos].float())
+        self.position_unit.copy_(scale[:n_pos].float())
+        self.momentum_origin.copy_(offset[self.direction_record].float())
+        self.momentum_unit.copy_(scale[self.direction_record].float())
+        self.extra_origin.copy_(offset[self.extra_record].float())
+        self.extra_unit.copy_(scale[self.extra_record].float())
         self.stream_units.fill_(1.0)
 
     def forward_events(self, events: torch.Tensor) -> torch.Tensor:
-        """Logits [M] of raw event records [M, >= 6]: x, y, z (m), px, py, pz (any unit)."""
+        """Logits [M] of raw event records [M, >= record_width] (position, other columns)."""
         if not self.uses_stream_units:
             raise ValueError("Call set_stream_normalization before forward_events")
-        position = (events[:, :3] - self.position_origin) / self.position_unit
-        parts = [self._position_features(position), self._direction_features(events[:, 3:6])]
+        parts = []
+        n_pos = self.dim_theta or 0
+        if n_pos:
+            position = (events[:, :n_pos] - self.position_origin) / self.position_unit
+            parts.append(self._position_features(position))
+        if self.direction_record:
+            parts.append(self._direction_features(events[:, self.direction_record]))
+        if self.extra_record:
+            parts.append((events[:, self.extra_record] - self.extra_origin) / self.extra_unit)
         return self.decoder(torch.cat(parts, dim=-1)).squeeze(-1)
 
     def _position_features(self, position):
@@ -225,9 +259,13 @@ class BernoulliField(nn.Module):
         None (unnormalized data) keeps the identity maps. With stream units the voxel inputs
         are mapped into those units; otherwise normalized theta units are the field units.
         """
-        if normalization is None or not (self.position_columns or self.direction_columns):
-            if self.uses_stream_units:
-                raise ValueError("A stream-trained field needs the voxel data normalization")
+        stream = self.uses_stream_units
+        if normalization is None:
+            if stream:
+                raise ValueError("A stream-trained field needs the design-point data normalization")
+            return
+        stream_inputs = stream and (self.dim_theta or self.extra_columns)
+        if not (self.position_columns or self.direction_columns or stream_inputs):
             return
 
         def affine(group, size):
@@ -254,6 +292,12 @@ class BernoulliField(nn.Module):
             self.theta_coefficient.copy_((theta_scale / unit).float())
             self.position_scale.copy_((phi_scale[cols] / unit).float())
             self.position_shift.copy_(((theta_offset + phi_offset[cols] - origin) / unit).float())
+        elif stream and self.dim_theta:  # theta alone is the stream position
+            theta_offset, theta_scale = affine("theta", self.dim_theta)
+            origin = self.position_origin.detach().cpu().double()
+            unit = self.position_unit.detach().cpu().double()
+            self.theta_coefficient.copy_((theta_scale / unit).float())
+            self.theta_shift.copy_(((theta_offset - origin) / unit).float())
         if self.direction_columns:
             cols = self.direction_columns
             self.direction_scale.copy_(phi_scale[cols].float())
@@ -261,6 +305,12 @@ class BernoulliField(nn.Module):
             if not self.uses_stream_units:  # momentum in the units of the training data
                 self.momentum_origin.copy_(phi_offset[cols].float())
                 self.momentum_unit.copy_(phi_scale[cols].float())
+        if self.extra_columns and self.uses_stream_units:  # data units -> stream units
+            cols = self.extra_columns
+            origin = self.extra_origin.detach().cpu().double()
+            unit = self.extra_unit.detach().cpu().double()
+            self.extra_scale.copy_((phi_scale[cols] / unit).float())
+            self.extra_shift.copy_(((phi_offset[cols] - origin) / unit).float())
 
     def encode(self, target) -> torch.Tensor:
         """Concatenated encodings [B, N, width] of a StandardBatch."""
@@ -273,6 +323,7 @@ class BernoulliField(nn.Module):
         if self.dim_theta:
             theta = torch.as_tensor(target.theta, dtype=torch.float32, device=parameter.device)
             position = theta[:, None, :].expand(-1, n_events, -1) * self.theta_coefficient
+            position = position + self.theta_shift
             if self.position_columns:
                 offset = phi[..., self.position_columns] * self.position_scale
                 position = position + offset + self.position_shift
@@ -287,7 +338,7 @@ class BernoulliField(nn.Module):
             vector = torch.where(valid, vector, torch.ones_like(vector))
             parts.append(self._direction_features(vector))
         if self.extra_columns:
-            parts.append(phi[..., self.extra_columns])
+            parts.append(phi[..., self.extra_columns] * self.extra_scale + self.extra_shift)
         return torch.cat(parts, dim=-1)
 
     def forward(self, context, target):
