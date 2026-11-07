@@ -26,7 +26,7 @@ from core.compute import ComputeLog
 from core.event_stream import event_labels, open_event_source
 from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate, save_surrogate
-from core.surrogates.evaluation import calibration_bins, evaluate_surrogate
+from core.surrogates.evaluation import calibration_bins, evaluate_surrogate, feature_calibration
 from core.surrogates.last_layer import _layer, last_layer_weights
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import StreamRunConfig
@@ -158,11 +158,12 @@ def _voxel_episodes(config: StreamRunConfig):
     return episodes, history_episode, data
 
 
-def stream_metrics(labels, logits, *, reference_rate):
-    """Event metrics of events without voxel structure, as in voxel evaluation.
+def stream_metrics(labels, logits, *, reference_rate, features=None):
+    """Event metrics of events without design-point structure, as in voxel evaluation.
 
-    labels, logits: [M] numpy. Returns (metrics, arrays) with calibration bins and the
-    precision-recall curve.
+    labels, logits: [M] numpy; features: optional [M, W] record input columns, which add
+    the calibration per record column (``record_j``). Returns (metrics, arrays) with
+    calibration bins and the precision-recall curve.
     """
     from scipy.special import expit
 
@@ -207,6 +208,13 @@ def stream_metrics(labels, logits, *, reference_rate):
         logit_threshold=curve["logit_threshold"],
         **bins,
     )
+    if features is not None:
+        features = np.asarray(features, dtype=np.float64)  # [M, W]
+        names = [f"record_{j}" for j in range(features.shape[1])]
+        metrics["feature_calibration"], feature_arrays = feature_calibration(
+            names, features, labels, p
+        )
+        arrays.update(feature_arrays)
     return metrics, arrays
 
 
@@ -236,7 +244,10 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
                 )
         labels = event_labels(validation).cpu().numpy()
         summary, arrays = stream_metrics(
-            labels, torch.cat(logits).numpy(), reference_rate=prevalence
+            labels,
+            torch.cat(logits).numpy(),
+            reference_rate=prevalence,
+            features=validation[:, :-1].float().cpu().numpy(),
         )
         rows.append(
             dict(
@@ -250,7 +261,9 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
         np.savez_compressed(output / f"stream_validation_{checkpoint}.npz", **arrays)
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
-            summary.update(readout_metrics(episode.target, arrays, seed=seed))
+            readout, readout_arrays = readout_metrics(episode.target, arrays, seed=seed)
+            summary.update(readout)
+            arrays.update(readout_arrays)
             if getattr(saved, "last_layer", None) is not None:
                 summary["voxel_predictive"] = _voxel_predictive(
                     saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"

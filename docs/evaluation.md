@@ -19,6 +19,10 @@ probabilities: right order (discrimination) and right level (calibration).
 | `voxel_z_mean`, `voxel_z2_mean` | voxel | `z = (k - Σp) / sqrt(Σp(1-p))` | 0, 1 |
 | `voxel_rate_mse_denoised` | voxel | mean of `(o - q)^2 - o(1-o)/(n-1)` | ≈ 0 |
 | `spearman_r` | voxel | rank correlation of `o` and `q` (trend) | near ceiling |
+| `within_point_log_loss_gain` | within design point | log-loss gain over each design point's own mean p, nats per positive | > 0 |
+| `within_point_log_loss_skill` | within design point | same gain as `1 - LL / LL(p̄_b)` | > 0 |
+| `within_point_auc` | within design point | pair AUC, hit vs non-hit of the same design point | > 0.5 |
+| `within_point_spread_z` | within design point | `(ΣG - ΣE) / sqrt(ΣV)`: observed vs model-expected gain | \|Z\| < 3 |
 
 Per voxel: `o` = hits / target events, `q` = mean predicted p over the same
 targets, `n` = target events. The subtracted term is the unbiased binomial noise
@@ -30,6 +34,39 @@ probabilities only for its baseline; use it for mixup ablations, whose outputs a
 scores, not probabilities. The log-loss skill needs the training prevalence and is
 `None` without it.
 
+### Dependence on the event inputs (within design point)
+
+All metrics above are dominated by the rate of each design point: a model that predicts
+one constant p per design point scores almost as well as one that gets the φ-dependence
+right. The `within_point_*` metrics compare events of the same design point only, so the
+rate cancels. The baseline gives every event of design point b the model's own mean
+`p̄_b` (not the observed rate, which is fitted to the scored labels and mixes the rate
+error back in). Per event the gain is `loss(p̄_b) - loss(p_i) = a_i y_i + c_i` with
+`a_i = logit p_i - logit p̄_b`, `c_i = log(1-p_i) - log(1-p̄_b)`; per design point
+`G_b = Σ_i (a_i y_i + c_i)`. A constant-per-design-point model scores exactly 0 (gain) and
+0.5 (AUC).
+
+- The gain is reported per positive (`ΣG / Σk`): per event it scales with the prevalence;
+  per positive it does not (e.g. `p ∝ 0.5 + φ`, φ uniform: ≈ 1/24 nats per hit at any rate).
+- AUC ranks only; the gain also judges the size of the spread. A good AUC with a negative
+  gain means the order is right but the spread too wide.
+- If labels followed the model's p, `G_b` would have mean `E_b = Σ KL(p_i ‖ p̄_b)` and
+  variance `V_b = Σ p_i(1-p_i) a_i²`. `within_point_spread_z < 0`: spread too wide or wrong
+  (overconfident in φ); `> 0`: true φ-dependence stronger than predicted.
+- They need grouped data (design points). Unbinned streams are not binned for them: too
+  few positives per cell. Stream models get them on design-point evaluation sets.
+
+### Calibration per input feature
+
+`feature_calibration` (read-out and stream validation): for each input column, equal-count
+bins of its value pooled over all events and design points; per bin hits vs Σp, `z = (K -
+M) / sqrt(V)`. Reported per column as `chi2_per_bin` (≈ 1) and `max_abs_z`. Columns are
+`theta_j` (repeated over the events of a design point) and `phi_j`, or `record_j` for
+stream records. It says which input is wrong and in which direction; it sees projections
+only, so errors that cancel along a column (interactions) are missed, and if the φ
+distribution differs between design points, rate differences can partly mimic or hide a
+φ-trend (the `within_point_*` metrics do not have this problem).
+
 Evaluation layout: each voxel's events are permuted with `validation_seed`. The
 targets are the events after `validation_context_pool = max(validation_context_events,
 *validation_context_sweep)`; the context is the first `n` of the pool. Every context
@@ -39,8 +76,14 @@ Read-out after training (held-out splits only, not used for selection):
 
 - `spearman_noise_ceiling`: median Spearman r over 200 label sets redrawn from the
   model's own p, i.e. what a model equal to the truth would reach at this noise.
-- `*_ci95`: 95% bootstrap intervals over voxels (200 resamples) for log loss, AP and
-  Spearman r. Use them to compare runs.
+- `*_ci95`: 95% bootstrap intervals over voxels (200 resamples) for log loss, AP,
+  Spearman r, `within_point_log_loss_gain` and `within_point_auc`. Use them to compare runs.
+- `within_point_gain_coverage`: labels redrawn 1000 times from the model's own p give the
+  null distribution of each `G_b`; fraction of design points inside its ±1/2/3σ quantiles
+  (Gaussian tail probabilities). Design points with constant predictions are skipped
+  (`None` if all are). Cost ≈ 10 s per 10⁶ events. Arrays `within_point_gain_null`
+  [3, 2, B]; plot `{fidelity}_{split}_within_point_gain.png` (best checkpoint).
+- `feature_calibration` (above); plot `{fidelity}_{split}_feature_calibration.png`.
 - `context_sweep.json` / `context_sweep.png` (context models only): the metrics at
   every size in `validation_context_events` + `validation_context_sweep`, plus the
   standard size with all context labels set to 0. A flat curve, or zeroed labels
@@ -48,7 +91,7 @@ Read-out after training (held-out splits only, not used for selection):
 - `{fidelity}_calibration.png`: observed hit fraction vs mean p per bin, Wilson 95%.
 
 Seeds: `SeedSequence([validation_seed, k])`, k = 0 selection subset, 1 noise
-ceiling, 2 bootstrap.
+ceiling, 2 bootstrap, 3 within-design-point null.
 
 ## Blinded test sets
 

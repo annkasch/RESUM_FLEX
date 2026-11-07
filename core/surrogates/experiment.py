@@ -226,9 +226,11 @@ def _evaluate(config, output, train, batches, episodes, load_split):
                 )
                 # Training metrics are in-sample; the read-out covers held-out splits only.
                 if split != "train":
-                    summary.update(
-                        readout_metrics(episode.target, arrays, seed=config.validation_seed)
+                    readout, readout_arrays = readout_metrics(
+                        episode.target, arrays, seed=config.validation_seed
                     )
+                    summary.update(readout)
+                    arrays.update(readout_arrays)
                     if getattr(saved, "last_layer", None) is not None:
                         summary["voxel_predictive"] = _voxel_predictive(
                             saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"

@@ -39,7 +39,8 @@ shuffling options are its own and go into `event_source_options`. The model fixe
 units from the store's train normalization (`set_stream_normalization`). Checkpoints are
 selected by the Bernoulli log loss on the validation events. With `last_layer`, the selected
 checkpoints get the Laplace posterior from one streaming pass over all training events.
-Several GPUs: `torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are
+The stream validation events also get the calibration per record column (`record_j`,
+`stream_feature_calibration.png`; `docs/evaluation.md`). Several GPUs: `torchrun` (DistributedDataParallel). bf16 autocast and `torch.compile` are
 options. Run outputs label the stream metrics with fidelity `stream`.
 
 The checkpoints are ordinary field checkpoints (the stream MLP is a field without

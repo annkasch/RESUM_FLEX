@@ -58,6 +58,18 @@ def plot_surrogate_run(directory):
                         title=f"{fidelity.upper()} {split}, best checkpoint: "
                         "z = (hits − Σp) / √Σp(1−p)",
                     )
+                if "within_point_gain_null" in arrays:
+                    plot_within_point_gain(
+                        arrays,
+                        directory / f"{fidelity}_{split}_within_point_gain.png",
+                        title=f"{fidelity.upper()} {split}, best checkpoint",
+                    )
+                if "feature_calibration_events" in arrays:
+                    plot_feature_calibration(
+                        arrays,
+                        directory / f"{fidelity}_{split}_feature_calibration.png",
+                        title=f"{fidelity.upper()} {split}, best checkpoint",
+                    )
         fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
         for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
             for split in ("train", "validation") if fidelity == "lf" else ("validation",):
@@ -90,6 +102,87 @@ def plot_surrogate_run(directory):
         plot_calibration(directory, fidelity, save)
     if (directory / "context_sweep.json").exists():
         plot_context_sweep(directory, save)
+
+
+def plot_within_point_gain(arrays, out_path, *, title):
+    """Log-loss gain per design point against its null bands (labels drawn from p)."""
+    from viz.dispatch import plot_coverage_test
+
+    gain = arrays["within_point_gain"]  # [B]
+    expected = arrays["within_point_expected_gain"]  # [B]
+    null = arrays["within_point_gain_null"]  # [3, 2, B]: ±1/2/3σ quantiles, lower/upper
+    intervals = {k: (null[k - 1, 0], null[k - 1, 1]) for k in (1, 2, 3)}
+    low = min(float(null[2, 0].min()), float(gain.min()))
+    high = max(float(null[2, 1].max()), float(gain.max()))
+    pad = 0.05 * (high - low) or 1e-3
+    plot_coverage_test(
+        gain,
+        expected,
+        np.sqrt(arrays["within_point_gain_variance"]),
+        out_path=out_path,
+        title=f"{title}: within-design-point log-loss gain vs model null",
+        xlabel="Design point (sorted by expected gain)",
+        predicted_label="expected gain (model)",
+        raw_label="observed gain",
+        ylabel="Σ loss(p̄) − loss(p) per design point [nats]",
+        intervals=intervals,
+        interval_label="σ-quantile",
+        nominal_label="target",
+        ylim=(low - pad, high + pad),
+        order="predicted",
+    )
+
+
+def plot_feature_calibration(arrays, out_path, *, title):
+    """Observed and predicted hit fraction in equal-count bins of each input feature."""
+    names = [str(n) for n in arrays["feature_calibration_names"]]
+    events = arrays["feature_calibration_events"]  # [F, bins]
+    hits, predicted = arrays["feature_calibration_hits"], arrays["feature_calibration_predicted"]
+    variance, value = arrays["feature_calibration_variance"], arrays["feature_calibration_value"]
+    columns = min(len(names), 4)
+    rows = -(-len(names) // columns)
+    fig, axes = plt.subplots(
+        2 * rows,
+        columns,
+        figsize=(4 * columns, 4.5 * rows),
+        squeeze=False,
+        sharex="col",
+        gridspec_kw={"height_ratios": [3, 1] * rows},
+        layout="constrained",
+    )
+    for f, name in enumerate(names):
+        top, bottom = (
+            axes[2 * (f // columns), f % columns],
+            axes[2 * (f // columns) + 1, f % columns],
+        )
+        observed = hits[f] / events[f]
+        lower, upper = _wilson(hits[f], events[f])
+        top.errorbar(
+            value[f],
+            observed,
+            yerr=[np.maximum(observed - lower, 0), np.maximum(upper - observed, 0)],
+            fmt="o",
+            ms=3,
+            capsize=2,
+            color="black",
+            label="observed",
+        )
+        top.plot(value[f], predicted[f] / events[f], "C0-", label="predicted")
+        top.set(title=name, ylabel="Hit fraction (bin)")
+        top.grid(alpha=0.2)
+        z = (hits[f] - predicted[f]) / np.sqrt(variance[f])
+        bottom.axhspan(-2, 2, color="gray", alpha=0.15)
+        bottom.plot(value[f], z, "o-", ms=3)
+        bottom.axhline(0, color="black", lw=0.8)
+        bottom.set(xlabel=f"{name} (bin median)", ylabel="z")
+        bottom.grid(alpha=0.2)
+    for f in range(len(names), rows * columns):
+        axes[2 * (f // columns), f % columns].set_visible(False)
+        axes[2 * (f // columns) + 1, f % columns].set_visible(False)
+    axes[0, 0].legend(fontsize=8)
+    fig.suptitle(f"{title}: calibration per input feature (equal-count bins)")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
 
 
 def _wilson(hits, events, z=1.96):
@@ -381,6 +474,14 @@ def plot_stream_run(directory):
     ax.grid(alpha=0.2)
     save(fig, "stream_history")
     plot_calibration(directory, "stream", save)
+    if (directory / "stream_validation_best.npz").exists():
+        with np.load(directory / "stream_validation_best.npz") as arrays:
+            if "feature_calibration_events" in arrays:
+                plot_feature_calibration(
+                    arrays,
+                    directory / "stream_feature_calibration.png",
+                    title="Stream validation events, best checkpoint",
+                )
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
     for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
         path = directory / f"stream_validation_{checkpoint}.npz"

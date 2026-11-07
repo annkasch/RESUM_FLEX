@@ -34,8 +34,11 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
 - `checkpoints/{best,final}/`: versioned model manifest and backend weights.
 - `history.json`, `sampling_audit.json`, `metrics.json`.
 - `{lf,hf}_{train,validation}_{best,final}.npz` where evaluated: logits, labels,
-  voxel means, residuals, and PR arrays. Only LF training is evaluated.
-- Shared PNG/PDF validation-history, mean/residual and PR plots.
+  voxel means, residuals, PR arrays and the per-design-point within-point gain terms;
+  held-out splits add the gain null bands and the feature-calibration bins
+  (`docs/evaluation.md`). Only LF training is evaluated.
+- Shared PNG/PDF validation-history, mean/residual and PR plots; per held-out split the
+  within-design-point gain and the feature-calibration plots.
 
 The Python entry point is `core.surrogates.experiment.run_experiment(config)`.
 Notebooks can call it and display artifacts, without duplicating a training loop.
