@@ -16,6 +16,19 @@ SLOPE_ROUNDING = 1e-9
 
 _EVALUATION_THREADS = None
 
+# Central bootstrap intervals as percentiles: ±1σ (68 %) and 95 %, both from the same draws.
+INTERVAL_PERCENTILES = {"ci68": (15.865525, 84.134475), "ci95": (2.5, 97.5)}
+
+
+def bootstrap_bands(key, values):
+    """{key_ci68, key_ci95}: central intervals of finite bootstrap values (None if none)."""
+    values = np.asarray(values, dtype=float)
+    finite = values[np.isfinite(values)]
+    return {
+        f"{key}_{name}": [float(v) for v in np.percentile(finite, q)] if finite.size else None
+        for name, q in INTERVAL_PERCENTILES.items()
+    }
+
 
 @contextmanager
 def evaluation_threads(n: int):

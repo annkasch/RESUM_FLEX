@@ -92,8 +92,8 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
 - Design-point data split it exactly: `phi_gain = (W(p') - W(p)) / Σk` with `W` the gain
   over each design point's own mean (as `within_point_log_loss_gain`), `rate_gain = gain -
   phi_gain`. Streams report the total only.
-- `*_ci95`: bootstrap over design points (streams: 1000 seeded random event blocks), 200
-  resamples. `trees` per fold, `folds`, `positives`; all gains `None` with a `skipped`
+- `*_ci68`, `*_ci95`: bootstrap over design points (streams: 1000 seeded random event
+  blocks), 200 resamples. `trees` per fold, `folds`, `positives`; all gains `None` with a `skipped`
   reason below `min_positives` or with fewer than two units.
 - Arrays: `residual_logits` (logit p'; padding and unused stream events NaN),
   `residual_fold` (−1 there), per design point `residual_gain_per_point`,
@@ -116,8 +116,9 @@ Read-out after training (held-out splits only, not used for selection):
 
 - `spearman_noise_ceiling`: median Spearman r over 200 label sets redrawn from the
   model's own p, i.e. what a model equal to the truth would reach at this noise.
-- `*_ci95`: 95% bootstrap intervals over voxels (200 resamples) for log loss, AP,
-  Spearman r, `within_point_log_loss_gain` and `within_point_auc`. Use them to compare runs.
+- `*_ci68`, `*_ci95`: central 68 % (±1σ) and 95 % bootstrap intervals over voxels, from the
+  same 200 resamples, for log loss, AP, Spearman r, `within_point_log_loss_gain` and
+  `within_point_auc`. Use them to compare runs.
 - `within_point_gain_coverage`: labels redrawn 1000 times from the model's own p give the
   null distribution of each `G_b`; fraction of design points inside its ±1/2/3σ quantiles
   (Gaussian tail probabilities). Design points with constant predictions are skipped

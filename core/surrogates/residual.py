@@ -14,6 +14,8 @@ LightGBM is imported here only (optional ``lgbm`` extra); inputs and outputs are
 import numpy as np
 from scipy.special import expit, logit
 
+from core.surrogates.evaluation import bootstrap_bands, feature_columns
+
 # SeedSequence key under the evaluation seed (read-out keys 0-3 are taken).
 RESIDUAL_KEY = 4
 # Sub-streams under RESIDUAL_KEY.
@@ -124,22 +126,12 @@ def _fit_fold(x, y, z, train_units, unit, unit_positives, settings, rng):
     return lgb.train(params, refit, num_boost_round=trees), trees
 
 
-def _interval(values):
-    values = np.asarray(values, dtype=float)
-    values = values[np.isfinite(values)]
-    if not values.size:
-        return None
-    return [float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))]
-
-
 def design_point_residual(target, labels, logits, settings, *, seed):
     """residual_test on a design-point batch, split by design point.
 
     target: StandardBatch (θ, φ, mask); labels, logits: [B, N]. Per-event arrays come back
     as [B, N] with padding NaN (``residual_logits``) or -1 (``residual_fold``).
     """
-    from core.surrogates.evaluation import feature_columns
-
     mask = target.event_mask  # [B, N]
     _, values = feature_columns(target)  # [B, N, F]
     rows = np.nonzero(mask)[0]  # [E] design point of each valid event
@@ -218,10 +210,13 @@ def residual_test(features, labels, logits, groups, settings, *, seed):
     positives = int(y.sum())
     metrics = dict(
         gain=None,
+        gain_ci68=None,
         gain_ci95=None,
         phi_gain=None,
+        phi_gain_ci68=None,
         phi_gain_ci95=None,
         rate_gain=None,
+        rate_gain_ci68=None,
         rate_gain_ci95=None,
         events=int(len(y)),
         positives=positives,
@@ -277,7 +272,7 @@ def residual_test(features, labels, logits, groups, settings, *, seed):
             samples["rate_gain"].append((total_b[index] - phi_b[index]).sum() / k_draw)
     metrics.update(
         gain=float(total_b.sum() / positives),
-        gain_ci95=_interval(samples["gain"]),
+        **bootstrap_bands("gain", samples["gain"]),
         folds=k,
         trees=trees,
     )
@@ -285,9 +280,9 @@ def residual_test(features, labels, logits, groups, settings, *, seed):
     if phi_b is not None:
         metrics.update(
             phi_gain=float(phi_b.sum() / positives),
-            phi_gain_ci95=_interval(samples["phi_gain"]),
             rate_gain=float((total_b - phi_b).sum() / positives),
-            rate_gain_ci95=_interval(samples["rate_gain"]),
+            **bootstrap_bands("phi_gain", samples["phi_gain"]),
+            **bootstrap_bands("rate_gain", samples["rate_gain"]),
         )
         arrays.update(residual_gain_per_point=total_b, residual_phi_gain_per_point=phi_b)
     return metrics, arrays

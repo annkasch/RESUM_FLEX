@@ -12,6 +12,7 @@ from core.precision_recall import precision_recall
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
 from core.surrogates.evaluation import (
+    bootstrap_bands,
     evaluate_surrogate,
     feature_calibration,
     feature_columns,
@@ -95,11 +96,7 @@ def bootstrap_intervals(target, labels, logits, *, seed, draws=READOUT_DRAWS):
         samples["spearman_r"].append(_spearman(observed[index], predicted[index]))
     intervals = {}
     for key, values in samples.items():
-        values = np.asarray(values, dtype=float)
-        finite = values[np.isfinite(values)]
-        intervals[f"{key}_ci95"] = (
-            [float(v) for v in np.percentile(finite, [2.5, 97.5])] if finite.size else None
-        )
+        intervals.update(bootstrap_bands(key, values))
     return intervals
 
 

@@ -161,6 +161,7 @@ def test_readout_returns_null_bands_feature_bins_and_intervals():
     assert set(readout["feature_calibration"]) == {"theta_0", "phi_0", "phi_1"}
     for key in ("within_point_log_loss_gain", "within_point_auc"):
         low, high = readout[f"{key}_ci95"]
+        assert low <= readout[f"{key}_ci68"][0] <= readout[f"{key}_ci68"][1] <= high
         assert low <= metrics[key] <= high
 
 

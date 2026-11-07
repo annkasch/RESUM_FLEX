@@ -126,7 +126,8 @@ def test_noise_ceiling_and_bootstrap_are_seeded():
     point, _ = evaluate_surrogate(Fixed(p), batch)
     for key in ("bernoulli_log_loss", "average_precision", "spearman_r"):
         low, high = intervals[f"{key}_ci95"]
-        assert low <= point[key] <= high
+        inner_low, inner_high = intervals[f"{key}_ci68"]
+        assert low <= inner_low <= point[key] <= inner_high <= high
     assert intervals == bootstrap_intervals(batch, batch.labels, logit(p), seed=1, draws=50)
 
 

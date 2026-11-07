@@ -66,6 +66,9 @@ def test_missing_phi_dependence_is_the_phi_part(data):
     # p ∝ 0.5 + φ0 with φ0 ~ U(0, 1): the ideal gain is ≈ 1/24 nats per positive.
     assert 0.025 < metrics["phi_gain"] < 0.07
     assert metrics["gain_ci95"][0] > 0
+    for key in ("gain", "phi_gain", "rate_gain"):
+        low, high = metrics[f"{key}_ci95"]
+        assert low < metrics[f"{key}_ci68"][0] < metrics[f"{key}_ci68"][1] < high
     assert abs(metrics["rate_gain"]) < 0.005
     assert np.isclose(metrics["gain"], metrics["phi_gain"] + metrics["rate_gain"])
     positives = batch.labels[batch.event_mask].sum()
