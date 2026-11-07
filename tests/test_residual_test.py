@@ -9,9 +9,15 @@ from scipy.special import logit
 
 from core.surrogates.evaluation import evaluate_surrogate, feature_columns, within_point_terms
 from core.surrogates.readout import readout_metrics
-from core.surrogates.residual import balanced_folds, require_lightgbm, residual_test, within_gain
+from core.surrogates.residual import (
+    balanced_folds,
+    require_lightgbm,
+    residual_test,
+    stream_residual,
+    within_gain,
+)
 from core.surrogates.stream_training import stream_metrics
-from schemas.surrogates import ResidualTestConfig
+from schemas.surrogates import ResidualTestConfig, SurrogateRunConfig
 from tests.test_within_point_metrics import Fixed, phi_dependent, point_mean
 
 SETTINGS = ResidualTestConfig()
@@ -108,6 +114,36 @@ def test_stream_metrics_split_by_event(data):
     assert result["units"] == "events" and result["phi_gain"] is None
     assert result["gain_ci95"][0] > 0
     assert arrays["residual_logits"].dtype == np.float32
+
+
+def test_stream_subsample_keeps_about_max_positives(data):
+    batch, p = data
+    features, labels, z, _ = flat_inputs(batch, point_mean(batch, p))
+    settings = ResidualTestConfig(max_positives=1000)
+    metrics, arrays = stream_residual(features, labels, z, settings, seed=1)
+    assert metrics["positives_available"] == labels.sum() > 2000
+    assert metrics["events_available"] == len(labels)
+    assert np.isclose(metrics["subsample_fraction"], 1000 / labels.sum())
+    assert 850 < metrics["positives"] < 1150
+    kept = ~np.isnan(arrays["residual_logits"])
+    assert kept.sum() == metrics["events"] and (arrays["residual_fold"][~kept] == -1).all()
+    assert metrics["gain_ci95"][0] > 0  # the missing φ0 trend is still found
+    again, _ = stream_residual(features, labels, z, settings, seed=1)
+    assert again == metrics
+    every, _ = stream_residual(features, labels, z, ResidualTestConfig(max_positives=None), seed=1)
+    assert every["subsample_fraction"] == 1.0 and every["events"] == len(labels)
+
+
+def test_max_positives_only_for_stream_records():
+    base = dict(
+        model={"kind": "mlp"},
+        training={"backend": "neural"},
+        data_directory="d",
+        output_directory="o",
+    )
+    SurrogateRunConfig(**base, residual_test={"max_positives": 20_000})  # default: accepted
+    with pytest.raises(ValidationError, match="stream validation events only"):
+        SurrogateRunConfig(**base, residual_test={"max_positives": 5000})
 
 
 def test_config_rejects_unknown_fields():

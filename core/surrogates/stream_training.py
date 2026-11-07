@@ -219,12 +219,11 @@ def stream_metrics(labels, logits, *, reference_rate, features=None, residual=No
     if residual is not None:
         if features is None:
             raise ValueError("The residual test needs the record features")
-        from core.surrogates.residual import residual_test
+        from core.surrogates.residual import stream_residual
 
-        metrics["residual_test"], residual_arrays = residual_test(
-            features, labels, logits, None, residual, seed=seed
+        metrics["residual_test"], residual_arrays = stream_residual(
+            features, labels, logits, residual, seed=seed
         )
-        residual_arrays["residual_logits"] = residual_arrays["residual_logits"].astype(np.float32)
         arrays.update(residual_arrays)
     return metrics, arrays
 

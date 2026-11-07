@@ -56,6 +56,7 @@ parentheses.
 | `max_trees` | Upper bound on trees; the count is set by inner early stopping (500). |
 | `patience` | Early-stopping rounds without improvement (20). |
 | `threads` | LightGBM threads (1). |
+| `max_positives` | Stream validation events only: keep a seeded uniform fraction `min(1, max_positives / positives)` of all events, so about this many positives remain; same fraction for hits and non-hits, so no weights; `null` = all (20000). A changed value is rejected in training configs. |
 
 ### Model (`model`)
 

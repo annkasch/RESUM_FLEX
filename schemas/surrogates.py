@@ -674,6 +674,10 @@ class ResidualTestConfig(StrictConfigModel):
     max_trees: int = Field(default=500, ge=1)
     patience: int = Field(default=20, ge=1)
     threads: int = Field(default=1, ge=1)
+    # Stream validation events only: keep a seeded uniform fraction of all events so that
+    # about this many positives remain (precision is set by positives; cost by events).
+    # None = all events. Not allowed in training configs (no stream records there).
+    max_positives: int | None = Field(default=20_000, ge=1)
 
 
 class SurrogateRunConfig(SurrogateConfig):
@@ -729,6 +733,14 @@ class SurrogateRunConfig(SurrogateConfig):
         sweep = self.validation_context_sweep
         if any(n <= 0 for n in sweep) or len(set(sweep)) != len(sweep):
             raise ValueError("validation_context_sweep needs unique positive sizes")
+        return self
+
+    @model_validator(mode="after")
+    def residual_test_on_design_points(self):
+        # A changed value would be inert here; the default is accepted (resolved configs).
+        default = ResidualTestConfig.model_fields["max_positives"].default
+        if self.residual_test is not None and self.residual_test.max_positives != default:
+            raise ValueError("residual_test.max_positives is for stream validation events only")
         return self
 
     @model_validator(mode="after")

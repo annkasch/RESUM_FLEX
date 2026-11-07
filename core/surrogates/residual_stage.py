@@ -13,8 +13,13 @@ from pathlib import Path
 
 import numpy as np
 
-from core.surrogates.residual import design_point_residual, require_lightgbm, residual_test
-from schemas.surrogates import ResidualRunConfig, StreamRunConfig, SurrogateRunConfig
+from core.surrogates.residual import design_point_residual, require_lightgbm, stream_residual
+from schemas.surrogates import (
+    ResidualRunConfig,
+    ResidualTestConfig,
+    StreamRunConfig,
+    SurrogateRunConfig,
+)
 
 
 def _same_labels(saved, loaded, name):
@@ -107,6 +112,9 @@ def run_residual(config: ResidualRunConfig) -> Path:
         missing = [f"{s}/{f}" for s, f in sets if (s, f) not in available]
         if missing:
             raise ValueError(f"{run} did not evaluate {missing}; it has {available}")
+    default = ResidualTestConfig.model_fields["max_positives"].default
+    if config.residual_test.max_positives != default and all(f != "stream" for _, f in sets):
+        raise ValueError("max_positives applies to stream validation events; none selected")
     stream_run = "event_source" in experiment
     if stream_run:
         targets, records, seed = _stream_run_inputs(experiment, sets)
@@ -132,8 +140,8 @@ def run_residual(config: ResidualRunConfig) -> Path:
 
                 _same_labels(labels, event_labels(torch.as_tensor(records)).numpy(), name)
                 features = records[:, :-1].astype(np.float64)
-                metrics, arrays = residual_test(
-                    features, labels, logits, None, config.residual_test, seed=seed
+                metrics, arrays = stream_residual(
+                    features, labels, logits, config.residual_test, seed=seed
                 )
             else:
                 target = targets[split, fidelity]

@@ -79,7 +79,10 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
   count); the trees of fold f are fitted on the other folds and score fold f, so every
   event is scored once by trees that never saw its design point (no leakage through the
   shared θ or the shared context labels). Stream validation records are independent and are
-  split by event.
+  split by event; with `max_positives` (default 20 000) only a seeded uniform fraction of
+  them is used, so that about that many positives remain (precision is set by positives,
+  cost by events; e.g. 20 M events at a ratio 0.003 → 6.7 M). Stream results add
+  `events_available`, `positives_available`, `subsample_fraction`.
 - Trees: small fixed trees; per outer fold the number of trees comes from early stopping on
   one inner fold of the training folds (same split rule), then the trees are refitted on
   all training folds. Zero trees (p' = p) if no tree beats p on the inner fold.
@@ -92,8 +95,9 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
 - `*_ci95`: bootstrap over design points (streams: 1000 seeded random event blocks), 200
   resamples. `trees` per fold, `folds`, `positives`; all gains `None` with a `skipped`
   reason below `min_positives` or with fewer than two units.
-- Arrays: `residual_logits` (logit p', padding NaN), `residual_fold` (padding −1), per design
-  point `residual_gain_per_point`, `residual_phi_gain_per_point` (nats).
+- Arrays: `residual_logits` (logit p'; padding and unused stream events NaN),
+  `residual_fold` (−1 there), per design point `residual_gain_per_point`,
+  `residual_phi_gain_per_point` (nats).
 - Cost: 2 LightGBM fits per fold, ≈ 1.5 s for 6·10⁴ events on one thread.
 - Finished runs: `python -m core.surrogates residual RESIDUAL.yaml` (`docs/configs.md`)
   runs the same test on the saved logits and labels, without retraining; it writes
@@ -129,7 +133,7 @@ Read-out after training (held-out splits only, not used for selection):
 
 Seeds: `SeedSequence([validation_seed, k])`, k = 0 selection subset, 1 noise
 ceiling, 2 bootstrap, 3 within-design-point null, 4 residual test (sub-keys 0 folds,
-1 bootstrap, 2 tree seeds, 3 stream blocks). Stream runs use `evaluation_seed`.
+1 bootstrap, 2 tree seeds, 3 stream blocks, 4 stream subsample). Stream runs use `evaluation_seed`.
 
 ## Blinded test sets
 

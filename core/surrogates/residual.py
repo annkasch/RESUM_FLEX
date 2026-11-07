@@ -17,7 +17,7 @@ from scipy.special import expit, logit
 # SeedSequence key under the evaluation seed (read-out keys 0-3 are taken).
 RESIDUAL_KEY = 4
 # Sub-streams under RESIDUAL_KEY.
-_FOLD_KEY, _BOOTSTRAP_KEY, _TREE_KEY, _BLOCK_KEY = 0, 1, 2, 3
+_FOLD_KEY, _BOOTSTRAP_KEY, _TREE_KEY, _BLOCK_KEY, _SUBSAMPLE_KEY = 0, 1, 2, 3, 4
 BOOTSTRAP_DRAWS = 200  # as the other read-out intervals
 # Ungrouped events are bootstrapped in this many seeded random blocks.
 BOOTSTRAP_BLOCKS = 1000
@@ -151,6 +151,45 @@ def design_point_residual(target, labels, logits, settings, *, seed):
             full = np.full(mask.shape, fill, dtype=float if key == "residual_logits" else int)
             full[mask] = arrays[key]
             arrays[key] = full  # [B, N]
+    return metrics, arrays
+
+
+def stream_residual(features, labels, logits, settings, *, seed):
+    """residual_test on independent stream records, split by event.
+
+    With ``settings.max_positives``, a seeded uniform fraction min(1, max_positives /
+    positives) of all events is kept: the same fraction for hits and non-hits, so the gain
+    needs no weights. features: [M, W]; labels, logits: [M]. Per-event arrays come back as
+    [M] with NaN (``residual_logits``) or -1 (``residual_fold``) for events not kept.
+    """
+    labels = np.asarray(labels)
+    positives = int(labels.sum())
+    fraction = 1.0
+    if settings.max_positives is not None and positives > settings.max_positives:
+        fraction = settings.max_positives / positives
+    keep = (
+        _rng(seed, _SUBSAMPLE_KEY).random(len(labels)) < fraction
+        if fraction < 1
+        else np.ones(len(labels), dtype=bool)
+    )  # [M]
+    metrics, arrays = residual_test(
+        np.asarray(features)[keep],
+        labels[keep],
+        np.asarray(logits)[keep],
+        None,
+        settings,
+        seed=seed,
+    )
+    metrics.update(
+        events_available=int(len(labels)),
+        positives_available=positives,
+        subsample_fraction=fraction,
+    )
+    for key, fill in (("residual_logits", np.nan), ("residual_fold", -1)):
+        if key in arrays:
+            full = np.full(len(labels), fill, dtype=np.float32 if key == "residual_logits" else int)
+            full[keep] = arrays[key]
+            arrays[key] = full  # [M]
     return metrics, arrays
 
 

@@ -43,8 +43,9 @@ The stream validation events also get the calibration per record column (`record
 `stream_feature_calibration.png`; `docs/evaluation.md`). With `residual_test:` (settings
 in `docs/configs.md`) the validation events get the residual learnability test split by
 event (records are independent; the total gain only) and the design-point evaluation sets
-get it split by design point, as in a training run. LightGBM runs on all validation events,
-so a large `validation_events` makes it slow. Several GPUs: `torchrun`
+get it split by design point, as in a training run. On the validation events it uses a
+seeded uniform subsample with about `max_positives` positives (20 000), so its cost stays
+bounded for any `validation_events`. Several GPUs: `torchrun`
 (DistributedDataParallel). bf16 autocast and `torch.compile` are options. Run outputs label the stream metrics with fidelity `stream`.
 
 The checkpoints are ordinary field checkpoints (the stream MLP is a field without
