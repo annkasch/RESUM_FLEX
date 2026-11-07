@@ -158,12 +158,13 @@ def _voxel_episodes(config: StreamRunConfig):
     return episodes, history_episode, data
 
 
-def stream_metrics(labels, logits, *, reference_rate, features=None):
+def stream_metrics(labels, logits, *, reference_rate, features=None, residual=None, seed=0):
     """Event metrics of events without design-point structure, as in voxel evaluation.
 
     labels, logits: [M] numpy; features: optional [M, W] record input columns, which add
-    the calibration per record column (``record_j``). Returns (metrics, arrays) with
-    calibration bins and the precision-recall curve.
+    the calibration per record column (``record_j``) and, with ``residual``
+    (ResidualTestConfig), the residual learnability test split by event. Returns (metrics,
+    arrays) with calibration bins and the precision-recall curve.
     """
     from scipy.special import expit
 
@@ -215,10 +216,20 @@ def stream_metrics(labels, logits, *, reference_rate, features=None):
             names, features, labels, p
         )
         arrays.update(feature_arrays)
+    if residual is not None:
+        if features is None:
+            raise ValueError("The residual test needs the record features")
+        from core.surrogates.residual import residual_test
+
+        metrics["residual_test"], residual_arrays = residual_test(
+            features, labels, logits, None, residual, seed=seed
+        )
+        residual_arrays["residual_logits"] = residual_arrays["residual_logits"].astype(np.float32)
+        arrays.update(residual_arrays)
     return metrics, arrays
 
 
-def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device):
+def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device, residual=None):
     """metrics.json, arrays and plots of best and final, as for voxel training.
 
     Voxel sets get the voxel-training metrics (and the last-layer predictive scores); the
@@ -248,6 +259,8 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
             torch.cat(logits).numpy(),
             reference_rate=prevalence,
             features=validation[:, :-1].float().cpu().numpy(),
+            residual=residual,
+            seed=seed,
         )
         rows.append(
             dict(
@@ -261,7 +274,9 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
         np.savez_compressed(output / f"stream_validation_{checkpoint}.npz", **arrays)
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
-            readout, readout_arrays = readout_metrics(episode.target, arrays, seed=seed)
+            readout, readout_arrays = readout_metrics(
+                episode.target, arrays, seed=seed, residual=residual
+            )
             summary.update(readout)
             arrays.update(readout_arrays)
             if getattr(saved, "last_layer", None) is not None:
@@ -299,6 +314,10 @@ def run_stream(config: StreamRunConfig) -> dict:
         dist.init_process_group("nccl" if device.type == "cuda" else "gloo")
         if device.type == "cuda":
             torch.cuda.set_device(device)
+    if config.residual_test is not None:
+        from core.surrogates.residual import require_lightgbm
+
+        require_lightgbm()
     output = Path(config.output_directory)
     if rank == 0:
         if output.exists() and any(output.iterdir()):
@@ -437,7 +456,13 @@ def run_stream(config: StreamRunConfig) -> dict:
                     save_surrogate(checkpoints / name, selected)
         with compute.stage("evaluation"):
             _evaluate_checkpoints(
-                output, validation, episodes, prevalence, config.evaluation_seed, device
+                output,
+                validation,
+                episodes,
+                prevalence,
+                config.evaluation_seed,
+                device,
+                residual=config.residual_test,
             )
         (output / "experiment.json").write_text(
             json.dumps(dict(metadata, report=report), indent=2, allow_nan=False)

@@ -124,9 +124,10 @@ def within_point_null(target, logits, *, seed, draws=NULL_DRAWS):
     }
 
 
-def readout_metrics(target, arrays, *, seed):
-    """Noise ceiling, bootstrap intervals, within-design-point null coverage and feature
-    calibration for one evaluated episode. Returns (metrics, arrays)."""
+def readout_metrics(target, arrays, *, seed, residual=None):
+    """Noise ceiling, bootstrap intervals, within-design-point null coverage, feature
+    calibration and, with ``residual`` (ResidualTestConfig), the residual learnability
+    test for one evaluated episode. Returns (metrics, arrays)."""
     probabilities = expit(arrays["logits"])
     metrics = dict(
         spearman_noise_ceiling=spearman_noise_ceiling(target, probabilities, seed=seed),
@@ -152,6 +153,19 @@ def readout_metrics(target, arrays, *, seed):
             names, values[mask], arrays["labels"][mask], probabilities[mask]
         )
         extra.update(feature_arrays)
+    if residual is not None:
+        from core.surrogates.residual import residual_test
+
+        rows = np.nonzero(mask)[0]  # [E] design point of each valid event
+        metrics["residual_test"], residual_arrays = residual_test(
+            values[mask], arrays["labels"][mask], arrays["logits"][mask], rows, residual, seed=seed
+        )
+        if residual_arrays:
+            for key in ("residual_logits", "residual_fold"):
+                full = np.full(mask.shape, np.nan if key == "residual_logits" else -1)
+                full[mask] = residual_arrays.pop(key)
+                extra[key] = full  # [B, N]; padding NaN / -1
+            extra.update(residual_arrays)
     return metrics, extra
 
 

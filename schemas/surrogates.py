@@ -653,6 +653,29 @@ class TrainingSet(StrictConfigModel):
     fidelity: Fidelity
 
 
+class ResidualTestConfig(StrictConfigModel):
+    """Residual learnability test (read-out only, needs the ``lgbm`` extra).
+
+    LightGBM learns a correction to the model logit from (inputs, logit p) by
+    cross-fitting; its held-out log-loss gain shows structure the event model missed
+    (docs/evaluation.md). Design-point sets are split by design point, stream
+    validation records by event.
+    """
+
+    folds: int = Field(default=5, ge=2)
+    # Below this many positives the test is not run (metrics None): precision is set by
+    # positives, not by design points.
+    min_positives: int = Field(default=50, ge=1)
+    # Small fixed trees; the number of trees comes from inner early stopping.
+    num_leaves: int = Field(default=7, ge=2)
+    learning_rate: float = Field(default=0.05, gt=0, le=1)
+    min_data_in_leaf: int = Field(default=200, ge=1)
+    lambda_l2: float = Field(default=1.0, ge=0)
+    max_trees: int = Field(default=500, ge=1)
+    patience: int = Field(default=20, ge=1)
+    threads: int = Field(default=1, ge=1)
+
+
 class SurrogateRunConfig(SurrogateConfig):
     lf_validation: bool = True
     hf_validation: bool = True
@@ -693,6 +716,8 @@ class SurrogateRunConfig(SurrogateConfig):
     selection_max_voxels: int | None = Field(default=None, gt=0)
     # CPU threads for evaluation passes only; training steps keep their own thread count.
     evaluation_threads: int = Field(default=1, gt=0)
+    # Residual learnability test on every held-out split (read-out); None = off.
+    residual_test: ResidualTestConfig | None = None
 
     @property
     def validation_context_pool(self) -> int:
@@ -846,6 +871,8 @@ class StreamRunConfig(StrictConfigModel):
     # plot; seeded subset, None = all). Selection itself uses the validation events.
     history_voxels: int | None = Field(default=500, gt=0)
     evaluation_seed: int = 0
+    # Residual learnability test on the validation events and the evaluation sets; None = off.
+    residual_test: ResidualTestConfig | None = None
     unblind_test: bool = False
     output_directory: Path
     dim_theta: int = Field(ge=1)

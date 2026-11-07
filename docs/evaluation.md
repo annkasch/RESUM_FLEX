@@ -67,6 +67,38 @@ only, so errors that cancel along a column (interactions) are missed, and if the
 distribution differs between design points, rate differences can partly mimic or hide a
 φ-trend (the `within_point_*` metrics do not have this problem).
 
+### Residual learnability test
+
+`residual_test` (read-out, opt-in via `residual_test:` in the config, `lgbm` extra; module
+`core/surrogates/residual.py`). Feature calibration sees projections only; the
+within-design-point gain says how much φ-dependence the model has, not what it misses. This
+test asks whether anything learnable is left: LightGBM (`binary` objective = BCE,
+`init_score` = model logit) learns `logit p' = logit p + f(θ, φ, logit p)`.
+
+- Cross-fitting: design points go, whole, into `folds` folds (seeded, balanced by positive
+  count); the trees of fold f are fitted on the other folds and score fold f, so every
+  event is scored once by trees that never saw its design point (no leakage through the
+  shared θ or the shared context labels). Stream validation records are independent and are
+  split by event.
+- Trees: small fixed trees; per outer fold the number of trees comes from early stopping on
+  one inner fold of the training folds (same split rule), then the trees are refitted on
+  all training folds. Zero trees (p' = p) if no tree beats p on the inner fold.
+- `gain = (L(p) - L(p')) / Σk`, nats per positive, `L` = summed BCE. If p is right its
+  expectation is ≤ 0 (p is the minimizer and the trees are fitted elsewhere), so a gain whose
+  `gain_ci95` excludes 0 means p misses structure in (θ, φ).
+- Design-point data split it exactly: `phi_gain = (W(p') - W(p)) / Σk` with `W` the gain
+  over each design point's own mean (as `within_point_log_loss_gain`), `rate_gain = gain -
+  phi_gain`. Streams report the total only.
+- `*_ci95`: bootstrap over design points (streams: 1000 seeded random event blocks), 200
+  resamples. `trees` per fold, `folds`, `positives`; all gains `None` with a `skipped`
+  reason below `min_positives` or with fewer than two units.
+- Arrays: `residual_logits` (logit p', padding NaN), `residual_fold` (padding −1), per design
+  point `residual_gain_per_point`, `residual_phi_gain_per_point` (nats).
+- Cost: 2 LightGBM fits per fold, ≈ 1.5 s for 6·10⁴ events on one thread.
+
+Precision is set by positives, not design points. A positive gain says that something is
+learnable, not what; compare with the per-feature calibration to locate it.
+
 Evaluation layout: each voxel's events are permuted with `validation_seed`. The
 targets are the events after `validation_context_pool = max(validation_context_events,
 *validation_context_sweep)`; the context is the first `n` of the pool. Every context
@@ -84,6 +116,7 @@ Read-out after training (held-out splits only, not used for selection):
   (`None` if all are). Cost ≈ 10 s per 10⁶ events. Arrays `within_point_gain_null`
   [3, 2, B]; plot `{fidelity}_{split}_within_point_gain.png` (best checkpoint).
 - `feature_calibration` (above); plot `{fidelity}_{split}_feature_calibration.png`.
+- `residual_test` (above), only with `residual_test:` in the config.
 - `context_sweep.json` / `context_sweep.png` (context models only): the metrics at
   every size in `validation_context_events` + `validation_context_sweep`, plus the
   standard size with all context labels set to 0. A flat curve, or zeroed labels
@@ -91,7 +124,8 @@ Read-out after training (held-out splits only, not used for selection):
 - `{fidelity}_calibration.png`: observed hit fraction vs mean p per bin, Wilson 95%.
 
 Seeds: `SeedSequence([validation_seed, k])`, k = 0 selection subset, 1 noise
-ceiling, 2 bootstrap, 3 within-design-point null.
+ceiling, 2 bootstrap, 3 within-design-point null, 4 residual test (sub-keys 0 folds,
+1 bootstrap, 2 tree seeds, 3 stream blocks). Stream runs use `evaluation_seed`.
 
 ## Blinded test sets
 

@@ -31,13 +31,14 @@ for config settings.
 - Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field for
   point-cloud data, 3-D direction), `transformer`, `bdt`, `legacy_cnp`. `mlp` and `field` also
   train on an event stream (`stream`, any record layout for the MLP).
-- Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based).
+- Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based); residual
+  learnability test in the read-out (`residual_test:`, `core/surrogates/residual.py`, LightGBM).
 
 ## Environment
 - Repo-local `.venv` from `pyproject.toml` + `uv.lock`; call `.venv/bin/python`,
-  `.venv/bin/pytest`, `.venv/bin/ruff` directly. Sync: `uv sync --extra gp --extra bdt`
-  (`gp` = GPy + Emukit, `bdt` = scikit-learn; `gp-numpy1` is the legacy NumPy-1 matrix only and
-  conflicts with `gp`).
+  `.venv/bin/pytest`, `.venv/bin/ruff` directly. Sync: `uv sync --extra gp --extra bdt --extra
+  lgbm` (`gp` = GPy + Emukit, `bdt` = scikit-learn, `lgbm` = LightGBM; `gp-numpy1` is the legacy
+  NumPy-1 matrix only and conflicts with `gp`).
 - `pyproject.toml` is the only dependency declaration; pixi only provides uv and tasks
   (`pixi run test-all` = NumPy 1 + 2 matrix in `.venv-numpy1/2`). Never edit `uv.lock` or
   `pixi.lock` by hand.
@@ -93,6 +94,7 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
 - Decoupling: PyTorch and GPy/Emukit stacks stay separate. GPy/Emukit are imported only in
   `core/surrogate_mfgp.py`, `core/binomial_gp.py`, `core/optimizer.py`; they meet the Torch
   models only through numpy (`core/mfgp_pipeline.py`, `core/surrogates/mfgp_stage.py`).
+  LightGBM is imported only in `core/surrogates/residual.py` (numpy in and out).
   `core/networks.py` must not import `core/surrogate_mfgp.py`; `schemas/` stays numpy-only.
 - CNP aggregator reduces over the event axis N, never the batch axis B.
 - Tensor shapes as inline comments, e.g. `z_phi: torch.Tensor,  # [B, N, Z]`

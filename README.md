@@ -13,6 +13,9 @@ cd RESUM_FLEX
 uv sync --extra gp      # or: pixi run uv sync --extra gp
 ```
 
+Optional extras: `bdt` (scikit-learn, BDT event model), `lgbm` (LightGBM, residual
+learnability test in the read-out).
+
 Run tests and jobs with `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`.
 
 ## Usage

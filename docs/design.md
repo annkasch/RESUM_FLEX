@@ -11,7 +11,7 @@ application DatasetProvider (core/surrogates/datasets.py; NpzBatches built in)
        └─ build_surrogate (core/surrogates/models.py) -> EventSurrogate (core/surrogates/base.py)
             NeuralSurrogate: cnp | mlp | field | transformer | legacy_cnp   TreeSurrogate: bdt
             fit: core/surrogates/training.py + stages.py; checkpoints.py -> checkpoints/{best,final}
-            evaluate: evaluation.py (+ readout.py)          driver: experiment.run_experiment
+            evaluate: evaluation.py (+ readout.py, residual.py) driver: experiment.run_experiment
        ├─ route A  last_layer.py (Laplace, final linear layer) -> rate draws per design point
        └─ route B  inference.py (predict: mean p per design point)
                      ├─ mfgp_stage.py -> mfgp_pipeline.py -> surrogate_mfgp.py (Emukit/GPy)
@@ -52,6 +52,7 @@ Module docstrings describe each file.
 | Losses, mixup, target sampling | `core/binary_losses.py`, `core/mixup.py`, `core/target_sampling.py` |
 | Training stages, checkpoint choice | `core/surrogates/stages.py`, `training.py`, `experiment.py` |
 | Metrics (count NLL, coverage, CRPS) | `core/surrogates/evaluation.py`, `core/gp_metrics.py` |
+| Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py` |
 | Bayesian last layer | `core/last_layer.py` (numpy math), `core/surrogates/last_layer.py` (torch side) |
 | GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` |
 | Binomial GP | `core/surrogates/binomial_stage.py`, `core/binomial_gp.py` |
@@ -75,7 +76,8 @@ synthetic phases, `legacy_cnp` kind).
   `core/binomial_gp.py` and `core/optimizer.py`, and these don't import Torch. The stacks have
   different NumPy/BLAS needs and GPy is an optional extra. They exchange numpy arrays only
   (`core/mfgp_pipeline.py`, `core/surrogates/mfgp_stage.py`), so either side can be replaced
-  or left out.
+  or left out. Likewise LightGBM (optional `lgbm` extra) is imported only in
+  `core/surrogates/residual.py`, inside its functions, and sees numpy arrays only.
 - **Scale before batching.** The encoder MLP ignores features ≥ ~10× smaller in range. GP ARD
   lengthscales compensate, the encoder cannot. No auto-scaling: silent unit changes would
   break predict-time queries. Persist the scaler with the checkpoint ([data.md](data.md)).

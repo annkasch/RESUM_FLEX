@@ -35,8 +35,8 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
 - `history.json`, `sampling_audit.json`, `metrics.json`.
 - `{lf,hf}_{train,validation}_{best,final}.npz` where evaluated: logits, labels,
   voxel means, residuals, PR arrays and the per-design-point within-point gain terms;
-  held-out splits add the gain null bands and the feature-calibration bins
-  (`docs/evaluation.md`). Only LF training is evaluated.
+  held-out splits add the gain null bands, the feature-calibration bins and, with
+  `residual_test:`, the residual-test arrays (`docs/evaluation.md`). Only LF training is evaluated.
 - Shared PNG/PDF validation-history, mean/residual and PR plots; per held-out split the
   within-design-point gain and the feature-calibration plots.
 

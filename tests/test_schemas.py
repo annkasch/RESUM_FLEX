@@ -294,6 +294,7 @@ def test_every_config_field_is_documented():
         s.CountSet,
         s.CountEvaluation,
         s.TrainingSet,
+        s.ResidualTestConfig,
     ]
     missing = sorted(
         f"{m.__name__}.{name}"

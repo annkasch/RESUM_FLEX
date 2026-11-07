@@ -37,6 +37,10 @@ def run_experiment(config: SurrogateRunConfig):
     output = config.output_directory
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
+    if config.residual_test is not None:
+        from core.surrogates.residual import require_lightgbm
+
+        require_lightgbm()
     compute = ComputeLog()
     with compute.stage("data_preparation"):
         provider, data_check = prepare_and_open(config)
@@ -227,7 +231,10 @@ def _evaluate(config, output, train, batches, episodes, load_split):
                 # Training metrics are in-sample; the read-out covers held-out splits only.
                 if split != "train":
                     readout, readout_arrays = readout_metrics(
-                        episode.target, arrays, seed=config.validation_seed
+                        episode.target,
+                        arrays,
+                        seed=config.validation_seed,
+                        residual=config.residual_test,
                     )
                     summary.update(readout)
                     arrays.update(readout_arrays)

@@ -25,6 +25,9 @@ gp-numpy1 = [
     "GPy>=1.13.2,<1.14",
     "emukit>=0.5.1",
 ]
+lgbm = [
+    "lightgbm>=4.3,<5",
+]
 
 [dependency-groups]
 # Pin Torch only in the reproducibility matrix so NumPy 1/2 comparisons do

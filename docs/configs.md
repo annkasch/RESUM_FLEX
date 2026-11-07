@@ -38,6 +38,23 @@ parentheses.
 | `validation_seed` | Seed of the evaluation context/target split (12345). |
 | `selection_max_voxels` | Select checkpoints on a seeded subset of this many validation voxels (all). |
 | `evaluation_threads` | CPU threads for evaluation passes (1). |
+| `residual_test` | Residual learnability test on every held-out split, settings below (none: off). Needs the `lgbm` extra; the run fails at start without it. |
+
+### Residual learnability test (`residual_test`)
+
+`ResidualTestConfig`, in training and stream configs (`docs/evaluation.md`).
+
+| Key | Meaning |
+|---|---|
+| `folds` | Cross-fitting folds, split by design point (stream records: by event) (5). |
+| `min_positives` | Fewer positives: not run, metrics `None` (50). |
+| `num_leaves` | Leaves per tree (7). |
+| `learning_rate` | LightGBM learning rate (0.05). |
+| `min_data_in_leaf` | Minimum events per leaf (200). |
+| `lambda_l2` | L2 penalty on leaf values (1.0). |
+| `max_trees` | Upper bound on trees; the count is set by inner early stopping (500). |
+| `patience` | Early-stopping rounds without improvement (20). |
+| `threads` | LightGBM threads (1). |
 
 ### Model (`model`)
 

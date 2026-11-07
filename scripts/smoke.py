@@ -16,6 +16,7 @@ stage; exits 1 at the first failing stage (its output is shown, the directory ke
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import subprocess
@@ -195,6 +196,10 @@ def write_configs(root: Path) -> dict[str, Path]:
             "dim_phi": DIM_PHI,
         },
     }
+    # Residual learnability test only where the optional lgbm extra is installed.
+    if importlib.util.find_spec("lightgbm") is not None:
+        residual = {"min_positives": 1, "min_data_in_leaf": 5, "max_trees": 20}
+        configs["train"]["residual_test"] = configs["stream"]["residual_test"] = residual
     paths = {}
     for name, config in configs.items():
         paths[name] = root / f"{name}.yaml"
