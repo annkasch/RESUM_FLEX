@@ -653,6 +653,13 @@ class TrainingSet(StrictConfigModel):
     fidelity: Fidelity
 
 
+class FeatureCalibrationConfig(StrictConfigModel):
+    """Calibration per input column in the read-out and on stream validation events
+    (docs/evaluation.md): equal-count bins of each column's value."""
+
+    bins: int = Field(default=10, ge=2)
+
+
 class ResidualTestConfig(StrictConfigModel):
     """Residual learnability test (read-out only, needs the ``lgbm`` extra).
 
@@ -720,6 +727,8 @@ class SurrogateRunConfig(SurrogateConfig):
     selection_max_voxels: int | None = Field(default=None, gt=0)
     # CPU threads for evaluation passes only; training steps keep their own thread count.
     evaluation_threads: int = Field(default=1, gt=0)
+    # Calibration per input column on every held-out split (read-out).
+    feature_calibration: FeatureCalibrationConfig = Field(default_factory=FeatureCalibrationConfig)
     # Residual learnability test on every held-out split (read-out); None = off.
     residual_test: ResidualTestConfig | None = None
 
@@ -883,6 +892,8 @@ class StreamRunConfig(StrictConfigModel):
     # plot; seeded subset, None = all). Selection itself uses the validation events.
     history_voxels: int | None = Field(default=500, gt=0)
     evaluation_seed: int = 0
+    # Calibration per input column on the validation events and the evaluation sets.
+    feature_calibration: FeatureCalibrationConfig = Field(default_factory=FeatureCalibrationConfig)
     # Residual learnability test on the validation events and the evaluation sets; None = off.
     residual_test: ResidualTestConfig | None = None
     unblind_test: bool = False

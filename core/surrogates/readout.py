@@ -12,6 +12,7 @@ from core.precision_recall import precision_recall
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
 from core.surrogates.evaluation import (
+    CALIBRATION_BINS,
     bootstrap_bands,
     evaluate_surrogate,
     feature_calibration,
@@ -121,10 +122,11 @@ def within_point_null(target, logits, *, seed, draws=NULL_DRAWS):
     }
 
 
-def readout_metrics(target, arrays, *, seed, residual=None):
+def readout_metrics(target, arrays, *, seed, residual=None, feature_bins=CALIBRATION_BINS):
     """Noise ceiling, bootstrap intervals, within-design-point null coverage, feature
-    calibration and, with ``residual`` (ResidualTestConfig), the residual learnability
-    test for one evaluated episode. Returns (metrics, arrays)."""
+    calibration (``feature_bins`` equal-count bins per column) and, with ``residual``
+    (ResidualTestConfig), the residual learnability test for one evaluated episode.
+    Returns (metrics, arrays)."""
     probabilities = expit(arrays["logits"])
     metrics = dict(
         spearman_noise_ceiling=spearman_noise_ceiling(target, probabilities, seed=seed),
@@ -147,7 +149,7 @@ def readout_metrics(target, arrays, *, seed, residual=None):
     names, values = feature_columns(target)
     if names:
         metrics["feature_calibration"], feature_arrays = feature_calibration(
-            names, values[mask], arrays["labels"][mask], probabilities[mask]
+            names, values[mask], arrays["labels"][mask], probabilities[mask], feature_bins
         )
         extra.update(feature_arrays)
     if residual is not None:

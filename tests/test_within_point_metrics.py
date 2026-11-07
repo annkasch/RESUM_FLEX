@@ -174,6 +174,25 @@ def test_stream_metrics_calibrate_per_record_column():
     assert set(metrics["feature_calibration"]) == {"record_0", "record_1"}
     assert arrays["feature_calibration_events"].shape == (2, 10)
     assert "feature_calibration" not in stream_metrics(labels, logit(p), reference_rate=0.06)[0]
+    _, finer = stream_metrics(
+        labels, logit(p), reference_rate=0.06, features=features, feature_bins=40
+    )
+    assert finer["feature_calibration_events"].shape == (2, 40)
+
+
+def test_readout_feature_bins_and_config():
+    from pydantic import ValidationError
+
+    from schemas.surrogates import FeatureCalibrationConfig
+
+    batch, p = phi_dependent(n_points=60, n_events=100, seed=9)
+    _, arrays = evaluate_surrogate(Fixed(p), batch)
+    _, extra = readout_metrics(batch, arrays, seed=2, feature_bins=25)
+    assert extra["feature_calibration_events"].shape == (3, 25)
+    assert extra["feature_calibration_events"].sum(axis=1).tolist() == [6000] * 3
+    assert FeatureCalibrationConfig().bins == 10
+    with pytest.raises(ValidationError):
+        FeatureCalibrationConfig(bins=1)
 
 
 def test_plots_render(tmp_path):

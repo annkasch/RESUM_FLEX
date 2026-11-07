@@ -26,7 +26,12 @@ from core.compute import ComputeLog
 from core.event_stream import event_labels, open_event_source
 from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate, save_surrogate
-from core.surrogates.evaluation import calibration_bins, evaluate_surrogate, feature_calibration
+from core.surrogates.evaluation import (
+    CALIBRATION_BINS,
+    calibration_bins,
+    evaluate_surrogate,
+    feature_calibration,
+)
 from core.surrogates.last_layer import _layer, last_layer_weights
 from core.surrogates.models import build_surrogate
 from schemas.surrogates import StreamRunConfig
@@ -158,11 +163,20 @@ def _voxel_episodes(config: StreamRunConfig):
     return episodes, history_episode, data
 
 
-def stream_metrics(labels, logits, *, reference_rate, features=None, residual=None, seed=0):
+def stream_metrics(
+    labels,
+    logits,
+    *,
+    reference_rate,
+    features=None,
+    residual=None,
+    seed=0,
+    feature_bins=CALIBRATION_BINS,
+):
     """Event metrics of events without design-point structure, as in voxel evaluation.
 
     labels, logits: [M] numpy; features: optional [M, W] record input columns, which add
-    the calibration per record column (``record_j``) and, with ``residual``
+    the calibration per record column (``record_j``, ``feature_bins`` bins) and, with ``residual``
     (ResidualTestConfig), the residual learnability test split by event. Returns (metrics,
     arrays) with calibration bins and the precision-recall curve.
     """
@@ -213,7 +227,7 @@ def stream_metrics(labels, logits, *, reference_rate, features=None, residual=No
         features = np.asarray(features, dtype=np.float64)  # [M, W]
         names = [f"record_{j}" for j in range(features.shape[1])]
         metrics["feature_calibration"], feature_arrays = feature_calibration(
-            names, features, labels, p
+            names, features, labels, p, feature_bins
         )
         arrays.update(feature_arrays)
     if residual is not None:
@@ -228,7 +242,16 @@ def stream_metrics(labels, logits, *, reference_rate, features=None, residual=No
     return metrics, arrays
 
 
-def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device, residual=None):
+def _evaluate_checkpoints(
+    output,
+    validation,
+    episodes,
+    prevalence,
+    seed,
+    device,
+    residual=None,
+    feature_bins=CALIBRATION_BINS,
+):
     """metrics.json, arrays and plots of best and final, as for voxel training.
 
     Voxel sets get the voxel-training metrics (and the last-layer predictive scores); the
@@ -260,6 +283,7 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
             features=validation[:, :-1].float().cpu().numpy(),
             residual=residual,
             seed=seed,
+            feature_bins=feature_bins,
         )
         rows.append(
             dict(
@@ -274,7 +298,7 @@ def _evaluate_checkpoints(output, validation, episodes, prevalence, seed, device
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
             readout, readout_arrays = readout_metrics(
-                episode.target, arrays, seed=seed, residual=residual
+                episode.target, arrays, seed=seed, residual=residual, feature_bins=feature_bins
             )
             summary.update(readout)
             arrays.update(readout_arrays)
@@ -462,6 +486,7 @@ def run_stream(config: StreamRunConfig) -> dict:
                 config.evaluation_seed,
                 device,
                 residual=config.residual_test,
+                feature_bins=config.feature_calibration.bins,
             )
         (output / "experiment.json").write_text(
             json.dumps(dict(metadata, report=report), indent=2, allow_nan=False)

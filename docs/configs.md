@@ -39,6 +39,7 @@ parentheses.
 | `validation_seed` | Seed of the evaluation context/target split (12345). |
 | `selection_max_voxels` | Select checkpoints on a seeded subset of this many validation voxels (all). |
 | `evaluation_threads` | CPU threads for evaluation passes (1). |
+| `feature_calibration` | Calibration per input column on every held-out split: `{bins: 10}`, equal-count bins per column (≥ 2). Also in stream configs (validation events and evaluation sets). |
 | `residual_test` | Residual learnability test on every held-out split, settings below (none: off). Needs the `lgbm` extra; the run fails at start without it. |
 
 ### Residual learnability test (`residual_test`)

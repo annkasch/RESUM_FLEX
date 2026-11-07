@@ -57,6 +57,7 @@ def training_run(tmp_path_factory):
         output_directory=tmp / "run",
         validation_context_events=4,
         residual_test=RESIDUAL,
+        feature_calibration={"bins": 4},
     )
     return run_experiment(config), tmp
 
@@ -75,6 +76,8 @@ def test_stage_reproduces_the_training_readout(training_run):
     assert _results(report["rows"]) == expected
     assert all(v["gain"] is not None for v in expected.values())
     assert (output / "lf_test_final_residual.npz").exists()
+    with np.load(run / "lf_validation_best.npz") as arrays:  # bins from the config
+        assert arrays["feature_calibration_events"].shape[1] == 4
     with pytest.raises(FileExistsError):
         run_residual(config)
 

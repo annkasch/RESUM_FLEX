@@ -58,7 +58,8 @@ error back in). Per event the gain is `loss(p̄_b) - loss(p_i) = a_i y_i + c_i` 
 
 ### Calibration per input feature
 
-`feature_calibration` (read-out and stream validation): for each input column, equal-count
+`feature_calibration` (read-out and stream validation; bin count from `feature_calibration:
+{bins: 10}` in the config): for each input column, equal-count
 bins of its value pooled over all events and design points; per bin hits vs Σp, `z = (K -
 M) / sqrt(V)`. Reported per column as `chi2_per_bin` (≈ 1) and `max_abs_z`. Columns are
 `theta_j` (repeated over the events of a design point) and `phi_j`, or `record_j` for
