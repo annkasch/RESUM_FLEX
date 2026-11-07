@@ -34,6 +34,7 @@ from core.surrogates.evaluation import (
 )
 from core.surrogates.last_layer import _layer, last_layer_weights
 from core.surrogates.models import build_surrogate
+from core.surrogates.readout import NULL_DRAWS
 from schemas.surrogates import StreamRunConfig
 
 VALIDATION_CHUNK = 2**20
@@ -251,6 +252,7 @@ def _evaluate_checkpoints(
     device,
     residual=None,
     feature_bins=CALIBRATION_BINS,
+    null_draws=NULL_DRAWS,
 ):
     """metrics.json, arrays and plots of best and final, as for voxel training.
 
@@ -298,7 +300,12 @@ def _evaluate_checkpoints(
         for (split, fidelity), episode in episodes.items():
             summary, arrays = evaluate_surrogate(saved, episode.target, reference_rate=prevalence)
             readout, readout_arrays = readout_metrics(
-                episode.target, arrays, seed=seed, residual=residual, feature_bins=feature_bins
+                episode.target,
+                arrays,
+                seed=seed,
+                residual=residual,
+                feature_bins=feature_bins,
+                null_draws=null_draws,
             )
             summary.update(readout)
             arrays.update(readout_arrays)
@@ -487,6 +494,7 @@ def run_stream(config: StreamRunConfig) -> dict:
                 device,
                 residual=config.residual_test,
                 feature_bins=config.feature_calibration.bins,
+                null_draws=config.within_point_null_draws,
             )
         (output / "experiment.json").write_text(
             json.dumps(dict(metadata, report=report), indent=2, allow_nan=False)

@@ -727,6 +727,9 @@ class SurrogateRunConfig(SurrogateConfig):
     selection_max_voxels: int | None = Field(default=None, gt=0)
     # CPU threads for evaluation passes only; training steps keep their own thread count.
     evaluation_threads: int = Field(default=1, gt=0)
+    # Label draws per design point for the within-design-point null (read-out); the ±3σ
+    # coverage rests on ~draws/740 draws per tail (1000: rough, 10 000: ~10× the cost).
+    within_point_null_draws: int = Field(default=1000, ge=100)
     # Calibration per input column on every held-out split (read-out).
     feature_calibration: FeatureCalibrationConfig = Field(default_factory=FeatureCalibrationConfig)
     # Residual learnability test on every held-out split (read-out); None = off.
@@ -892,6 +895,8 @@ class StreamRunConfig(StrictConfigModel):
     # plot; seeded subset, None = all). Selection itself uses the validation events.
     history_voxels: int | None = Field(default=500, gt=0)
     evaluation_seed: int = 0
+    # Label draws per design point for the within-design-point null on the evaluation sets.
+    within_point_null_draws: int = Field(default=1000, ge=100)
     # Calibration per input column on the validation events and the evaluation sets.
     feature_calibration: FeatureCalibrationConfig = Field(default_factory=FeatureCalibrationConfig)
     # Residual learnability test on the validation events and the evaluation sets; None = off.

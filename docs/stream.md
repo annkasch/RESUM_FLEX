@@ -41,7 +41,7 @@ selected by the Bernoulli log loss on the validation events. With `last_layer`, 
 checkpoints get the Laplace posterior from one streaming pass over all training events.
 The stream validation events also get the calibration per record column (`record_j`,
 `stream_feature_calibration.png`; `docs/evaluation.md`; bin count `feature_calibration: {bins:
-10}`, as in training configs). With `residual_test:` (settings
+10}` and `within_point_null_draws`, as in training configs). With `residual_test:` (settings
 in `docs/configs.md`) the validation events get the residual learnability test split by
 event (records are independent; the total gain only) and the design-point evaluation sets
 get it split by design point, as in a training run. On the validation events it uses a

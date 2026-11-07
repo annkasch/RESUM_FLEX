@@ -23,7 +23,8 @@ from core.surrogates.evaluation import (
 
 # Resamples for the noise ceiling and the bootstrap intervals.
 READOUT_DRAWS = 200
-# Label draws for the within-design-point null; enough for its 3σ quantiles.
+# Default label draws for the within-design-point null (config: within_point_null_draws).
+# About 1.3 draws lie beyond each ±3σ quantile at 1000, so the 3σ coverage is rough.
 NULL_DRAWS = 1000
 # Two-sided Gaussian tail probabilities of the ±1/2/3σ null quantiles.
 NULL_TAILS = {1: 0.158655, 2: 0.0227501, 3: 0.0013499}
@@ -122,7 +123,15 @@ def within_point_null(target, logits, *, seed, draws=NULL_DRAWS):
     }
 
 
-def readout_metrics(target, arrays, *, seed, residual=None, feature_bins=CALIBRATION_BINS):
+def readout_metrics(
+    target,
+    arrays,
+    *,
+    seed,
+    residual=None,
+    feature_bins=CALIBRATION_BINS,
+    null_draws=NULL_DRAWS,
+):
     """Noise ceiling, bootstrap intervals, within-design-point null coverage, feature
     calibration (``feature_bins`` equal-count bins per column) and, with ``residual``
     (ResidualTestConfig), the residual learnability test for one evaluated episode.
@@ -132,7 +141,7 @@ def readout_metrics(target, arrays, *, seed, residual=None, feature_bins=CALIBRA
         spearman_noise_ceiling=spearman_noise_ceiling(target, probabilities, seed=seed),
         **bootstrap_intervals(target, arrays["labels"], arrays["logits"], seed=seed),
     )
-    null = within_point_null(target, arrays["logits"], seed=seed)
+    null = within_point_null(target, arrays["logits"], seed=seed, draws=null_draws)
     # Design points with constant predictions have a degenerate null; they are skipped.
     spread = arrays["within_point_gain_variance"] > 0  # [B]
     gain = arrays["within_point_gain"][spread]

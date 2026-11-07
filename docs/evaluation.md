@@ -120,10 +120,13 @@ Read-out after training (held-out splits only, not used for selection):
 - `*_ci68`, `*_ci95`: central 68 % (±1σ) and 95 % bootstrap intervals over voxels, from the
   same 200 resamples, for log loss, AP, Spearman r, `within_point_log_loss_gain` and
   `within_point_auc`. Use them to compare runs.
-- `within_point_gain_coverage`: labels redrawn 1000 times from the model's own p give the
-  null distribution of each `G_b`; fraction of design points inside its ±1/2/3σ quantiles
-  (Gaussian tail probabilities). Design points with constant predictions are skipped
-  (`None` if all are). Cost ≈ 10 s per 10⁶ events. Arrays `within_point_gain_null`
+- `within_point_gain_coverage`: labels redrawn `within_point_null_draws` times (1000) from
+  the model's own p give the null distribution of each `G_b`; fraction of design points
+  inside its ±1/2/3σ quantiles (Gaussian tail probabilities; expected 68 / 95 / 99.7 %).
+  Design points with constant predictions are skipped (`None` if all are). A band edge
+  rests on the draws beyond it: at 1000 draws ~160 (1σ), ~23 (2σ), but only ~1.3 (3σ), so
+  the 3σ coverage is rough; 10 000 draws give ~13. Cost ∝ draws, ≈ 10 s per 10⁶ events at
+  1000. Arrays `within_point_gain_null`
   [3, 2, B]; plot `{fidelity}_{split}_within_point_gain.png` (best checkpoint).
 - `feature_calibration` (above); plot `{fidelity}_{split}_feature_calibration.png`.
 - `residual_test` (above), only with `residual_test:` in the config.

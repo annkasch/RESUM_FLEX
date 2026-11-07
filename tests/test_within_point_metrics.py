@@ -187,12 +187,20 @@ def test_readout_feature_bins_and_config():
 
     batch, p = phi_dependent(n_points=60, n_events=100, seed=9)
     _, arrays = evaluate_surrogate(Fixed(p), batch)
-    _, extra = readout_metrics(batch, arrays, seed=2, feature_bins=25)
+    _, extra = readout_metrics(batch, arrays, seed=2, feature_bins=25, null_draws=200)
     assert extra["feature_calibration_events"].shape == (3, 25)
+    reference = within_point_null(batch, arrays["logits"], seed=2, draws=200)
+    assert np.array_equal(extra["within_point_gain_null"][2, 0], reference[3][0])  # 200 draws
     assert extra["feature_calibration_events"].sum(axis=1).tolist() == [6000] * 3
     assert FeatureCalibrationConfig().bins == 10
     with pytest.raises(ValidationError):
         FeatureCalibrationConfig(bins=1)
+    from schemas.surrogates import SurrogateRunConfig
+
+    base = dict(model={"kind": "mlp"}, training={"backend": "neural"}, data_directory="d")
+    assert SurrogateRunConfig(**base, output_directory="o").within_point_null_draws == 1000
+    with pytest.raises(ValidationError):
+        SurrogateRunConfig(**base, output_directory="o", within_point_null_draws=10)
 
 
 def test_plots_render(tmp_path):

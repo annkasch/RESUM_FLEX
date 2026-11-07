@@ -236,6 +236,7 @@ def _evaluate(config, output, train, batches, episodes, load_split):
                         seed=config.validation_seed,
                         residual=config.residual_test,
                         feature_bins=config.feature_calibration.bins,
+                        null_draws=config.within_point_null_draws,
                     )
                     summary.update(readout)
                     arrays.update(readout_arrays)
