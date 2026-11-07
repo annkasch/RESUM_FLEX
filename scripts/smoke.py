@@ -4,7 +4,8 @@ A pipeline check only (exit codes and output files), no model conclusions. Runs 
 temporary directory, under a minute, safe on a login node (one thread, CPU):
 
     train (mlp + last layer) -> predict -> mfgp -> binomial (event-model covariate),
-    stream (stream MLP on an in-memory event source, scored on the design-point data)
+    stream (stream MLP on an in-memory event source, scored on the design-point data),
+    residual (on the train and stream runs; only with the lgbm extra)
 
 Each stage runs the real CLI (``python -m core.surrogates ...``) in a subprocess; independent
 stages run side by side (at most 3 single-thread processes). Prints OK and the wall time per
@@ -200,9 +201,15 @@ def write_configs(root: Path) -> dict[str, Path]:
     if importlib.util.find_spec("lightgbm") is not None:
         residual = {"min_positives": 1, "min_data_in_leaf": 5, "max_trees": 20}
         configs["train"]["residual_test"] = configs["stream"]["residual_test"] = residual
+        for run in ("train", "stream"):
+            configs[f"residual {run}"] = {
+                "run": f"runs/{run}",
+                "residual_test": residual,
+                "output_directory": f"runs/residual_{run}",
+            }
     paths = {}
     for name, config in configs.items():
-        paths[name] = root / f"{name}.yaml"
+        paths[name] = root / f"{name.replace(' ', '_')}.yaml"
         paths[name].write_text(yaml.safe_dump(config, sort_keys=False))
     return paths
 
@@ -234,6 +241,11 @@ def stages(root: Path, configs: dict[str, Path]):
 
         args = ["predict", checkpoint, root / "data", partition, "--fidelity", fidelity]
         predicts.append((f"predict {partition}/{fidelity}", args, exists))
+    for run in ("train", "stream"):
+        if f"residual {run}" in configs:
+            output = runs / f"residual_{run}"
+            check = lambda output=output: _check_json(output, ("residual_test.json",))  # noqa: E731
+            predicts.append((f"residual {run}", ["residual", configs[f"residual {run}"]], check))
     yield predicts
     yield [
         ("mfgp", ["mfgp", configs["mfgp"]], lambda: _check_json(runs / "mfgp")),

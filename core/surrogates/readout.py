@@ -154,18 +154,12 @@ def readout_metrics(target, arrays, *, seed, residual=None):
         )
         extra.update(feature_arrays)
     if residual is not None:
-        from core.surrogates.residual import residual_test
+        from core.surrogates.residual import design_point_residual
 
-        rows = np.nonzero(mask)[0]  # [E] design point of each valid event
-        metrics["residual_test"], residual_arrays = residual_test(
-            values[mask], arrays["labels"][mask], arrays["logits"][mask], rows, residual, seed=seed
+        metrics["residual_test"], residual_arrays = design_point_residual(
+            target, arrays["labels"], arrays["logits"], residual, seed=seed
         )
-        if residual_arrays:
-            for key in ("residual_logits", "residual_fold"):
-                full = np.full(mask.shape, np.nan if key == "residual_logits" else -1)
-                full[mask] = residual_arrays.pop(key)
-                extra[key] = full  # [B, N]; padding NaN / -1
-            extra.update(residual_arrays)
+        extra.update(residual_arrays)
     return metrics, extra
 
 

@@ -58,6 +58,10 @@ output_directory: runs/gp
 As an alternative to the MFGP, `python -m core.surrogates binomial binomial.yaml` fits one GP
 directly to hit counts with a binomial likelihood (no event model).
 
+With the `lgbm` extra, `residual_test:` in a training or stream config adds the residual
+learnability test to the read-out; `python -m core.surrogates residual residual.yaml` runs it
+on a finished run without retraining ([docs/evaluation.md](docs/evaluation.md)).
+
 Test partitions are only evaluated with `unblind_test: true`. What a run writes is in
 [docs/runs.md](docs/runs.md), the validation metrics in [docs/evaluation.md](docs/evaluation.md).
 

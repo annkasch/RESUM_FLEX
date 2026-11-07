@@ -7,6 +7,7 @@ parentheses.
 - [Training config](#training-config) (`python -m core.surrogates train`)
 - [GP config](#gp-config) (`python -m core.surrogates mfgp`, or `mfgp:` in a training config)
 - [Binomial GP config](#binomial-gp-config) (`python -m core.surrogates binomial`)
+- [Residual test config](#residual-test-config) (`python -m core.surrogates residual`)
 
 ## Training config
 
@@ -167,3 +168,21 @@ m ~ Binomial(N, sigmoid(f(θ))) with a Laplace posterior. No event model is invo
 | `unblind_test` | Allow test partitions in `evaluation` (`false`). |
 | `data_directory`, `data_provider`, `data_config` | As in the training config. |
 | `output_directory` | Run directory; must be new. Required. |
+
+## Residual test config
+
+`ResidualRunConfig`: the residual learnability test on a finished training or stream run,
+from the logits and labels it saved (`docs/evaluation.md`). The inputs are reloaded with
+the run's resolved config; a set whose provenance (e.g. file hash) or labels differ from
+the run's record is refused. Uses the run's evaluation seed, so the result equals the
+read-out of the same run trained with these `residual_test` settings. The run directory is
+not written to.
+
+| Key | Meaning |
+|---|---|
+| `run` | Run directory (training or stream run). Required. |
+| `checkpoints` | Checkpoints whose saved arrays are tested (`[best]`). |
+| `sets` | Held-out sets as `split/fidelity`, e.g. `validation/hf`, `validation/stream` (stream validation events) (all held-out sets the run evaluated). |
+| `residual_test` | Test settings, as in the training config (defaults). |
+| `output_directory` | Output directory; must be new or empty. Required. |
+

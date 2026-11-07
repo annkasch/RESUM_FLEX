@@ -21,7 +21,8 @@ GP posterior -> core/optimizer.py (IVR / EI over θ)
 ```
 
 CLI (`core/surrogates/__main__.py`): `train` -> `run_experiment`, `predict` -> inference,
-`mfgp` -> `run_mfgp_config`, `binomial` -> `run_binomial_config`, `stream` -> `run_stream`.
+`mfgp` -> `run_mfgp_config`, `binomial` -> `run_binomial_config`, `stream` -> `run_stream`,
+`residual` -> `residual_stage.run_residual` (residual test on a finished run).
 
 ## Layout
 
@@ -52,7 +53,7 @@ Module docstrings describe each file.
 | Losses, mixup, target sampling | `core/binary_losses.py`, `core/mixup.py`, `core/target_sampling.py` |
 | Training stages, checkpoint choice | `core/surrogates/stages.py`, `training.py`, `experiment.py` |
 | Metrics (count NLL, coverage, CRPS) | `core/surrogates/evaluation.py`, `core/gp_metrics.py` |
-| Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py` |
+| Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py`, `residual_stage.py` (finished runs) |
 | Bayesian last layer | `core/last_layer.py` (numpy math), `core/surrogates/last_layer.py` (torch side) |
 | GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` |
 | Binomial GP | `core/surrogates/binomial_stage.py`, `core/binomial_gp.py` |

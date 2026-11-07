@@ -95,6 +95,10 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
 - Arrays: `residual_logits` (logit p', padding NaN), `residual_fold` (padding −1), per design
   point `residual_gain_per_point`, `residual_phi_gain_per_point` (nats).
 - Cost: 2 LightGBM fits per fold, ≈ 1.5 s for 6·10⁴ events on one thread.
+- Finished runs: `python -m core.surrogates residual RESIDUAL.yaml` (`docs/configs.md`)
+  runs the same test on the saved logits and labels, without retraining; it writes
+  `residual_test.json` and `{fidelity}_{split}_{checkpoint}_residual.npz` into its own
+  output directory.
 
 Precision is set by positives, not design points. A positive gain says that something is
 learnable, not what; compare with the per-feature calibration to locate it.

@@ -132,6 +132,28 @@ def _interval(values):
     return [float(np.quantile(values, 0.025)), float(np.quantile(values, 0.975))]
 
 
+def design_point_residual(target, labels, logits, settings, *, seed):
+    """residual_test on a design-point batch, split by design point.
+
+    target: StandardBatch (θ, φ, mask); labels, logits: [B, N]. Per-event arrays come back
+    as [B, N] with padding NaN (``residual_logits``) or -1 (``residual_fold``).
+    """
+    from core.surrogates.evaluation import feature_columns
+
+    mask = target.event_mask  # [B, N]
+    _, values = feature_columns(target)  # [B, N, F]
+    rows = np.nonzero(mask)[0]  # [E] design point of each valid event
+    metrics, arrays = residual_test(
+        values[mask], labels[mask], logits[mask], rows, settings, seed=seed
+    )
+    for key, fill in (("residual_logits", np.nan), ("residual_fold", -1)):
+        if key in arrays:
+            full = np.full(mask.shape, fill, dtype=float if key == "residual_logits" else int)
+            full[mask] = arrays[key]
+            arrays[key] = full  # [B, N]
+    return metrics, arrays
+
+
 def residual_test(features, labels, logits, groups, settings, *, seed):
     """Cross-fitted residual learnability test on valid events.
 

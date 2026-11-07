@@ -932,3 +932,51 @@ def load_stream_config(path: str | Path) -> StreamRunConfig:
         value = value.expanduser()
         setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
     return config
+
+
+# --- Residual learnability test on a finished run ------------------------------------------
+
+
+class ResidualRunConfig(StrictConfigModel):
+    """``python -m core.surrogates residual``: the residual learnability test on a finished
+    training or stream run, from its saved logits and labels; the run is not modified.
+
+    The inputs (θ, φ, stream records) are reloaded from the run's resolved config; their
+    provenance and labels must match what the run recorded.
+    """
+
+    run: Path
+    checkpoints: list[str] = Field(default_factory=lambda: ["best"], min_length=1)
+    # Evaluated held-out sets as "split/fidelity", e.g. validation/hf or validation/stream
+    # (stream validation events); None = every held-out set the run evaluated.
+    sets: list[str] | None = Field(default=None, min_length=1)
+    residual_test: ResidualTestConfig = Field(default_factory=ResidualTestConfig)
+    output_directory: Path
+
+    @field_validator("sets")
+    @classmethod
+    def set_names(cls, sets):
+        for name in sets or []:
+            split, _, fidelity = name.partition("/")
+            if split not in ("validation", "test") or fidelity not in ("lf", "hf", "stream"):
+                raise ValueError(f"sets entries are split/fidelity of held-out sets, not {name!r}")
+        if sets is not None and len(set(sets)) != len(sets):
+            raise ValueError("sets must be unique")
+        return sets
+
+    @field_validator("checkpoints")
+    @classmethod
+    def unique_checkpoints(cls, checkpoints):
+        if len(set(checkpoints)) != len(checkpoints):
+            raise ValueError("checkpoints must be unique")
+        return checkpoints
+
+
+def load_residual_config(path: str | Path) -> ResidualRunConfig:
+    """Residual-test config; run and output paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = ResidualRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    for name in ("run", "output_directory"):
+        value = getattr(config, name).expanduser()
+        setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
+    return config

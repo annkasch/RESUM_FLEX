@@ -2,7 +2,8 @@
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 python -m core.surrogates mfgp GP.yaml
 python -m core.surrogates binomial BINOMIAL_GP.yaml
-python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)"""
+python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)
+python -m core.surrogates residual RESIDUAL.yaml   (residual test on a finished run)"""
 
 import argparse
 
@@ -41,10 +42,21 @@ def main():
     binomial.add_argument("config")
     stream = commands.add_parser("stream", help="Train a neural field on an event store")
     stream.add_argument("config")
+    residual = commands.add_parser(
+        "residual", help="Residual learnability test on a finished training or stream run"
+    )
+    residual.add_argument("config")
     args = parser.parse_args()
     import torch
 
     torch.set_num_threads(1)
+    if args.command == "residual":
+        from core.surrogates.residual_stage import run_residual
+        from schemas.surrogates import load_residual_config
+
+        output = run_residual(load_residual_config(args.config))
+        print(f"Residual test written to {output}", flush=True)
+        return
     if args.command == "stream":
         from core.surrogates.stream_training import run_stream
         from schemas.surrogates import load_stream_config
