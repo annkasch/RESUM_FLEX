@@ -24,8 +24,9 @@ together (overlay in 1-D, side by side with a shared colorbar in 2-D).
 
 `python scripts/smoke.py` runs every CLI stage once on tiny seeded synthetic data (S4) in a
 fresh temporary directory: `train` (MLP + last layer), `predict` (three partitions), `mfgp`,
-`binomial` (event-model covariate) and `stream` (stream MLP on an in-memory event source,
-scored on the design-point data). It checks exit codes and `metrics.json`/`compute.json`
+`binomial` (event-model covariate), `stream` (stream MLP on an in-memory event source,
+scored on the design-point data) and, only with the `lgbm` extra, `residual_test:` in the
+train and stream runs plus a `residual` stage on each. It checks exit codes and `metrics.json`/`compute.json`
 and prints the time per stage (~30 s, one thread per process, login-node safe). A pipeline
 check only: no model conclusions. `--keep` keeps the directory, `--workdir DIR` runs in DIR.
 `tests/test_smoke.py` runs it under the `smoke` marker (skip with `-m 'not smoke'`).
@@ -61,3 +62,5 @@ Every Phase 5 run also emits an `optimizer_{S}_trajectory.png` and an
 ```
 
 `slow` marks tests of 15 s or more (`pyproject.toml`); tag new ones that cross that line.
+Tests of optional extras skip without them (`pytest.importorskip`): `tests/test_residual_*.py`
+need `lgbm`, which the pixi NumPy 1/2 matrix does not install.
