@@ -197,9 +197,10 @@ not written to.
 training or stream run, from the logits and labels it saved; for runs trained before the
 read-out had them. Inputs are reloaded and checked as for the residual test, with the run's
 evaluation seed, so the values equal the read-out of the same run trained with the current
-toolkit. The run directory is not written to. Writes `within_point.json` (one row per
-checkpoint and set) and per set `{fidelity}_{split}_{checkpoint}_within_point.npz` and
-`_within_point_gain.png`.
+toolkit. An added evaluation of the run, written into the run directory beside the read-out:
+`within_point.json` (one row per checkpoint and set) and per set
+`{fidelity}_{split}_{checkpoint}_within_point.npz` and `_within_point_gain.png`. The run's own
+files are not changed; a run with a `within_point.json` is refused.
 
 | Key | Meaning |
 |---|---|
@@ -207,4 +208,3 @@ checkpoint and set) and per set `{fidelity}_{split}_{checkpoint}_within_point.np
 | `checkpoints` | Checkpoints whose saved arrays are scored (`[best]`). |
 | `sets` | Design-point sets as `split/fidelity`, e.g. `validation/lf`; no stream events (all design-point sets the run evaluated). |
 | `within_point_null_draws` | Label draws per design point for the null (1000, ≥ 100), as in training configs. |
-| `output_directory` | Output directory; must be new or empty. Required. |

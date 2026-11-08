@@ -6,8 +6,9 @@ reloads the target batches from the run's resolved config (provenance and labels
 and computes what the read-out reports: ``within_point_log_loss_gain``, ``_skill``,
 ``within_point_auc``, ``within_point_spread_z``, their bootstrap intervals and
 ``within_point_gain_coverage``, with the run's own evaluation seed, so the values equal the
-read-out of the same run trained with the current toolkit. The run directory is never
-written to.
+read-out of the same run trained with the current toolkit. An added evaluation of the
+run, so it writes into the run directory, next to the read-out files; the files the run
+wrote are left as they are, and an earlier ``within_point.json`` is never overwritten.
 """
 
 import json
@@ -51,13 +52,12 @@ def within_point_readout(target, labels, logits, *, seed, null_draws):
 
 
 def run_within_point(config: WithinPointRunConfig) -> Path:
-    """within_point.json, one arrays file and one plot per (set, checkpoint)."""
+    """within_point.json, one arrays file and one plot per (set, checkpoint), in the run."""
     from viz.surrogate import plot_within_point_gain
 
-    output = config.output_directory
-    if output.exists() and any(output.iterdir()):
-        raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
-    run = config.run
+    run = output = config.run
+    if (run / "within_point.json").exists():
+        raise FileExistsError(f"{run / 'within_point.json'} exists; the run is already scored")
     experiment = json.loads((run / "experiment.json").read_text())
     grouped = [key for key in held_out_sets(run) if key[1] != "stream"]
     if not grouped:
@@ -68,7 +68,6 @@ def run_within_point(config: WithinPointRunConfig) -> Path:
         (r["checkpoint"], r["split"], r["fidelity"]): r.get("step")
         for r in json.loads((run / "metrics.json").read_text())
     }
-    output.mkdir(parents=True, exist_ok=True)
     rows = []
     for checkpoint in config.checkpoints:
         for split, fidelity in sets:
@@ -94,5 +93,6 @@ def run_within_point(config: WithinPointRunConfig) -> Path:
         seed=seed,
         rows=rows,
     )
+    # Arrays and plots first: within_point.json marks a finished evaluation.
     (output / "within_point.json").write_text(json.dumps(report, indent=2, allow_nan=False))
     return output

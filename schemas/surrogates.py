@@ -1003,8 +1003,9 @@ class ResidualRunConfig(StrictConfigModel):
 class WithinPointRunConfig(StrictConfigModel):
     """``python -m core.surrogates within_point``: the within-design-point metrics of the
     read-out (gain, skill, pair AUC, spread z, bootstrap intervals, null coverage) on a
-    finished training or stream run, from its saved logits and labels; the run is not
-    modified. For runs trained before these metrics existed.
+    finished training or stream run, from its saved logits and labels, written into the
+    run directory beside its read-out; the run's own files are not modified. For runs
+    trained before these metrics existed.
 
     The target batches are reloaded from the run's resolved config; their provenance and
     labels must match what the run recorded. Design-point sets only (no stream events).
@@ -1016,7 +1017,6 @@ class WithinPointRunConfig(StrictConfigModel):
     # design-point set the run evaluated.
     sets: list[str] | None = Field(default=None, min_length=1)
     within_point_null_draws: int = Field(default=1000, ge=100)
-    output_directory: Path
 
     @field_validator("sets")
     @classmethod
@@ -1039,8 +1039,8 @@ class WithinPointRunConfig(StrictConfigModel):
         return checkpoints
 
 
-def _resolve_run_paths(config, path):
-    for name in ("run", "output_directory"):
+def _resolve_run_paths(config, path, names=("run", "output_directory")):
+    for name in names:
         value = getattr(config, name).expanduser()
         setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
     return config
@@ -1054,7 +1054,7 @@ def load_residual_config(path: str | Path) -> ResidualRunConfig:
 
 
 def load_within_point_config(path: str | Path) -> WithinPointRunConfig:
-    """Within-design-point config; run and output paths resolve relative to the YAML file."""
+    """Within-design-point config; the run path resolves relative to the YAML file."""
     path = Path(path).resolve()
     config = WithinPointRunConfig.model_validate(yaml.safe_load(path.read_text()))
-    return _resolve_run_paths(config, path)
+    return _resolve_run_paths(config, path, names=("run",))

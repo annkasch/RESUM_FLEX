@@ -37,6 +37,9 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
   voxel means, residuals, PR arrays and the per-design-point within-point gain terms;
   held-out splits add the gain null bands, the feature-calibration bins and, with
   `residual_test:`, the residual-test arrays (`docs/evaluation.md`). Only LF training is evaluated.
+- Added later by `python -m core.surrogates within_point` (runs from before the within-point
+  metrics): `within_point.json`, `{fidelity}_{split}_{checkpoint}_within_point.npz` and
+  `_within_point_gain.png`; the run's own files stay unchanged.
 - Shared PNG/PDF validation-history, mean/residual and PR plots; per held-out split the
   within-design-point gain and the feature-calibration plots.
 

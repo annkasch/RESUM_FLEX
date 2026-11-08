@@ -201,7 +201,6 @@ def write_configs(root: Path) -> dict[str, Path]:
     configs["within_point"] = {
         "run": "runs/train",
         "within_point_null_draws": 100,
-        "output_directory": "runs/within_point",
     }
     # Residual learnability test only where the optional lgbm extra is installed.
     if importlib.util.find_spec("lightgbm") is not None:
@@ -247,7 +246,7 @@ def stages(root: Path, configs: dict[str, Path]):
 
         args = ["predict", checkpoint, root / "data", partition, "--fidelity", fidelity]
         predicts.append((f"predict {partition}/{fidelity}", args, exists))
-    output = runs / "within_point"
+    output = runs / "train"
     check = lambda output=output: _check_json(output, ("within_point.json",))  # noqa: E731
     predicts.append(("within_point", ["within_point", configs["within_point"]], check))
     for run in ("train", "stream"):
