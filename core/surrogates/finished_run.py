@@ -6,6 +6,7 @@ recorded (provider provenance, e.g. file hashes, and the saved labels). Never wr
 """
 
 import json
+from pathlib import Path
 
 import numpy as np
 
@@ -82,16 +83,27 @@ def training_run_targets(run, experiment, sets):
     return targets, config.validation_seed
 
 
+def is_stream_run(experiment):
+    """Stream runs list evaluation sets; design-point training runs name partitions."""
+    return "evaluation" in experiment["resolved_config"]
+
+
 def stream_run_inputs(experiment, sets):
-    """Design-point batches and the validation records of a stream run."""
+    """Design-point batches and the validation records of a stream run.
+
+    Design-point sets need only the provider, data directory, evaluation sets and seed of
+    the run's record, so runs made with older stream configs (e.g. before keys were
+    renamed) still load them; stream validation records need the full current config.
+    """
     from core.surrogates.datasets import load_provider
 
-    config = StreamRunConfig.model_validate(experiment["resolved_config"])
+    resolved = experiment["resolved_config"]
+    seed = resolved.get("evaluation_seed", StreamRunConfig.model_fields["evaluation_seed"].default)
     targets, records = {}, None
     grouped = [key for key in sets if key[1] != "stream"]
     if grouped:
-        provider = load_provider(config.data_provider, config.data_directory)
-        partitions = {(e.split, e.fidelity): e.partition for e in config.evaluation}
+        provider = load_provider(resolved.get("data_provider"), Path(resolved["data_directory"]))
+        partitions = {(e["split"], e["fidelity"]): e["partition"] for e in resolved["evaluation"]}
         for split, fidelity in grouped:
             name = f"{split}/{fidelity}"
             targets[split, fidelity], provenance = provider.load(
@@ -102,6 +114,7 @@ def stream_run_inputs(experiment, sets):
     if len(grouped) < len(sets):
         from core.event_stream import open_event_source
 
+        config = StreamRunConfig.model_validate(resolved)
         source = open_event_source(
             config.event_source,
             config.event_store,
@@ -109,12 +122,12 @@ def stream_run_inputs(experiment, sets):
             **config.event_source_options,
         )
         records = np.ascontiguousarray(source.load()[: experiment["validation_events"]])
-    return targets, records, config.evaluation_seed
+    return targets, records, seed
 
 
 def run_inputs(run, experiment, sets):
     """(targets, stream records or None, evaluation seed) of a training or stream run."""
-    if "event_source" in experiment:
+    if is_stream_run(experiment):
         return stream_run_inputs(experiment, sets)
     targets, seed = training_run_targets(run, experiment, sets)
     return targets, None, seed

@@ -127,6 +127,33 @@ def test_stage_rejects_changed_data_and_unknown_sets(training_run):
     assert not any(p.exists() for p in _added(run))  # refused before writing
 
 
+def test_stage_on_a_stream_run_with_an_older_config(tmp_path):
+    """A stream run whose record predates renamed stream keys still loads its design-point
+    sets: only the provider, data directory, evaluation sets and seed are read."""
+    from core.surrogates.stream_training import run_stream
+    from core.surrogates.within_point_stage import run_within_point
+    from tests.test_stream_field import _run_config
+
+    run_stream(_run_config(tmp_path, n_passes=1))
+    run = tmp_path / "run"
+    path = run / "experiment.json"
+    experiment = json.loads(path.read_text())
+    for record in (experiment, experiment["resolved_config"]):  # older key names
+        record["photon_source"] = record.pop("event_source")
+    experiment["resolved_config"]["photon_store"] = experiment["resolved_config"].pop("event_store")
+    path.write_text(json.dumps(experiment))
+    run_within_point(WithinPointRunConfig(run=run))  # default: design-point sets only
+    rows = json.loads((run / "within_point.json").read_text())["rows"]
+    evaluated = json.loads((run / "metrics.json").read_text())
+    expected = {
+        k: v
+        for k, v in _readout([r for r in evaluated if r["fidelity"] != "stream"]).items()
+        if k[0] == "best"
+    }
+    assert _readout(rows) == expected
+    assert {k[2] for k in expected} == {"lf", "hf"}
+
+
 def test_config_checks_set_names():
     with pytest.raises(ValidationError):
         WithinPointRunConfig(run="r", sets=["validation/stream"])
