@@ -3,7 +3,9 @@ python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 python -m core.surrogates mfgp GP.yaml
 python -m core.surrogates binomial BINOMIAL_GP.yaml
 python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)
-python -m core.surrogates residual RESIDUAL.yaml   (residual test on a finished run)"""
+python -m core.surrogates residual RESIDUAL.yaml   (residual test on a finished run)
+python -m core.surrogates within_point WITHIN_POINT.yaml   (within-design-point metrics on a
+    finished run)"""
 
 import argparse
 
@@ -46,6 +48,10 @@ def main():
         "residual", help="Residual learnability test on a finished training or stream run"
     )
     residual.add_argument("config")
+    within_point = commands.add_parser(
+        "within_point", help="Within-design-point metrics on a finished training or stream run"
+    )
+    within_point.add_argument("config")
     args = parser.parse_args()
     import torch
 
@@ -56,6 +62,13 @@ def main():
 
         output = run_residual(load_residual_config(args.config))
         print(f"Residual test written to {output}", flush=True)
+        return
+    if args.command == "within_point":
+        from core.surrogates.within_point_stage import run_within_point
+        from schemas.surrogates import load_within_point_config
+
+        output = run_within_point(load_within_point_config(args.config))
+        print(f"Within-design-point metrics written to {output}", flush=True)
         return
     if args.command == "stream":
         from core.surrogates.stream_training import run_stream

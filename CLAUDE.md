@@ -33,6 +33,8 @@ for config settings.
   train on an event stream (`stream`, any record layout for the MLP).
 - Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based); residual
   learnability test in the read-out (`residual_test:`, `core/surrogates/residual.py`, LightGBM).
+- Finished runs are re-scored from their saved logits without retraining: `residual`,
+  `within_point` (`core/surrogates/finished_run.py` reloads and checks the inputs).
 
 ## Environment
 - Repo-local `.venv` from `pyproject.toml` + `uv.lock`; call `.venv/bin/python`,
@@ -57,7 +59,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]
-.venv/bin/python -m core.surrogates mfgp|binomial|stream|residual CONFIG.yaml
+.venv/bin/python -m core.surrogates mfgp|binomial|stream|residual|within_point CONFIG.yaml
 .venv/bin/python scripts/smoke.py    # every CLI stage on tiny synthetic data, ~30 s
 .venv/bin/python scripts/phase1_plot_ground_truth.py   # cheap synthetic sanity check
 ```

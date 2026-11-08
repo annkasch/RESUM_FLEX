@@ -55,6 +55,9 @@ error back in). Per event the gain is `loss(p̄_b) - loss(p_i) = a_i y_i + c_i` 
   (overconfident in φ); `> 0`: true φ-dependence stronger than predicted.
 - They need grouped data (design points). Unbinned streams are not binned for them: too
   few positives per cell. Stream models get them on design-point evaluation sets.
+- Finished runs trained before these metrics existed: `python -m core.surrogates
+  within_point WITHIN_POINT.yaml` (`docs/configs.md`) computes them, the intervals and the
+  null coverage from the saved logits and labels, without retraining.
 
 ### Calibration per input feature
 

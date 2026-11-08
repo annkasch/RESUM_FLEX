@@ -1000,11 +1000,61 @@ class ResidualRunConfig(StrictConfigModel):
         return checkpoints
 
 
-def load_residual_config(path: str | Path) -> ResidualRunConfig:
-    """Residual-test config; run and output paths resolve relative to the YAML file."""
-    path = Path(path).resolve()
-    config = ResidualRunConfig.model_validate(yaml.safe_load(path.read_text()))
+class WithinPointRunConfig(StrictConfigModel):
+    """``python -m core.surrogates within_point``: the within-design-point metrics of the
+    read-out (gain, skill, pair AUC, spread z, bootstrap intervals, null coverage) on a
+    finished training or stream run, from its saved logits and labels; the run is not
+    modified. For runs trained before these metrics existed.
+
+    The target batches are reloaded from the run's resolved config; their provenance and
+    labels must match what the run recorded. Design-point sets only (no stream events).
+    """
+
+    run: Path
+    checkpoints: list[str] = Field(default_factory=lambda: ["best"], min_length=1)
+    # Evaluated design-point sets as "split/fidelity", e.g. validation/lf; None = every
+    # design-point set the run evaluated.
+    sets: list[str] | None = Field(default=None, min_length=1)
+    within_point_null_draws: int = Field(default=1000, ge=100)
+    output_directory: Path
+
+    @field_validator("sets")
+    @classmethod
+    def set_names(cls, sets):
+        for name in sets or []:
+            split, _, fidelity = name.partition("/")
+            if split not in ("validation", "test") or fidelity not in ("lf", "hf"):
+                raise ValueError(
+                    f"sets entries are split/fidelity of design-point sets, not {name!r}"
+                )
+        if sets is not None and len(set(sets)) != len(sets):
+            raise ValueError("sets must be unique")
+        return sets
+
+    @field_validator("checkpoints")
+    @classmethod
+    def unique_checkpoints(cls, checkpoints):
+        if len(set(checkpoints)) != len(checkpoints):
+            raise ValueError("checkpoints must be unique")
+        return checkpoints
+
+
+def _resolve_run_paths(config, path):
     for name in ("run", "output_directory"):
         value = getattr(config, name).expanduser()
         setattr(config, name, value if value.is_absolute() else (path.parent / value).resolve())
     return config
+
+
+def load_residual_config(path: str | Path) -> ResidualRunConfig:
+    """Residual-test config; run and output paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = ResidualRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    return _resolve_run_paths(config, path)
+
+
+def load_within_point_config(path: str | Path) -> WithinPointRunConfig:
+    """Within-design-point config; run and output paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = WithinPointRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    return _resolve_run_paths(config, path)

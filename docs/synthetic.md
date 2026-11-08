@@ -26,7 +26,7 @@ together (overlay in 1-D, side by side with a shared colorbar in 2-D).
 fresh temporary directory: `train` (MLP + last layer), `predict` (three partitions), `mfgp`,
 `binomial` (event-model covariate), `stream` (stream MLP on an in-memory event source,
 scored on the design-point data) and, only with the `lgbm` extra, `residual_test:` in the
-train and stream runs plus a `residual` stage on each. It checks exit codes and `metrics.json`/`compute.json`
+train and stream runs plus a `residual` stage on each; a `within_point` stage on the train run. It checks exit codes and `metrics.json`/`compute.json`
 and prints the time per stage (~30 s, one thread per process, login-node safe). A pipeline
 check only: no model conclusions. `--keep` keeps the directory, `--workdir DIR` runs in DIR.
 `tests/test_smoke.py` runs it under the `smoke` marker (skip with `-m 'not smoke'`).

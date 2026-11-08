@@ -70,32 +70,56 @@ def spearman_noise_ceiling(target, probabilities, *, seed, draws=READOUT_DRAWS):
     return float(np.nanmedian(values)) if np.isfinite(values).any() else None
 
 
+def _bootstrap_indices(seed, n_points, draws):
+    """Design-point resamples with replacement; shared by every bootstrap interval."""
+    rng = _rng(seed, BOOTSTRAP_KEY)
+    for _ in range(draws):
+        yield rng.integers(0, n_points, n_points)
+
+
+WITHIN_BOOTSTRAP = ("within_point_log_loss_gain", "within_point_auc")
+
+
+def _within_sample(terms, index):
+    resampled = within_point_summary({k: v[index] for k, v in terms.items() if v.ndim == 1})
+    return {key: np.nan if resampled[key] is None else resampled[key] for key in WITHIN_BOOTSTRAP}
+
+
 def bootstrap_intervals(target, labels, logits, *, seed, draws=READOUT_DRAWS):
     """95% intervals over design points resampled with replacement.
 
     Log loss, AP, Spearman r and the within-design-point log-loss gain and AUC.
     """
-    rng = _rng(seed, BOOTSTRAP_KEY)
     mask, n = target.event_mask, target.events_per_voxel  # [B, N], [B]
     loss = np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits))
     voxel_loss = np.where(mask, loss, 0.0).sum(axis=1)  # [B]
     observed = np.where(mask, labels, 0).sum(axis=1) / n  # [B]
     predicted = np.where(mask, expit(logits), 0.0).sum(axis=1) / n  # [B]
     terms = within_point_terms(target, labels, logits)
-    within = ("within_point_log_loss_gain", "within_point_auc")
     samples = {"bernoulli_log_loss": [], "average_precision": [], "spearman_r": []}
-    samples.update({key: [] for key in within})
-    for _ in range(draws):
-        index = rng.integers(0, len(n), len(n))
-        resampled = within_point_summary({k: v[index] for k, v in terms.items() if v.ndim == 1})
-        for key in within:
-            samples[key].append(np.nan if resampled[key] is None else resampled[key])
+    samples.update({key: [] for key in WITHIN_BOOTSTRAP})
+    for index in _bootstrap_indices(seed, len(n), draws):
+        for key, value in _within_sample(terms, index).items():
+            samples[key].append(value)
         samples["bernoulli_log_loss"].append(voxel_loss[index].sum() / n[index].sum())
         y, s = labels[index][mask[index]], logits[index][mask[index]]
         samples["average_precision"].append(
             precision_recall(y, s)["average_precision"] if y.any() else np.nan
         )
         samples["spearman_r"].append(_spearman(observed[index], predicted[index]))
+    intervals = {}
+    for key, values in samples.items():
+        intervals.update(bootstrap_bands(key, values))
+    return intervals
+
+
+def within_point_bootstrap(terms, *, seed, draws=READOUT_DRAWS):
+    """Intervals of the within-design-point gain and AUC only, from per-design-point terms
+    (``within_point_terms``); the same resamples and values as ``bootstrap_intervals``."""
+    samples = {key: [] for key in WITHIN_BOOTSTRAP}
+    for index in _bootstrap_indices(seed, len(terms["gain"]), draws):
+        for key, value in _within_sample(terms, index).items():
+            samples[key].append(value)
     intervals = {}
     for key, values in samples.items():
         intervals.update(bootstrap_bands(key, values))
@@ -123,6 +147,25 @@ def within_point_null(target, logits, *, seed, draws=NULL_DRAWS):
     }
 
 
+def within_point_coverage(target, logits, gain, variance, *, seed, draws=NULL_DRAWS):
+    """Fraction of design points whose gain [B] lies inside its ±1/2/3σ null band, and the
+    bands [3, 2, B] (k, lower/upper). Design points with constant predictions (variance 0)
+    have a degenerate null and are skipped; coverage None if all are."""
+    null = within_point_null(target, logits, seed=seed, draws=draws)
+    spread = variance > 0  # [B]
+    coverage = (
+        {
+            f"{k}sigma": float(
+                ((gain[spread] >= lower[spread]) & (gain[spread] <= upper[spread])).mean()
+            )
+            for k, (lower, upper) in null.items()
+        }
+        if spread.any()
+        else None
+    )
+    return coverage, np.stack([np.stack(null[k]) for k in (1, 2, 3)])
+
+
 def readout_metrics(
     target,
     arrays,
@@ -141,19 +184,16 @@ def readout_metrics(
         spearman_noise_ceiling=spearman_noise_ceiling(target, probabilities, seed=seed),
         **bootstrap_intervals(target, arrays["labels"], arrays["logits"], seed=seed),
     )
-    null = within_point_null(target, arrays["logits"], seed=seed, draws=null_draws)
-    # Design points with constant predictions have a degenerate null; they are skipped.
-    spread = arrays["within_point_gain_variance"] > 0  # [B]
-    gain = arrays["within_point_gain"][spread]
-    metrics["within_point_gain_coverage"] = (
-        {
-            f"{k}sigma": float(((gain >= lower[spread]) & (gain <= upper[spread])).mean())
-            for k, (lower, upper) in null.items()
-        }
-        if spread.any()
-        else None
+    coverage, null = within_point_coverage(
+        target,
+        arrays["logits"],
+        arrays["within_point_gain"],
+        arrays["within_point_gain_variance"],
+        seed=seed,
+        draws=null_draws,
     )
-    extra = {"within_point_gain_null": np.stack([np.stack(null[k]) for k in (1, 2, 3)])}
+    metrics["within_point_gain_coverage"] = coverage
+    extra = {"within_point_gain_null": null}
     mask = target.event_mask  # [B, N]
     names, values = feature_columns(target)
     if names:

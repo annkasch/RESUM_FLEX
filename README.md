@@ -61,6 +61,8 @@ directly to hit counts with a binomial likelihood (no event model).
 With the `lgbm` extra, `residual_test:` in a training or stream config adds the residual
 learnability test to the read-out; `python -m core.surrogates residual residual.yaml` runs it
 on a finished run without retraining ([docs/evaluation.md](docs/evaluation.md)).
+`python -m core.surrogates within_point within_point.yaml` does the same for the
+within-design-point metrics, for runs trained before the read-out had them.
 
 Test partitions are only evaluated with `unblind_test: true`. What a run writes is in
 [docs/runs.md](docs/runs.md), the validation metrics in [docs/evaluation.md](docs/evaluation.md).
