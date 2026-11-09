@@ -34,9 +34,12 @@ restored = load_surrogate("outputs/my_run/checkpoints/best")
 Construct `kind="mlp"`, `kind="transformer"` or `kind="bdt"` using the same factory.
 BDT uses `TreeTraining()` and requires the optional `.[bdt]` dependencies.
 The CNP requires context observations from the same voxels. Other models ignore
-context, which allows fixed evaluation episodes to be shared. They do not gain
-access to context labels. All prediction shapes are `[voxel, event]`; the mean
-is an unweighted average over exactly those events.
+context (they never see context labels), so the same episodes can be passed to them.
+The runner gives them no context: they train on every drawn event and are scored on all
+events of each voxel, CNPs on the events after the context pool
+([evaluation.md](evaluation.md)). Their training configs reject `context`, `targets`
+and `mixup.mix_context` ([training.md](training.md)). All prediction shapes are
+`[voxel, event]`; the mean is an unweighted average over exactly those events.
 
 Architecture options live inside the model spec: `encoder` for CNP and
 `architecture` for MLP/transformer/BDT. MLP architecture exposes only hidden
