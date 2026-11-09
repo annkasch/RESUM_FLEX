@@ -167,7 +167,8 @@ def _fit_stage(
         parameters = [p for p in model.module.parameters() if p.requires_grad]
         optimizer = torch.optim.Adam(parameters, lr=training.learning_rate)
         mixup = training.sampling.strategy == "class_aware_mixup"
-        n_context_min, n_context_max = training.context_range()
+        # Context-free models (mlp, transformer, field): no context, all events are targets.
+        n_context_min, n_context_max = training.context_range(context=model.uses_context)
         sampler_args = dict(
             seed=training.seed,
             batch_size=training.batch_size,
@@ -198,7 +199,7 @@ def _fit_stage(
         real_losses, mixup_losses = [], []
         positives, events, losses = 0, 0, []
         label_mass, soft_events = 0.0, 0
-        n_steps = training.resolve_n_steps(training_events)
+        n_steps = training.resolve_n_steps(training_events, context=model.uses_context)
         for step in range(1, n_steps + 1):
             if mixup:
                 nc = int(size_rng.integers(n_context_min, n_context_max + 1))
@@ -281,7 +282,7 @@ def _fit_stage(
                 real_target_ratio=training.objective.real_target_ratio,
             )
         audit.update(
-            targets=training.targets,
+            targets=training.targets if model.uses_context else "all_events",
             context_range=[n_context_min, n_context_max],
             n_steps=n_steps,
             requested_passes=training.n_passes,

@@ -4,7 +4,7 @@ import numpy as np
 from pydantic import TypeAdapter
 
 from core.surrogates.base import EventPrediction, EventSurrogate
-from schemas.surrogates import ModelSpec
+from schemas.surrogates import ModelSpec, uses_context
 
 
 def slice_batch(batch, start, stop):
@@ -23,7 +23,7 @@ def slice_batch(batch, start, stop):
 class NeuralSurrogate(EventSurrogate):
     def __init__(self, config, dim_theta, dim_phi):
         super().__init__(config, dim_theta, dim_phi)
-        self.uses_context = config.kind in ("cnp", "legacy_cnp")
+        self.uses_context = uses_context(config.kind)
         if config.kind == "cnp":
             from core.bernoulli_cnp import BernoulliCNP
 

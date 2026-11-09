@@ -122,3 +122,16 @@ def test_real_branch_uses_target_sources_without_changing_mixtures(mix_context, 
                 np.testing.assert_array_equal(real.phi[record["row"], :, 0], idx)
                 np.testing.assert_array_equal(real.labels[record["row"]], batch.labels[0, idx])
         assert_disjoint(combined)
+
+
+@pytest.mark.parametrize("ratio", [None, 0.5])
+def test_context_size_zero_mixes_targets_from_all_events(ratio):
+    batch = make_batch([[0] * 20 + [1] * 4, [0] * 23 + [1]])
+    source = ClassAwareMixupSource(batch, alpha=0.2, seed=3, batch_size=3, n_events=10, n_context=0)
+    outputs = source.next(real_target_ratio=ratio)
+    assert outputs[0] is None and outputs[1].labels.shape == (3, 10)
+    if ratio is not None:
+        assert outputs[2].labels.shape == (3, 5)
+    for record in source.last_provenance:
+        assert record["side"] == 1
+        assert set(record["source_pool"]) == set(range(batch.n_events))

@@ -20,6 +20,8 @@ class RealTargetSampler:
     every voxel has equal weight; episodes must fit the smallest voxel.
     With joint=True (natural sampling only) the targets are the context followed
     by the same non-context draws, so both modes see identical events per seed.
+    Context size 0 (context-free models): every drawn event is a target and the
+    context is None.
     """
 
     def __init__(
@@ -38,7 +40,7 @@ class RealTargetSampler:
             raise ValueError("positive_fraction must be strictly between zero and one")
         if joint and positive_fraction is not None:
             raise ValueError("Joint targets require natural sampling")
-        if not 1 <= n_context_min <= n_context_max <= n_events - (1 if joint else 2):
+        if not 0 <= n_context_min <= n_context_max <= n_events - (1 if joint else 2):
             raise ValueError("Context range must leave enough target events")
         if batch_size < 1 or n_events > int(batch.events_per_voxel.min()):
             raise ValueError("Invalid batch or episode size")
@@ -101,4 +103,5 @@ class RealTargetSampler:
                 labels=b.labels[trials[:, None], indices],
             )
 
-        return gather(contexts), gather(targets), np.asarray(weights)
+        context = gather(contexts) if nc else None
+        return context, gather(targets), np.asarray(weights)

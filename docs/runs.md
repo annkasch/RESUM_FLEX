@@ -30,7 +30,8 @@ form one zero-padded batch, and the training split is labelled by their common f
 selection (`selection_fidelity` changes this). Training PR is in-sample. Files under the output directory are uniform across model families:
 
 - `experiment.json`: resolved configuration, input-file hashes, normalization,
-  feature metadata and split manifest when available.
+  feature metadata, split manifest when available and `evaluation_targets` (`all_events`
+  for context-free models, `after_context_pool` for context models; `docs/evaluation.md`).
 - `checkpoints/{best,final}/`: versioned model manifest and backend weights.
 - `history.json`, `sampling_audit.json`, `metrics.json`.
 - `{lf,hf}_{train,validation}_{best,final}.npz` where evaluated: logits, labels,

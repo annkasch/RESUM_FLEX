@@ -16,7 +16,7 @@ from core.surrogates import (
     load_surrogate,
 )
 from data.pseudo_generator import for_scenario
-from schemas.surrogates import NeuralTraining, SurrogateConfig, TreeTraining
+from schemas.surrogates import NeuralTraining, SurrogateConfig, TreeTraining, uses_context
 
 
 def spec(kind):
@@ -51,8 +51,8 @@ def training(kind):
             eval_every=2,
             batch_size=3,
             n_events=12,
-            n_context_min=2,
-            n_context_max=4,
+            # Context sizes apply to context models only.
+            **({"n_context_min": 2, "n_context_max": 4} if uses_context(kind) else {}),
             sampling={"strategy": "positive_quota", "positive_fraction": 0.25},
             weighting={"strategy": "sampling_correction"},
         )
@@ -94,10 +94,13 @@ def test_common_api_all_modes(kind, scenario, tmp_path):
         pytest.importorskip("GPy")
         from core.mfgp_pipeline import BatchLevel, levels_from_batches
 
-        _, Y_list = levels_from_batches(restored, [
-            BatchLevel("model_mean", val, n_context=4, seed=107),
-            BatchLevel("observed_fraction", val, n_context=4, seed=107),
-        ])
+        _, Y_list = levels_from_batches(
+            restored,
+            [
+                BatchLevel("model_mean", val, n_context=4, seed=107),
+                BatchLevel("observed_fraction", val, n_context=4, seed=107),
+            ],
+        )
         assert Y_list[0].shape == (3, 1)
         _, hf_target = split_context_target(val, 4, seed=107)
         np.testing.assert_array_equal(Y_list[1][:, 0], hf_target.labels.mean(1))
@@ -109,7 +112,6 @@ def test_common_api_all_modes(kind, scenario, tmp_path):
         {"sampling": {"strategy": "positive_quota", "positive_fraction": 0.05}},
         {"weighting": {"strategy": "sampling_correction"}},
         {"sampling": {"strategy": "natural", "positive_fraction": 0.05}},
-        {"n_context_min": 70, "n_context_max": 64},
         {"mixup_alpha": 0.2},
     ],
 )
@@ -225,6 +227,13 @@ def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
     rows = json.loads((output / "metrics.json").read_text())
     assert len(rows) == 6
     assert {r["split"] for r in rows} == {"train", "validation"}
+    # Context models score the events after the context pool; the others every event.
+    experiment = json.loads((output / "experiment.json").read_text())
+    scored = 24 - 4 if uses_context(kind) else 24
+    assert {r["events"] for r in rows} == {3 * scored}
+    assert experiment["evaluation_targets"] == (
+        "after_context_pool" if uses_context(kind) else "all_events"
+    )
     assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
     assert (output / "lf_precision_recall_log.png").exists()
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
@@ -260,8 +269,11 @@ def test_ap_selection_restores_highest_ap(tmp_path):
     assert actual["average_precision"] == expected
 
 
-@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer"])
-@pytest.mark.parametrize("mix_context", [False, True])
+# mix_context applies to context models only.
+MIXUP_CASES = [("cnp", False), ("cnp", True), ("mlp", False), ("transformer", False)]
+
+
+@pytest.mark.parametrize("kind,mix_context", MIXUP_CASES)
 def test_mixup_shared_training_and_checkpoint(kind, mix_context, tmp_path, monkeypatch):
     from core.mixup import ClassAwareMixupSource
 
@@ -276,10 +288,10 @@ def test_mixup_shared_training_and_checkpoint(kind, mix_context, tmp_path, monke
 
     def capture(self, **kwargs):
         ctx, tgt = original_next(self, **kwargs)
-        calls.append(ctx.n_events)
+        calls.append(0 if ctx is None else ctx.n_events)
         sums.append(float(tgt.labels.sum()))
         counts.append(tgt.labels.size)
-        if not mix_context:
+        if ctx is not None and not mix_context:
             assert np.isin(ctx.labels, [0, 1]).all()
         return ctx, tgt
 
@@ -289,8 +301,7 @@ def test_mixup_shared_training_and_checkpoint(kind, mix_context, tmp_path, monke
         eval_every=3,
         batch_size=2,
         n_events=12,
-        n_context_min=2,
-        n_context_max=5,
+        **({"n_context_min": 2, "n_context_max": 5} if uses_context(kind) else {}),
         sampling={
             "strategy": "class_aware_mixup",
             "mixup": {"alpha": 0.2, "mix_context": mix_context},
@@ -300,8 +311,11 @@ def test_mixup_shared_training_and_checkpoint(kind, mix_context, tmp_path, monke
     report = model.fit(
         batch, settings, validation=Episode(context, target), checkpoints=tmp_path / "run"
     )
-    assert len(set(calls)) > 1
-    assert all(2 <= n <= 5 for n in calls)
+    if uses_context(kind):
+        assert len(set(calls)) > 1
+        assert all(2 <= n <= 5 for n in calls)
+    else:
+        assert set(calls) == {0} and set(counts) == {2 * 12}  # every drawn event a target
     assert np.isfinite([r["training_loss"] for r in report.history]).all()
     audit = report.sampling_audit
     assert audit["label_mass"] == sum(sums)
@@ -343,8 +357,7 @@ def test_tree_rejects_mixup():
         TreeTraining(sampling={"strategy": "class_aware_mixup", "mixup": {}})
 
 
-@pytest.mark.parametrize("kind", ["cnp", "mlp", "transformer"])
-@pytest.mark.parametrize("mix_context", [False, True])
+@pytest.mark.parametrize("kind,mix_context", MIXUP_CASES)
 def test_real_plus_mixup_loss_history_counts_and_checkpoint(kind, mix_context, tmp_path):
     s = for_scenario("S1", seed=0)
     b = s.generate(n_trials=4, n_events=24)
@@ -355,8 +368,7 @@ def test_real_plus_mixup_loss_history_counts_and_checkpoint(kind, mix_context, t
         eval_every=1,
         batch_size=2,
         n_events=12,
-        n_context_min=4,
-        n_context_max=4,
+        **({"n_context_min": 4, "n_context_max": 4} if uses_context(kind) else {}),
         sampling={"strategy": "class_aware_mixup", "mixup": {"mix_context": mix_context}},
         objective={
             "strategy": "real_plus_mixup",
@@ -371,9 +383,11 @@ def test_real_plus_mixup_loss_history_counts_and_checkpoint(kind, mix_context, t
             row["training_real_bce"] + 0.001 * row["training_mixup_bce"], rel=1e-6
         )
     audit = result.sampling_audit
-    assert audit["real_target_events"] == 24
-    assert audit["mixed_target_events"] == 48
-    assert audit["total_target_predictions"] == 72
+    # 3 steps x 2 design points; targets: 8 of 12 events with a context of 4, else all 12.
+    targets = 8 if uses_context(kind) else 12
+    assert audit["mixed_target_events"] == 6 * targets
+    assert audit["real_target_events"] == 6 * targets // 2
+    assert audit["total_target_predictions"] == 6 * targets * 3 // 2
     restored = load_surrogate(tmp_path / "fit/best")
     assert restored.metadata["training"]["objective"] == cfg.objective.model_dump()
     assert restored.metadata["sampling_audit"] == audit

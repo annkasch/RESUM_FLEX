@@ -62,7 +62,6 @@ BASE = dict(
         eval_every=2,
         batch_size=2,
         n_events=6,
-        context={"size": "fixed", "n": 3},
     ),
     data_directory="d",
     output_directory="o",

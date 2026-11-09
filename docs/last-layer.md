@@ -17,7 +17,7 @@ trained weights are the mean; the precision is the exact Bernoulli Hessian of th
 input), plus `λ I`. `prior_precision: evidence` picks λ by maximizing the Laplace marginal
 likelihood of the training data; validation is not used. A CNP conditions on the same
 seeded context split as evaluation (`validation_context_events`); only its target events
-enter H. The posterior is stored as `checkpoints/<name>/last_layer.npz`, its summary in the
+enter H. Context-free models use all training events. The posterior is stored as `checkpoints/<name>/last_layer.npz`, its summary in the
 manifest's `metadata.last_layer`.
 
 Predictions: `voxel_probability_draws` samples the weights and averages p over each voxel's

@@ -191,7 +191,7 @@ def test_experiment_writes_posterior_and_predictive_scores(kind, tmp_path):
             eval_every=2,
             batch_size=2,
             n_events=12,
-            context={"size": "fixed", "n": 3},
+            **({"context": {"size": "fixed", "n": 3}} if kind == "cnp" else {}),
         ),
         data_directory=root,
         data_provider="tests.test_last_layer:NormalizedNpz",

@@ -10,7 +10,10 @@ from core.surrogates.fine_tuning import fine_tuning_stages
 from core.target_sampling import RealTargetSampler
 from data.pseudo_generator import for_scenario
 from schemas.data_models import InputMode, StandardBatch
-from schemas.surrogates import NeuralTraining
+from schemas.surrogates import NeuralTraining, SurrogateConfig
+
+CNP = {"kind": "cnp", "encoder": {"type": "mlp", "latent_dim": 8, "hidden_dims": [12]}}
+MLP = {"kind": "mlp", "architecture": {"hidden_dims": [8]}}
 
 
 def batch(n_voxels=4, n_events=60):
@@ -72,11 +75,62 @@ def test_legacy_context_fields_keep_absolute_range():
         },
         {"targets": "both"},
         {"n_context_min": 4, "context": {"size": "fixed", "n": 4}},
+        {"n_context_min": 70, "n_context_max": 64},
     ],
 )
 def test_invalid_episode_settings_rejected(kwargs):
+    # Context sizes are checked against the model kind: a context model here.
     with pytest.raises(ValidationError):
-        NeuralTraining(**kwargs)
+        SurrogateConfig(model=CNP, training={"backend": "neural", **kwargs})
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"context": {"size": "fixed", "n": 4}},
+        {"context": {"n_min": 8}},
+        {"targets": "joint"},
+        {"n_context_min": 16, "n_context_max": 64},
+    ],
+)
+def test_context_free_models_reject_context_settings(kwargs):
+    with pytest.raises(ValidationError, match="context-free"):
+        SurrogateConfig(model=MLP, training={"backend": "neural", **kwargs})
+
+
+def test_context_free_models_score_all_drawn_events():
+    # n_events below the default context minimum is valid without a context.
+    training = SurrogateConfig(model=MLP, training={"backend": "neural", "n_events": 8}).training
+    assert training.context_range(context=False) == (0, 0)
+    assert training.target_events_per_step(context=False) == 16 * 8
+    passes = NeuralTraining(n_passes=10, n_events=750)
+    assert passes.resolve_n_steps(1999 * 1500, context=False) == 2499
+    with pytest.raises(ValidationError):
+        SurrogateConfig(model=CNP, training={"backend": "neural", "n_events": 8})
+
+
+def test_sampler_without_context_draws_only_targets():
+    b = batch()
+    sampler = RealTargetSampler(
+        b, seed=5, batch_size=3, n_events=20, n_context_min=0, n_context_max=0
+    )
+    context, target, weights = sampler.next()
+    assert context is None and target.labels.shape == (3, 20)
+    for record in sampler.last_provenance:
+        assert len(record["context"]) == 0 and len(set(record["target"])) == 20
+    assert np.all(weights == 1)
+
+
+def test_context_free_training_uses_every_drawn_event(tmp_path):
+    source = for_scenario("S1", seed=0)
+    train = source.generate(n_trials=5, n_events=24)
+    val = source.generate(n_trials=3, n_events=24, seed=3)
+    settings = NeuralTraining(n_steps=4, eval_every=2, batch_size=3, n_events=20)
+    model = build_surrogate(MLP, source.dim_theta, source.dim_phi)
+    report = model.fit(train, settings, validation=Episode(None, val))
+    audit = report.sampling_audit
+    assert audit["targets"] == "all_events" and audit["context_range"] == [0, 0]
+    assert audit["events"] == settings.n_steps * settings.batch_size * settings.n_events
 
 
 def test_joint_targets_contain_context_and_same_events_as_disjoint():

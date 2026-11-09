@@ -187,7 +187,6 @@ def test_field_runs_through_the_pipeline(tmp_path):
             eval_every=3,
             batch_size=2,
             n_events=12,
-            context={"size": "fixed", "n": 3},
         ),
         data_directory=root,
         data_provider="tests.test_bernoulli_field:FieldNpz",

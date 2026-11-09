@@ -60,27 +60,44 @@ def saved_arrays_path(run, split, fidelity, checkpoint):
 
 
 def training_run_targets(run, experiment, sets):
-    """Target batches of a design-point training run, as its evaluation built them."""
-    from core.surrogate_cnp import split_context_target
-    from core.surrogates.datasets import load_provider
+    """Target batches of a design-point training run, as its evaluation built them.
 
-    config = SurrogateRunConfig.model_validate(experiment["resolved_config"])
-    provider = load_provider(config.data_provider, config.data_directory)
+    Reads only the data and evaluation-split settings of the run's record, so runs whose
+    configs fail current validation elsewhere (e.g. an inert training.context of a
+    context-free model) still load. Runs without ``evaluation_targets`` split every set.
+    """
+    from core.surrogates.datasets import load_provider
+    from core.surrogates.experiment import AFTER_CONTEXT_POOL, ALL_EVENTS, evaluation_episode
+
+    resolved = experiment["resolved_config"]
+    fields = SurrogateRunConfig.model_fields
+
+    def setting(name):
+        return resolved.get(name, fields[name].get_default(call_default_factory=True))
+
+    mode = experiment.get("evaluation_targets", AFTER_CONTEXT_POOL)
+    if mode not in (AFTER_CONTEXT_POOL, ALL_EVENTS):
+        raise ValueError(f"Unknown evaluation_targets {mode!r} in {run}/experiment.json")
+    n_context, seed = setting("validation_context_events"), setting("validation_seed")
+    n_pool = max([n_context, *setting("validation_context_sweep")])
+    partitions = setting("partitions")
+    provider = load_provider(setting("data_provider"), Path(resolved["data_directory"]))
     test_file = run / "test_evaluation.json"
     tests = json.loads(test_file.read_text()).get("data", {}) if test_file.exists() else {}
     targets = {}
     for split, fidelity in sets:
         name = f"{split}/{fidelity}"
-        batch, provenance = provider.load(config.partitions[split], fidelity)
+        batch, provenance = provider.load(partitions[split], fidelity)
         recorded = tests.get(fidelity) if split == "test" else experiment["data"].get(name)
         check_provenance(recorded, provenance, name)
-        _, targets[split, fidelity] = split_context_target(
+        targets[split, fidelity] = evaluation_episode(
             batch,
-            config.validation_context_events,
-            seed=config.validation_seed,
-            n_pool=config.validation_context_pool,
-        )
-    return targets, config.validation_seed
+            context=mode == AFTER_CONTEXT_POOL,
+            n_context=n_context,
+            seed=seed,
+            n_pool=n_pool,
+        ).target
+    return targets, seed
 
 
 def is_stream_run(experiment):

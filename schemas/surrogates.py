@@ -225,6 +225,15 @@ class LastLayerFineTuning(StrictConfigModel):
     n_events: int | None = Field(default=None, ge=3)
 
 
+# Event-model kinds that condition on labelled context events of the same design point.
+CONTEXT_KINDS = frozenset({"cnp", "legacy_cnp"})
+
+
+def uses_context(kind: str) -> bool:
+    """Whether an event model of this kind conditions on context events."""
+    return kind in CONTEXT_KINDS
+
+
 class RandomContext(StrictConfigModel):
     """Context size drawn uniformly from [n_min, cap] once per step.
 
@@ -268,6 +277,7 @@ class NeuralTraining(StrictConfigModel):
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
     batch_size: int = Field(default=16, gt=0)  # voxels per step
     n_events: int = Field(default=128, ge=3)  # events drawn per voxel per step
+    # Context models only (cnp, legacy_cnp); context-free models score all n_events events.
     # disjoint: targets are the non-context events; joint: targets also include the
     # context events (Garnelo et al. 2018). Evaluation is always disjoint.
     targets: Literal["disjoint", "joint"] = "disjoint"
@@ -306,8 +316,13 @@ class NeuralTraining(StrictConfigModel):
             data["context"] = {"size": "random", "n_min": n_min, "n_max": n_max}
         return data
 
-    def context_range(self, n_events: int | None = None) -> tuple[int, int]:
-        """Smallest and largest context size for episodes of n_events per voxel."""
+    def context_range(self, n_events: int | None = None, *, context=True) -> tuple[int, int]:
+        """Smallest and largest context size for episodes of n_events per voxel.
+
+        context=False (context-free models): (0, 0), every drawn event is a target.
+        """
+        if not context:
+            return 0, 0
         n = self.n_events if n_events is None else n_events
         limit = n - 1 if self.targets == "joint" else n - 2
         context = self.context
@@ -329,24 +344,45 @@ class NeuralTraining(StrictConfigModel):
             )
         return low, high
 
-    def target_events_per_step(self) -> float:
-        """Expected number of scored target events in one step."""
-        if self.targets == "joint":
+    def target_events_per_step(self, *, context=True) -> float:
+        """Expected number of scored target events in one step (context: context model)."""
+        if self.targets == "joint" or not context:
             return float(self.batch_size * self.n_events)
         low, high = self.context_range()
         return self.batch_size * (self.n_events - (low + high) / 2)
 
-    def resolve_n_steps(self, training_events: int) -> int:
+    def resolve_n_steps(self, training_events: int, *, context=True) -> int:
         """n_steps, or the steps needed for n_passes over training_events target events."""
         if self.n_steps is not None:
             return self.n_steps
-        return max(1, math.ceil(self.n_passes * training_events / self.target_events_per_step()))
+        per_step = self.target_events_per_step(context=context)
+        return max(1, math.ceil(self.n_passes * training_events / per_step))
+
+    def check_context(self, kind: str):
+        """Context sizes fit the episodes of a context model; context-free models keep the
+        defaults (their context and targets settings would be inert)."""
+        if uses_context(kind):
+            self.context_range()
+            if self.fine_tuning is not None:
+                try:
+                    self.context_range(self.fine_tuning.n_events or self.n_events)
+                except ValueError as error:
+                    raise ValueError(f"Fine-tuning events: {error}") from None
+        elif (
+            self.targets != "disjoint"
+            or self.context != RandomContext()
+            or (self.sampling.mixup is not None and self.sampling.mixup.mix_context)
+        ):
+            raise ValueError(
+                f"{kind} is context-free and scores all n_events events per design point; "
+                "remove training.context, targets, n_context_min/n_context_max and "
+                "sampling.mixup.mix_context"
+            )
 
     @model_validator(mode="after")
     def compatible(self):
         if self.n_steps is not None and self.n_passes is not None:
             raise ValueError("Set either n_steps or n_passes, not both")
-        self.context_range()
         if self.targets == "joint" and self.sampling.strategy != "natural":
             raise ValueError("targets=joint currently requires natural sampling")
         if self.sampling.strategy == "class_aware_mixup" and self.weighting.strategy != "none":
@@ -362,11 +398,6 @@ class NeuralTraining(StrictConfigModel):
         corrected = self.weighting.strategy == "sampling_correction"
         if quota != corrected:
             raise ValueError("positive_quota and sampling_correction must be used together")
-        if self.fine_tuning is not None:
-            try:
-                self.context_range(self.fine_tuning.n_events or self.n_events)
-            except ValueError as error:
-                raise ValueError(f"Fine-tuning events: {error}") from None
         return self
 
 
@@ -421,6 +452,7 @@ class SurrogateConfig(StrictConfigModel):
                     "legacy_cnp requires an explicit theory-truth or practice-truth loss; "
                     "single-logit models require bernoulli"
                 )
+            self.training.check_context(self.model.kind)
         return self
 
 

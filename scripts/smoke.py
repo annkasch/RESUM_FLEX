@@ -142,7 +142,6 @@ def write_configs(root: Path) -> dict[str, Path]:
                 "eval_every": 10,
                 "batch_size": 4,
                 "n_events": 20,
-                "context": {"size": "fixed", "n": 4},
             },
             "data_directory": "data",
             "data_provider": "scripts.smoke:SmokeNpz",

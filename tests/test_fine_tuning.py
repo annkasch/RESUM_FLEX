@@ -11,20 +11,20 @@ from core.surrogate_cnp import split_context_target
 from core.surrogates import Episode, build_surrogate, load_surrogate
 from core.surrogates.experiment import run_experiment
 from data.pseudo_generator import for_scenario
-from schemas.surrogates import NeuralTraining, SurrogateRunConfig
+from schemas.surrogates import NeuralTraining, SurrogateConfig, SurrogateRunConfig, uses_context
 from tests.test_surrogates import spec
 
 
 def settings(kind):
+    context = uses_context(kind)  # context sizes and mix_context: context models only
     return NeuralTraining(
         n_steps=3,
         eval_every=1,
         n_events=12,
         batch_size=3,
-        n_context_min=4,
-        n_context_max=4,
+        **({"n_context_min": 4, "n_context_max": 4} if context else {}),
         loss="theory-truth" if kind == "legacy_cnp" else "bernoulli",
-        sampling={"strategy": "class_aware_mixup", "mixup": {"mix_context": True}},
+        sampling={"strategy": "class_aware_mixup", "mixup": {"mix_context": context}},
         fine_tuning={"n_steps": 3, "eval_every": 1, "learning_rate": 0.01, "n_events": 16},
     )
 
@@ -149,7 +149,9 @@ def test_test_dataset_is_loaded_after_fit_only(tmp_path, monkeypatch, unblind):
 
 def test_fine_tuning_invalid_sizes_rejected():
     with pytest.raises(ValidationError, match="Fine-tuning events"):
-        NeuralTraining(fine_tuning={"n_events": 10})
+        SurrogateConfig(
+            model=spec("cnp"), training={"backend": "neural", "fine_tuning": {"n_events": 10}}
+        )
     source = for_scenario("S1", seed=0)
     batch = source.generate(n_trials=3, n_events=24)
     model = build_surrogate(spec("cnp"), source.dim_theta, source.dim_phi)

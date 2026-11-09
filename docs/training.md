@@ -25,7 +25,8 @@ validation sets with no positives; AP selection then fails before fitting.
 `core.mixup.ClassAwareMixupSource` samples voxels uniformly with replacement.
 For each voxel occurrence in each batch, it freshly partitions the full source
 set into disjoint context and target pools, independently of labels, in the
-requested context/target proportion. Both parents of a mixture come from the
+requested context/target proportion (context-free models: all events are
+target pool). Both parents of a mixture come from the
 same pool. Positive partners can repeat within their pool; weights are independent
 per pair. A pool with only one class returns real events. A lone positive may
 serve either side across batches; it is not permanently reserved for targets.
@@ -60,7 +61,10 @@ with it. Permutation mixup remains a standalone utility.
 ### Episode building
 
 Each optimizer step draws `batch_size` voxels (with replacement) and `n_events`
-events from each voxel. These events are split into context and targets:
+events from each voxel. Context-free models (mlp, transformer, field) score all of them;
+`context`, `targets` and `mixup.mix_context` apply to context models (cnp, legacy_cnp)
+only and are rejected otherwise. For context models the events are split into context
+and targets:
 
 ```yaml
 training:
@@ -89,10 +93,11 @@ training:
   means as many scored target events as there are training events. The steps are
   `ceil(n_passes * training_events / targets_per_step)`, with
   `targets_per_step = batch_size * (n_events - mean context size)` for disjoint and
-  `batch_size * n_events` for joint targets; the mean context size of a random
+  `batch_size * n_events` for joint targets and context-free models; the mean context size of a random
   context is `(n_min + cap) / 2`. Example: 1999 voxels x 1500 events, 16 x 750,
   context 16-375, `n_passes: 10` -> 3380 steps.
-- The sampling audit records `targets`, the resolved `context_range`, `n_steps`,
+- The sampling audit records `targets` (`all_events` for context-free models), the
+  resolved `context_range` (`[0, 0]` without context), `n_steps`,
   `requested_passes` and the realized `target_passes`.
 
 Validation and reported train/validation metrics use real binary events. The

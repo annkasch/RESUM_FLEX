@@ -1,6 +1,5 @@
 """Unequal event counts per voxel: padded batches with explicit event_counts."""
 
-
 import numpy as np
 import pytest
 
@@ -167,15 +166,17 @@ def test_neural_models_train_and_predict_on_ragged_data(kind, sampling):
         else {"kind": kind}
     )
     model = build_surrogate(spec, source.dim_theta, source.dim_phi)
+    settings = SAMPLING[sampling]
+    if sampling == "mixup" and not model.uses_context:  # mix_context: context models only
+        settings = dict(sampling={"strategy": "class_aware_mixup", "mixup": {}})
     training = NeuralTraining(
         n_steps=2,
         eval_every=1,
         batch_size=4,
         n_events=12,
-        n_context_min=3,
-        n_context_max=5,
+        **({"n_context_min": 3, "n_context_max": 5} if model.uses_context else {}),
         loss="theory-truth" if kind == "legacy_cnp" else "bernoulli",
-        **SAMPLING[sampling],
+        **settings,
     )
     result = model.fit(b, training, validation=Episode(*split_context_target(val, 4, seed=1)))
     assert all(np.isfinite(r["training_loss"]) for r in result.history)

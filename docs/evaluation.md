@@ -112,10 +112,15 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
 Precision is set by positives, not design points. A positive gain says that something is
 learnable, not what; compare with the per-feature calibration to locate it.
 
-Evaluation layout: each voxel's events are permuted with `validation_seed`. The
-targets are the events after `validation_context_pool = max(validation_context_events,
-*validation_context_sweep)`; the context is the first `n` of the pool. Every context
-size therefore scores the same targets, and contexts are nested.
+Evaluation layout: context-free models (mlp, transformer, field, bdt) score every event
+of every design point, as stream runs do. For context models (cnp, legacy_cnp) each
+voxel's events are permuted with `validation_seed`; the targets are the events after
+`validation_context_pool = max(validation_context_events, *validation_context_sweep)` and
+the context is the first `n` of the pool. Every context size therefore scores the same
+targets, and contexts are nested. `experiment.json` records the layout as
+`evaluation_targets` (`all_events` or `after_context_pool`). Runs from before 2026-11-09
+lack the key and scored context-free models after the context pool too, so their metrics
+are not comparable with newer runs.
 
 Read-out after training (held-out splits only, not used for selection):
 

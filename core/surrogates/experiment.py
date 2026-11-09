@@ -12,7 +12,11 @@ from core.surrogates.checkpoints import load_surrogate
 from core.surrogates.evaluation import evaluate_surrogate, evaluation_threads
 from core.surrogates.models import build_surrogate
 from schemas.data_models import concatenate_batches
-from schemas.surrogates import SurrogateRunConfig
+from schemas.surrogates import SurrogateRunConfig, uses_context
+
+# experiment.json "evaluation_targets": context models score the events after the context
+# pool; context-free models score every event. Runs without the key used the split for all.
+AFTER_CONTEXT_POOL, ALL_EVENTS = "after_context_pool", "all_events"
 
 
 def prepare_and_open(config):
@@ -23,6 +27,25 @@ def prepare_and_open(config):
     if config.data_config is not None:
         record = prepare_data(config.data_provider, config.data_config, config.data_directory)
     return load_provider(config.data_provider, config.data_directory), record
+
+
+def evaluation_episode(batch, *, context, n_context, seed, n_pool):
+    """Evaluation episode of one batch: the seeded context/target split for a context
+    model, all events as targets (no context) otherwise."""
+    if not context:
+        return Episode(None, batch)
+    return Episode(*split_context_target(batch, n_context, seed=seed, n_pool=n_pool))
+
+
+def run_episode(batch, config):
+    """Evaluation episode of one batch for a run config's event model."""
+    return evaluation_episode(
+        batch,
+        context=uses_context(config.model.kind),
+        n_context=config.validation_context_events,
+        seed=config.validation_seed,
+        n_pool=config.validation_context_pool,
+    )
 
 
 def run_experiment(config: SurrogateRunConfig):
@@ -69,17 +92,7 @@ def run_experiment(config: SurrogateRunConfig):
             batches[split, fidelity], provenance[f"{split}/{fidelity}"] = load_split(
                 split, fidelity
             )
-    episodes = {
-        key: Episode(
-            *split_context_target(
-                batch,
-                config.validation_context_events,
-                seed=config.validation_seed,
-                n_pool=config.validation_context_pool,
-            )
-        )
-        for key, batch in batches.items()
-    }
+    episodes = {key: run_episode(batch, config) for key, batch in batches.items()}
     train = batches["train", label]
     selection_episode = episodes.get(("validation", config.selection_fidelity))
     selection_voxels = None
@@ -88,8 +101,10 @@ def run_experiment(config: SurrogateRunConfig):
         index = subsample_voxels(n, config.selection_max_voxels, config.validation_seed, 0)
         selection_voxels = dict(available=n, used=len(index))
         if len(index) < n:
+            context = selection_episode.context
             selection_episode = Episode(
-                selection_episode.context.take(index), selection_episode.target.take(index)
+                None if context is None else context.take(index),
+                selection_episode.target.take(index),
             )
     dt = None if train.theta is None else train.theta.shape[-1]
     dp = None if train.phi is None else train.phi.shape[-1]
@@ -112,6 +127,7 @@ def run_experiment(config: SurrogateRunConfig):
         resolved_config=config.model_dump(mode="json"),
         data=provenance,
         context_conditioning=model.uses_context,
+        evaluation_targets=AFTER_CONTEXT_POOL if model.uses_context else ALL_EVENTS,
         data_config=data_check,
         test_data="Not loaded",
         selection_split=(
@@ -189,28 +205,19 @@ def _evaluate(config, output, train, batches, episodes, load_split):
             and any(np.array_equal(row, other) for row in batch.theta for other in train.theta)
         ):
             raise ValueError("Test voxel coordinates overlap training inputs")
-        episodes["test", fidelity] = Episode(
-            *split_context_target(
-                batch,
-                config.validation_context_events,
-                seed=config.validation_seed,
-                n_pool=config.validation_context_pool,
-            )
-        )
+        episodes["test", fidelity] = run_episode(batch, config)
     if test_provenance:
-        (output / "test_evaluation.json").write_text(
-            json.dumps(
-                {
-                    "status": "unblinded",
-                    "data": test_provenance,
-                    "used_for_selection": False,
-                    "context_events": config.validation_context_events,
-                    "context_pool": config.validation_context_pool,
-                    "context_seed": config.validation_seed,
-                },
-                indent=2,
+        record = {"status": "unblinded", "data": test_provenance, "used_for_selection": False}
+        if uses_context(config.model.kind):
+            record.update(
+                targets=AFTER_CONTEXT_POOL,
+                context_events=config.validation_context_events,
+                context_pool=config.validation_context_pool,
+                context_seed=config.validation_seed,
             )
-        )
+        else:
+            record["targets"] = ALL_EVENTS
+        (output / "test_evaluation.json").write_text(json.dumps(record, indent=2))
     from core.surrogates.readout import context_sweep, readout_metrics
 
     # Constant-rate reference for the log-loss skill, from the training partition only.
@@ -286,15 +293,8 @@ def _fit_last_layers(directory, train, config):
 
     for manifest in sorted(directory.rglob("model.json")):
         model = load_surrogate(manifest.parent)
-        context, target = None, train
-        if model.uses_context:
-            context, target = split_context_target(
-                train,
-                config.validation_context_events,
-                seed=config.validation_seed,
-                n_pool=config.validation_context_pool,
-            )
-        fit_last_layer(model, target, context)
+        episode = run_episode(train, config)
+        fit_last_layer(model, episode.target, episode.context)
         model.save(manifest.parent)
 
 

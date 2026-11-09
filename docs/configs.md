@@ -35,7 +35,7 @@ parentheses.
 | `selection_fidelity` | Validation fidelity that selects the checkpoint: `lf` or `hf` (`lf`). With `hf` that set's scores are selection-biased; keep a blinded test set for the final comparison. |
 | `test_fidelities` | Test sets that exist, e.g. `[lf]` (`[]`). |
 | `unblind_test` | Evaluate the test sets. Leave `false` until all choices are final (`false`). |
-| `validation_context_events` | Context events per voxel for context models during evaluation (64). |
+| `validation_context_events` | Context events per voxel for context models during evaluation (64). Context-free models score all events. |
 | `validation_context_sweep` | Extra context sizes evaluated after training, on the same targets (`[]`). |
 | `validation_seed` | Seed of the evaluation context/target split (12345). |
 | `selection_max_voxels` | Select checkpoints on a seeded subset of this many validation voxels (all). |
@@ -91,8 +91,8 @@ parentheses.
 | `grad_clip` | Gradient-norm clip, `null` to disable (1.0). |
 | `loss` | `bernoulli`; `theory-truth`/`practice-truth` only for `legacy_cnp` (`bernoulli`). |
 | `focal_gamma` | Focal-loss exponent; 0 is plain cross-entropy (0). |
-| `targets` | Context models: `disjoint` scores only non-context events, `joint` also the context (`disjoint`). |
-| `context` | Context size per step. `size: random`: drawn uniformly from `n_min` to `max_fraction` × `n_events` (16, 0.5), or up to an absolute `n_max` instead. `size: fixed`: always `n`. |
+| `targets` | Context models: `disjoint` scores only non-context events, `joint` also the context (`disjoint`). Context-free models reject it; they score all `n_events`. |
+| `context` | Context models: context size per step. `size: random`: drawn uniformly from `n_min` to `max_fraction` × `n_events` (16, 0.5), or up to an absolute `n_max` instead. `size: fixed`: always `n`. Context-free models reject it. |
 | `sampling` | `strategy`: `natural`, `positive_quota` (with `positive_fraction`) or `class_aware_mixup` (with `mixup`: `alpha`, `mix_context`) (`natural`). Only `natural` keeps the outputs calibrated probabilities. |
 | `weighting` | `strategy`: `none`, `sampling_correction` (required with `positive_quota`) or `class_weights` (with `positive`, `negative`) (`none`). |
 | `objective` | `strategy: single`, or `strategy: real_plus_mixup` with `mixup_loss_weight` and `real_target_ratio` (`single`). |

@@ -28,12 +28,14 @@ class ClassAwareMixupSource:
     No once-per-epoch coverage guarantee is made. With equal seeds, switching
     mix_context leaves target batches and source splits identical.
     With unequal event counts each voxel partitions only its own valid events.
+    Context size 0 (context-free models): all events form the target pool and the
+    context is None.
     """
 
     def __init__(self, batch, *, alpha, seed, batch_size, n_events, n_context, mix_context=True):
         if not np.isfinite(alpha) or alpha <= 0:
             raise ValueError("Class-aware mixup requires positive finite alpha")
-        if not 0 < n_context < n_events or batch_size < 1:
+        if not 0 <= n_context < n_events or batch_size < 1:
             raise ValueError("Invalid mixup episode dimensions")
         if int(batch.events_per_voxel.min()) < 2 or batch.batch_size < 1:
             raise ValueError("Class-aware mixup requires at least two source events per voxel")
@@ -57,20 +59,24 @@ class ClassAwareMixupSource:
             raise ValueError("real_target_ratio must be positive and finite")
         nc = self.nc if n_context is None else n_context
         n_events = self.nc + self.nt
-        if not 0 < nc < n_events:
+        if not 0 <= nc < n_events:
             raise ValueError("Context size must leave target events")
         nt = n_events - nc
         trials = self.rng.integers(self.batch.batch_size, size=self.batch_size)
         pools = []
         for voxel in trials:
             n = int(self.batch.events_per_voxel[voxel])
-            pool_size = min(n - 1, max(1, round(n * nc / n_events)))
+            # Context size 0 (context-free models): every event is in the target pool.
+            pool_size = min(n - 1, max(1, round(n * nc / n_events))) if nc else 0
             indices = self.rng.permutation(n)
             pools.append((indices[:pool_size], indices[pool_size:]))
 
         result = []
         self.last_provenance = []
         for side, size in ((0, nc), (1, nt)):
+            if not size:
+                result.append(None)
+                continue
             labels, features = [], []
             for row, voxel in enumerate(trials):
                 pool = pools[row][side]

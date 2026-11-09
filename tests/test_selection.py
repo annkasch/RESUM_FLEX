@@ -47,7 +47,6 @@ def test_hf_selection_uses_hf_validation(tmp_path):
             eval_every=2,
             batch_size=2,
             n_events=12,
-            context={"size": "fixed", "n": 3},
         ),
         data_directory=tmp_path / "data",
         output_directory=tmp_path / "run",

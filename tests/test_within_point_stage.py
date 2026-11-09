@@ -163,3 +163,24 @@ def test_config_checks_set_names():
         WithinPointRunConfig(run="r", within_point_null_draws=10)
     with pytest.raises(ValidationError):  # writes into the run, no output directory
         WithinPointRunConfig(run="r", output_directory="o")
+
+
+def test_reloaded_targets_follow_the_recorded_evaluation_split(training_run):
+    from core.surrogates.finished_run import training_run_targets
+
+    run, _ = training_run
+    experiment = json.loads((run / "experiment.json").read_text())
+    sets = [("validation", "lf")]
+    # Context-free model: every event was scored.
+    assert experiment["evaluation_targets"] == "all_events"
+    targets, _ = training_run_targets(run, experiment, sets)
+    assert targets["validation", "lf"].labels.shape == (6, 80)
+    # Runs recorded before the key existed split every set after the context pool.
+    older = {k: v for k, v in experiment.items() if k != "evaluation_targets"}
+    targets, _ = training_run_targets(run, older, sets)
+    assert targets["validation", "lf"].labels.shape == (6, 80 - 4)
+    # Their (current-schema-invalid) context settings do not block reloading.
+    older["resolved_config"]["training"]["context"] = {"size": "fixed", "n": 4}
+    training_run_targets(run, older, sets)
+    with pytest.raises(ValueError, match="Unknown evaluation_targets"):
+        training_run_targets(run, {**experiment, "evaluation_targets": "some"}, sets)
