@@ -139,10 +139,10 @@ def noise_study(
             )
     finally:
         np.random.set_state(state)
-    extra = {}
+    extra, row_outside = {}, None
     if observation_noise == "binomial":
         rate, _ = gp.predict(theta_test, fidelity=1)
-        extra["noise"] = count_noise(
+        extra["noise"], row_outside = count_noise(
             rate,
             np.full(n_test, float(events)),
             output_transform=output_transform,
@@ -164,6 +164,7 @@ def noise_study(
         seed=seed,
         observation_noise=observation_noise,
         refits=correction,
+        test_rates_outside_unit_interval=row_outside,
         rate_bias=bias(np.ones(n_test, dtype=bool)),
         rate_bias_dim=bias(dim),
         rate_bias_bright=bias(~dim),

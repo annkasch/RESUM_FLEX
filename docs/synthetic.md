@@ -57,9 +57,11 @@ positive lognormal bounds can't cover the many zero observed fractions there.
 0.69/0.94 dim, 0.69/0.95 bright; `learned`: 0.59/0.87 dim, 0.86/0.99 bright). The table
 prints 1σ/2σ coverage of dim and bright points next to the overall coverage.
 Identity mode, same comparison: bias ≈ 0 either way; `learned` 0.86/0.99 dim, 0.56/0.89
-bright at 50 hits; `binomial` 0.70/0.96 dim, 0.64/0.94 bright. In identity mode with
-`binomial`, 2 of 5 seeds at 1 hit and 1 of 5 at 5 hits stop because the GP predicts rates
-≤ 0 at a few dim points (training or held-out); the sweep records these as `failed`.
+bright at 50 hits; `binomial` 0.70/0.96 dim, 0.64/0.94 bright. In identity mode the GP
+predicts rates ≤ 0 at a few dim points in some seeds (up to 5 of 80 training and 4 of 200
+held-out points at 1 hit); they keep the learned noise only and are counted
+(`refits.rates_outside_unit_interval`, `test_rates_outside_unit_interval`). A fit that
+raises is recorded as `failed`.
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 

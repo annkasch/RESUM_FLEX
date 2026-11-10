@@ -202,12 +202,15 @@ def test_log_corrected_fit_with_point_noise():
     learned = [float(lik.variance[0]) for lik in gp.model.likelihood.likelihoods_list]
     np.testing.assert_allclose(level[30:], learned[1] + noise)
     rate, _ = gp.predict(X[1], fidelity=1)
-    np.testing.assert_allclose(
-        count_noise(rate, events, output_transform="log", pseudocount=0.5),
-        binomial_log_moments(rate, events, 0.5)[1],
+    noise_now, outside = count_noise(rate, events, output_transform="log", pseudocount=0.5)
+    np.testing.assert_allclose(noise_now, binomial_log_moments(rate, events, 0.5)[1])
+    assert outside == 0 and result.outside == [None, 0]
+    # Rates outside (0, 1) are counted and get no binomial noise, never a clipped rate.
+    noise_out, outside = count_noise(
+        np.array([1.2, -0.1, 0.1]), np.array([10.0, 10.0, 10.0]), output_transform="identity"
     )
-    with pytest.raises(ValueError, match="outside"):
-        count_noise(np.array([1.2]), np.array([10.0]), output_transform="identity")
+    np.testing.assert_allclose(noise_out, [0, 0, 0.009])
+    assert outside == 2
 
 
 def test_predict_adds_point_noise():
@@ -295,14 +298,18 @@ def test_identity_point_noise_from_predicted_rate():
     assert result.summary()["point_noise"] and not result.summary()["bias_correction"]
     with pytest.raises(ValueError, match="only for point_noise"):
         fit_mfgp_corrected(X, Y, events=[None, events], output_transform="identity", max_refits=2)
-    # A predicted rate <= 0 fails instead of being clipped.
-    with pytest.raises(ValueError, match="outside"):
-        fit_mfgp_corrected(
-            X,
-            [Y[0], Y[1] - 0.05],
-            events=[None, events],
-            output_transform="identity",
-            max_refits=2,
-            n_restarts=1,
-            point_noise=True,
-        )
+    # Predicted rates <= 0 are counted; those points keep the learned noise only.
+    np.random.seed(0)
+    shifted = fit_mfgp_corrected(
+        X,
+        [Y[0], Y[1] - 0.05],
+        events=[None, events],
+        output_transform="identity",
+        max_refits=2,
+        n_restarts=1,
+        point_noise=True,
+    )
+    rate, _ = shifted.gp.predict(X[1], fidelity=1)
+    assert shifted.outside[1] > 0 and shifted.summary()["rates_outside_unit_interval"][1] > 0
+    noise = shifted.point_noise[1]
+    assert (noise[noise > 0] > 0).all() and (noise == 0).sum() >= 1

@@ -209,6 +209,9 @@ def run_mfgp(
             )
             gp, offsets, point_noise = result.gp, result.offsets, result.point_noise
             correction = result.summary()
+            for k, outside in enumerate(result.outside):
+                if outside is not None:
+                    records[k]["rates_outside_unit_interval"] = outside
         else:
             gp = fit_mfgp(
                 X_list,
@@ -271,7 +274,7 @@ def run_mfgp(
         noise = None
         if cfg.observation_noise == "binomial" and cfg.levels[level].source == "observed_fraction":
             rate, _ = gp.predict(batch.theta, fidelity=level)
-            noise = count_noise(
+            noise, outside = count_noise(
                 rate,
                 events,
                 output_transform=cfg.output_transform,
@@ -294,6 +297,7 @@ def run_mfgp(
         )
         if noise is not None:
             scores["observation_noise"] = "learned + binomial count noise at the predicted rate"
+            scores["rates_outside_unit_interval"] = outside  # learned noise only there
         scores.update(
             evaluation=e,
             partition=evaluation.partition,

@@ -139,7 +139,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
 | `cnp_log_floor` | Log mode: floor for model means (1e-12). |
 | `max_refits` | Largest number of refits at the rate the previous fit predicts: log mode corrects observed-fraction targets for the pseudocount and Jensen bias, `binomial` noise is updated; stops once nothing changes by more than 0.01 (None = 8 when there is something to refit, else 0; 0 turns the log correction off; identity mode with `learned` noise: only 0). |
-| `observation_noise` | `learned` (one constant noise per level) or `binomial`: observed-fraction points also get their count noise at the predicted rate (log: Var[log y]; identity: p(1 − p)/N), held-out points scored against an observed-fraction level at their own N. Needs an observed-fraction level and `max_refits` > 0; a predicted rate outside (0, 1) stops the run. |
+| `observation_noise` | `learned` (one constant noise per level) or `binomial`: observed-fraction points also get their count noise at the predicted rate (log: Var[log y]; identity: p(1 − p)/N), held-out points scored against an observed-fraction level at their own N. Needs an observed-fraction level and `max_refits` > 0; points with a predicted rate outside (0, 1) keep the learned noise only and are counted (`rates_outside_unit_interval`). |
 | `kernel` | `rbf` or `matern52` (`rbf`). |
 | `n_restarts` | Hyperparameter optimizer restarts (5). |
 | `seed` | Seed of fits, voxel subsets and context splits (0). |

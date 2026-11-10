@@ -199,11 +199,16 @@ def resolve_max_refits(max_refits, output_transform, observation_noise="learned"
 
 @dataclass
 class CorrectedFit:
-    """Result of :func:`fit_mfgp_corrected`; per-level arrays [n_k] or None."""
+    """Result of :func:`fit_mfgp_corrected`; per-level arrays [n_k] or None.
+
+    ``outside[k]``: points of level k whose rate in the last refit was outside (0, 1); they
+    got no offset and no binomial noise (learned level noise only), never a clipped rate.
+    """
 
     gp: MultiFidelityGP
     offsets: list[np.ndarray | None]
     point_noise: list[np.ndarray | None]
+    outside: list[int | None]
     refits: int
     converged: bool
     max_change: float
@@ -215,32 +220,33 @@ class CorrectedFit:
             max_change=self.max_change,
             bias_correction=any(v is not None for v in self.offsets),
             point_noise=any(v is not None for v in self.point_noise),
+            rates_outside_unit_interval=self.outside,
         )
 
 
-def _check_rate(rate, label):
-    invalid = int(((rate <= 0) | (rate >= 1)).sum())
-    if invalid:
-        raise ValueError(
-            f"{label}: {invalid} predicted rates outside (0, 1); no binomial noise or "
-            "log-target correction (rates are never clipped)"
-        )
+def _inside(rate):
+    """Mask [n] of rates strictly inside (0, 1); the others are counted, never clipped."""
+    return (rate > 0) & (rate < 1)
 
 
 def count_noise(
     rate: np.ndarray, events: np.ndarray, *, output_transform: str, pseudocount: float = 0.5
-) -> np.ndarray:
+) -> tuple[np.ndarray, int]:
     """Binomial count noise [n] of an observed fraction in fitted units, at the rate [n].
 
     Log mode: Var[log((m + a)/(N + 2a))] (exact); identity: p(1 − p)/N. A rate outside
-    (0, 1) raises: it is never clipped.
+    (0, 1) is not clipped: that point gets 0 (learned noise only). Returns the noise and
+    the number of such points.
     """
     rate = np.asarray(rate, dtype=float)
     events = np.asarray(events, dtype=float)
-    _check_rate(rate, "count noise")
+    inside = _inside(rate)
+    noise = np.zeros_like(rate)
     if output_transform == "log":
-        return binomial_log_moments(rate, events, pseudocount)[1]
-    return rate * (1 - rate) / events
+        noise[inside] = binomial_log_moments(rate[inside], events[inside], pseudocount)[1]
+    else:
+        noise[inside] = rate[inside] * (1 - rate[inside]) / events[inside]
+    return noise, int((~inside).sum())
 
 
 def fit_mfgp_corrected(
@@ -268,8 +274,10 @@ def fit_mfgp_corrected(
     * ``point_noise``: adds the count noise (count_noise) as a fixed variance per point on
       top of the learned level noise. Identity mode refits only for this.
 
-    Refits stop when nothing changes by more than REFIT_TOLERANCE, or after ``max_refits``.
-    A predicted rate outside (0, 1) raises: it is never clipped.
+    A point whose rate is outside (0, 1) gets neither (offset 0, learned noise only) and is
+    counted in ``outside``; rates are never clipped. Refits stop when nothing changes by
+    more than REFIT_TOLERANCE (a point changing sides counts as a change), or after
+    ``max_refits``.
     """
     log = output_transform == "log"
     if len(events) != len(Y_list):
@@ -286,6 +294,8 @@ def fit_mfgp_corrected(
     )
     offsets: list[np.ndarray | None] = [None] * n
     noises: list[np.ndarray | None] = [None] * n
+    outside: list[int | None] = [None] * n
+    masks: list[np.ndarray | None] = [None] * n
     refits, change = 0, float("inf")
     while refits < max_refits and change > REFIT_TOLERANCE:
         targets, change = list(Y_list), 0.0
@@ -294,10 +304,18 @@ def fit_mfgp_corrected(
                 continue
             counts = np.asarray(counts, dtype=float)
             rate, _ = gp.predict(X_list[k], fidelity=k)
-            _check_rate(rate, f"Level {k}")
+            inside = _inside(rate)
+            outside[k] = int((~inside).sum())
+            if masks[k] is not None and (masks[k] != inside).any():
+                change = float("inf")  # a point changed sides
+            masks[k] = inside
+            noise = np.zeros_like(rate)
             if log:
-                mean_log, noise = binomial_log_moments(rate, counts, pseudocount)
-                offset = mean_log - np.log(rate)
+                offset = np.zeros_like(rate)
+                mean_log, noise[inside] = binomial_log_moments(
+                    rate[inside], counts[inside], pseudocount
+                )
+                offset[inside] = mean_log - np.log(rate[inside])
                 previous = np.zeros_like(offset) if offsets[k] is None else offsets[k]
                 change = max(change, float(np.abs(offset - previous).max()))
                 offsets[k] = offset
@@ -306,12 +324,13 @@ def fit_mfgp_corrected(
                     previous = np.zeros_like(noise) if noises[k] is None else noises[k]
                     change = max(change, float(np.abs(noise - previous).max()))
             else:
-                noise = rate * (1 - rate) / counts
+                noise[inside] = rate[inside] * (1 - rate[inside]) / counts[inside]
                 if noises[k] is None:
                     change = float("inf")
                 else:
-                    ratio = np.sqrt(noise / noises[k])
-                    change = max(change, float(np.abs(ratio - 1).max()))
+                    both = inside & (noises[k] > 0)
+                    ratio = np.sqrt(noise[both] / noises[k][both])
+                    change = max(change, float(np.abs(ratio - 1).max(initial=0.0)))
             if point_noise:
                 noises[k] = noise
         gp = fit_mfgp(
@@ -325,7 +344,13 @@ def fit_mfgp_corrected(
         )
         refits += 1
     return CorrectedFit(
-        gp, offsets, noises, refits, converged=change <= REFIT_TOLERANCE, max_change=change
+        gp,
+        offsets,
+        noises,
+        outside,
+        refits,
+        converged=change <= REFIT_TOLERANCE,
+        max_change=change,
     )
 
 

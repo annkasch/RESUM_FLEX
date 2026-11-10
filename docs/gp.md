@@ -122,8 +122,11 @@ the first fit has the learned noise only, so a point's noise never depends on it
 observation. Held-out points scored against an observed-fraction level get the same count
 noise from their N and the predicted rate in the intervals and scores, never in the mean;
 `development_map.npz` has the learned noise only (no N). Per-point noise is stored as
-`point_noise_k` in `fit_arrays.npz`. A predicted rate ≤ 0 or ≥ 1 (possible in identity mode
-for dim points) stops the run: rates are never clipped. Constant noise covers dim and
+`point_noise_k` in `fit_arrays.npz`. A point whose predicted rate is ≤ 0 or ≥ 1 (possible in
+identity mode for dim points) gets no binomial noise and, in log mode, no offset: only the
+learned level noise, never a clipped rate. The count is recorded per level in `levels.json`
+and `model.json` `refits` (`rates_outside_unit_interval`, last refit) and per evaluation set
+in `metrics.json`. Constant noise covers dim and
 bright points unequally (log mode: dim too narrow; identity: bright too narrow); on the
 synthetic sweep at 50 hits, 1σ/2σ coverage of dim/bright points is 0.59/0.87 and 0.86/0.99
 (log) and 0.86/0.99 and 0.56/0.89 (identity) with `learned`, 0.69/0.94 and 0.69/0.95 (log)
