@@ -1,4 +1,4 @@
-"""Boosted binary classifier over voxel coordinates and event features."""
+"""Boosted binary classifier over design point coordinates and event features."""
 
 import numpy as np
 from scipy.special import expit
@@ -7,7 +7,7 @@ from core.precision_recall import precision_recall
 
 
 def event_features(batch):
-    """Flatten [voxel,event] order without using labels or context statistics."""
+    """Flatten [design_point,event] order without using labels or context statistics."""
     parts = []
     if batch.theta is not None:
         parts.append(
@@ -55,7 +55,7 @@ def score_bdt(model, batch):
     pr = precision_recall(labels, scores)
     residual = predicted - observed
     metrics = dict(
-        voxels=batch.batch_size,
+        design_points=batch.batch_size,
         events=len(labels),
         positives=int(labels.sum()),
         mean_observed=float(observed.mean()),
@@ -64,8 +64,8 @@ def score_bdt(model, batch):
         pearson_r=float(np.corrcoef(observed, predicted)[0, 1])
         if predicted.std() > 0 and observed.std() > 0
         else None,
-        voxel_rate_mae=float(np.abs(residual).mean()),
-        voxel_rate_rmse=float(np.sqrt(np.square(residual).mean())),
+        design_point_rate_mae=float(np.abs(residual).mean()),
+        design_point_rate_rmse=float(np.sqrt(np.square(residual).mean())),
         bernoulli_log_loss=float(
             np.where(labels == 1, np.logaddexp(0, -scores), np.logaddexp(0, scores)).mean()
         ),

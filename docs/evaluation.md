@@ -16,20 +16,20 @@ probabilities: right order (discrimination) and right level (calibration).
 | `average_precision`, `lift` | event | order of events only; lift = AP / prevalence | lift > 1 |
 | `calibration_z` | all | `(Σk - Σp) / sqrt(Σp(1-p))`, overall level | \|Z\| < 3 |
 | `calibration_chi2_per_bin` | event bins | 10 equal-count bins of p, mean `(K-M)^2/V` | ≈ 1 |
-| `voxel_z_mean`, `voxel_z2_mean` | voxel | `z = (k - Σp) / sqrt(Σp(1-p))` | 0, 1 |
-| `voxel_rate_mse_denoised` | voxel | mean of `(o - q)^2 - o(1-o)/(n-1)` | ≈ 0 |
-| `spearman_r` | voxel | rank correlation of `o` and `q` (trend) | near ceiling |
+| `design_point_z_mean`, `design_point_z2_mean` | design point | `z = (k - Σp) / sqrt(Σp(1-p))` | 0, 1 |
+| `design_point_rate_mse_denoised` | design point | mean of `(o - q)^2 - o(1-o)/(n-1)` | ≈ 0 |
+| `spearman_r` | design point | rank correlation of `o` and `q` (trend) | near ceiling |
 | `within_point_log_loss_gain` | within design point | log-loss gain over each design point's own mean p, nats per positive | > 0 |
 | `within_point_log_loss_skill` | within design point | same gain as `1 - LL / LL(p̄_b)` | > 0 |
 | `within_point_auc` | within design point | pair AUC, hit vs non-hit of the same design point | > 0.5 |
 | `within_point_spread_z` | within design point | `(ΣG - ΣE) / sqrt(ΣV)`: observed vs model-expected gain | \|Z\| < 3 |
 
-Per voxel: `o` = hits / target events, `q` = mean predicted p over the same
+Per design point: `o` = hits / target events, `q` = mean predicted p over the same
 targets, `n` = target events. The subtracted term is the unbiased binomial noise
-estimate, so `voxel_rate_mse_denoised` estimates the real `(t - q)^2`; it can be
-slightly negative and is never clipped. `voxel_rate_mae` is kept for old runs
-only: with few hits per voxel it is dominated by noise and favours the median
-count (it prefers 0 in voxels with < 0.7 expected hits). AP needs natural
+estimate, so `design_point_rate_mse_denoised` estimates the real `(t - q)^2`; it can be
+slightly negative and is never clipped. `design_point_rate_mae` is kept for old runs
+only: with few hits per design point it is dominated by noise and favours the median
+count (it prefers 0 in design points with < 0.7 expected hits). AP needs natural
 probabilities only for its baseline; use it for mixup ablations, whose outputs are
 scores, not probabilities. The log-loss skill needs the training prevalence and is
 `None` without it.
@@ -114,7 +114,7 @@ learnable, not what; compare with the per-feature calibration to locate it.
 
 Evaluation layout: context-free models (mlp, transformer, field, bdt) score every event
 of every design point, as stream runs do. For context models (cnp, legacy_cnp) each
-voxel's events are permuted with `validation_seed`; the targets are the events after
+design point's events are permuted with `validation_seed`; the targets are the events after
 `validation_context_pool = max(validation_context_events, *validation_context_sweep)` and
 the context is the first `n` of the pool. Every context size therefore scores the same
 targets, and contexts are nested. `experiment.json` records the layout as
@@ -126,7 +126,7 @@ Read-out after training (held-out splits only, not used for selection):
 
 - `spearman_noise_ceiling`: median Spearman r over 200 label sets redrawn from the
   model's own p, i.e. what a model equal to the truth would reach at this noise.
-- `*_ci68`, `*_ci95`: central 68 % (±1σ) and 95 % bootstrap intervals over voxels, from the
+- `*_ci68`, `*_ci95`: central 68 % (±1σ) and 95 % bootstrap intervals over design points, from the
   same 200 resamples, for log loss, AP, Spearman r, `within_point_log_loss_gain` and
   `within_point_auc`. Use them to compare runs.
 - `within_point_gain_coverage`: labels redrawn `within_point_null_draws` times (1000) from
@@ -138,10 +138,10 @@ Read-out after training (held-out splits only, not used for selection):
   1000. Arrays `within_point_gain_null`
   [3, 2, B]; plot `{fidelity}_{split}_within_point_gain.png` (best checkpoint).
 - `feature_calibration` (above); plot `{fidelity}_{split}_feature_calibration.png`.
-- `voxel_quantile_z` (array, no metric): randomized quantile residual of each design
+- `design_point_quantile_z` (array, no metric): randomized quantile residual of each design
   point's hits (`core/quantile_residuals.py`). With F the predictive CDF of the hits,
   u ~ U(F(k−1), F(k)) and z = Φ⁻¹(u); exactly N(0, 1) for a right model at any expected
-  count. The Pearson z of `voxel_z_mean` is discrete and skewed when Σp per point is ~1
+  count. The Pearson z of `design_point_z_mean` is discrete and skewed when Σp per point is ~1
   (its mean and z² stay unbiased), so the z-score plot `{fidelity}_{split}_zscore.png`
   uses the quantile residual. F: Poisson-binomial of the event p, exact for k ≤ 200, normal
   with continuity correction above. Seeded by `validation_seed` (key 4); a count with zero

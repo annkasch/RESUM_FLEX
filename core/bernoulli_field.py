@@ -2,7 +2,7 @@
 
 Inputs per event (all optional, from schemas.surrogates.FieldModel):
 
-* position = theta + selected phi columns, summed in physical units (for example voxel
+* position = theta + selected phi columns, summed in physical units (for example design point
   centre + emission offset = emission point), expressed in normalized theta units and
   Fourier-encoded: [x, sin(2π f_k x), cos(2π f_k x)] for octave-spaced f_k up to f_max;
 * direction = a 3-vector of phi columns, normalized to unit length and encoded by real
@@ -146,7 +146,7 @@ class BernoulliField(nn.Module):
         self.register_buffer("direction_scale", torch.ones(n_dir))
         self.register_buffer("direction_shift", torch.zeros(n_dir))
         # Momentum encoding: (vector - momentum_origin) / momentum_unit in physical units; the
-        # normalization of the training data (voxel phi or event store).
+        # normalization of the training data (design point phi or event store).
         self.register_buffer("momentum_origin", torch.zeros(n_dir))
         self.register_buffer("momentum_unit", torch.ones(n_dir))
         # Other phi columns: phi * extra_scale + extra_shift (identity for design-point
@@ -256,7 +256,7 @@ class BernoulliField(nn.Module):
     def set_normalization(self, normalization):
         """Read the affine normalization x_n = (x - offset) / scale of theta and phi.
 
-        None (unnormalized data) keeps the identity maps. With stream units the voxel inputs
+        None (unnormalized data) keeps the identity maps. With stream units the design point inputs
         are mapped into those units; otherwise normalized theta units are the field units.
         """
         stream = self.uses_stream_units

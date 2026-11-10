@@ -134,7 +134,7 @@ def within_point_terms(target, labels, logits):
     target: StandardBatch; labels, logits: [B, N]. Returns arrays [B] and a, c, p [B, N].
     """
     mask = target.event_mask  # [B, N]
-    n = target.events_per_voxel  # [B]
+    n = target.events_per_design_point  # [B]
     logits = np.asarray(logits, dtype=float)
     p = np.where(mask, expit(logits), 0.0)  # [B, N]
     mean = p.sum(axis=1) / n  # [B]
@@ -178,15 +178,15 @@ def within_point_summary(terms):
 
 
 def probability_metrics(target, labels, probabilities, *, reference_rate=None):
-    """Calibration and voxel-trend metrics of event probabilities against natural labels.
+    """Calibration and design-point-trend metrics of event probabilities against natural labels.
 
-    target: StandardBatch giving the voxel layout; labels, probabilities: [B, N].
+    target: StandardBatch giving the design point layout; labels, probabilities: [B, N].
     reference_rate: constant-rate model for the log-loss skill (training prevalence).
     """
     mask = target.event_mask  # [B, N]
-    n = target.events_per_voxel  # [B]
+    n = target.events_per_design_point  # [B]
     if np.any(n < 2):
-        raise ValueError("Voxel metrics need at least two target events per voxel")
+        raise ValueError("Design point metrics need at least two target events per design point")
     p = np.where(mask, probabilities, 0.0)  # [B, N]
     hits = np.where(mask, labels, 0).sum(axis=1).astype(float)  # [B]
     expected = p.sum(axis=1)  # [B]
@@ -208,11 +208,11 @@ def probability_metrics(target, labels, probabilities, *, reference_rate=None):
         / bins["calibration_variance"]
     )
     metrics = dict(
-        voxel_rate_mse_denoised=float(denoised.mean()),
+        design_point_rate_mse_denoised=float(denoised.mean()),
         spearman_r=spearman,
         calibration_z=float((hits.sum() - expected.sum()) / np.sqrt(variance.sum())),
-        voxel_z_mean=float(z.mean()),
-        voxel_z2_mean=float(np.square(z).mean()),
+        design_point_z_mean=float(z.mean()),
+        design_point_z2_mean=float(np.square(z).mean()),
         calibration_chi2_per_bin=float(chi2.mean()),
         log_loss_skill=None,
     )
@@ -222,15 +222,15 @@ def probability_metrics(target, labels, probabilities, *, reference_rate=None):
         y = labels[mask]
         reference = -np.where(y == 1, np.log(reference_rate), np.log1p(-reference_rate)).mean()
         metrics["reference_log_loss"] = float(reference)
-    return metrics, dict(voxel_z=z, **bins)
+    return metrics, dict(design_point_z=z, **bins)
 
 
 def _count_nll(hits, trials, probability):
-    """Mean -log Binomial(k | n, p) over voxels with the predicted mean p (plug-in)."""
+    """Mean -log Binomial(k | n, p) over design points with the predicted mean p (plug-in)."""
     from scipy.stats import binom
 
     if np.any(probability <= 0) or np.any(probability >= 1):
-        raise ValueError("Voxel mean probabilities must lie strictly inside (0, 1)")
+        raise ValueError("Design point mean probabilities must lie strictly inside (0, 1)")
     return float(-binom.logpmf(hits, trials, probability).mean())
 
 
@@ -242,7 +242,7 @@ def evaluate_surrogate(model, target, *, context=None, reference_rate=None):
     logits = prediction.logits
     if logits.shape != labels.shape:
         raise ValueError("Predictions and labels must have identical shapes")
-    observed, predicted = target.voxel_mean(labels), prediction.mean
+    observed, predicted = target.design_point_mean(labels), prediction.mean
     residual = predicted - observed
     # Event-level metrics use only valid events; padded positions are dropped.
     mask = target.event_mask
@@ -260,7 +260,7 @@ def evaluate_surrogate(model, target, *, context=None, reference_rate=None):
     )
     mean_observed = float(observed.mean())
     metrics = dict(
-        voxels=len(observed),
+        design_points=len(observed),
         events=int(event_labels.size),
         positives=int(event_labels.sum()),
         mean_observed=mean_observed,
@@ -270,16 +270,16 @@ def evaluate_surrogate(model, target, *, context=None, reference_rate=None):
         pearson_r=float(np.corrcoef(observed, predicted)[0, 1])
         if observed.std() > 0 and predicted.std() > 0
         else None,
-        voxel_rate_mae=float(np.abs(residual).mean()),
-        voxel_rate_rmse=float(np.sqrt(np.square(residual).mean())),
+        design_point_rate_mae=float(np.abs(residual).mean()),
+        design_point_rate_rmse=float(np.sqrt(np.square(residual).mean())),
         bernoulli_log_loss=float(
             np.where(
                 event_labels == 1, np.logaddexp(0, -event_logits), np.logaddexp(0, event_logits)
             ).mean()
         ),
         brier_score=float(np.square(prediction.probabilities[mask] - event_labels).mean()),
-        voxel_count_nll=_count_nll(
-            np.where(mask, labels, 0).sum(axis=1), target.events_per_voxel, predicted
+        design_point_count_nll=_count_nll(
+            np.where(mask, labels, 0).sum(axis=1), target.events_per_design_point, predicted
         ),
         average_precision=curve["average_precision"],
         prevalence=curve["prevalence"],

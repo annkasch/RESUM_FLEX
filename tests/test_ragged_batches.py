@@ -1,4 +1,4 @@
-"""Unequal event counts per voxel: padded batches with explicit event_counts."""
+"""Unequal event counts per design point: padded batches with explicit event_counts."""
 
 import numpy as np
 import pytest
@@ -17,12 +17,12 @@ COUNTS = np.array([30, 18, 24, 12])
 
 
 def ragged(seed=0, counts=COUNTS):
-    """Pseudo data truncated to per-voxel counts, padded with zeros."""
+    """Pseudo data truncated to per-design-point counts, padded with zeros."""
     source = for_scenario("S1", seed=seed)
     full = source.generate(n_trials=len(counts), n_events=int(max(counts)))
     valid = np.arange(full.n_events)[None, :] < counts[:, None]
     labels = np.where(valid, full.labels, 0)
-    labels[:, 0] = 1  # every voxel has a positive and a negative
+    labels[:, 0] = 1  # every design point has a positive and a negative
     labels[:, 1] = 0
     phi = np.where(valid[..., None], full.phi, 0.0)
     batch = StandardBatch(
@@ -34,10 +34,10 @@ def ragged(seed=0, counts=COUNTS):
 def test_schema_validates_counts_and_padding():
     _, b = ragged()
     assert b.is_ragged and b.n_events == 30
-    np.testing.assert_array_equal(b.events_per_voxel, COUNTS)
+    np.testing.assert_array_equal(b.events_per_design_point, COUNTS)
     values = np.arange(b.labels.size, dtype=float).reshape(b.labels.shape)
     expected = [values[i, :n].mean() for i, n in enumerate(COUNTS)]
-    np.testing.assert_allclose(b.voxel_mean(values), expected)
+    np.testing.assert_allclose(b.design_point_mean(values), expected)
     bad = b.labels.copy()
     bad[3, 20] = 1
     with pytest.raises(ValueError, match="Padded events"):
@@ -56,13 +56,13 @@ def test_schema_validates_counts_and_padding():
     assert full.event_counts is None and not full.is_ragged
 
 
-def test_split_uses_each_voxels_own_events():
+def test_split_uses_each_design_points_own_events():
     _, b = ragged()
     ctx, tgt = split_context_target(b, 6, seed=3)
     assert ctx.n_events == 6 and not ctx.is_ragged
-    np.testing.assert_array_equal(tgt.events_per_voxel, COUNTS - 6)
+    np.testing.assert_array_equal(tgt.events_per_design_point, COUNTS - 6)
     for i, n in enumerate(COUNTS):
-        # Context and target partition exactly the valid events of the voxel.
+        # Context and target partition exactly the valid events of the design point.
         rows = np.concatenate([ctx.phi[i], tgt.phi[i, : n - 6]])
         np.testing.assert_array_equal(np.sort(rows[:, 0]), np.sort(b.phi[i, :n, 0]))
         assert ctx.labels[i].sum() + tgt.labels[i].sum() == b.labels[i, :n].sum()
@@ -71,7 +71,7 @@ def test_split_uses_each_voxels_own_events():
 
 
 @pytest.mark.parametrize("fraction", [None, 0.3])
-def test_real_target_sampler_stays_inside_each_voxel(fraction):
+def test_real_target_sampler_stays_inside_each_design_point(fraction):
     _, b = ragged()
     sampler = RealTargetSampler(
         b,
@@ -98,7 +98,7 @@ def test_real_target_sampler_stays_inside_each_voxel(fraction):
 
 
 @pytest.mark.parametrize("mix_context", [False, True])
-def test_mixup_pools_stay_inside_each_voxel(mix_context):
+def test_mixup_pools_stay_inside_each_design_point(mix_context):
     _, b = ragged()
     source = ClassAwareMixupSource(
         b, alpha=0.2, seed=2, batch_size=16, n_events=10, n_context=4, mix_context=mix_context
@@ -106,7 +106,7 @@ def test_mixup_pools_stay_inside_each_voxel(mix_context):
     for _ in range(5):
         source.next(real_target_ratio=1.0)
         for record in source.last_provenance:
-            n = COUNTS[record["voxel"]]
+            n = COUNTS[record["design_point"]]
             assert record["source_pool"].max() < n
             assert record["anchors"].max() < n and record["partners"].max() < n
             if "real_target_indices" in record:
@@ -136,7 +136,7 @@ def test_prediction_mean_and_metrics_ignore_padding():
     metrics, arrays = evaluate_surrogate(Fixed(), tgt)
     assert metrics["events"] == int((COUNTS - 4).sum())
     assert metrics["positives"] == int(tgt.labels.sum())
-    np.testing.assert_allclose(arrays["observed"], tgt.voxel_mean(tgt.labels))
+    np.testing.assert_allclose(arrays["observed"], tgt.design_point_mean(tgt.labels))
     np.testing.assert_allclose(arrays["predicted"], prediction.mean)
     expected_loss = np.where(
         tgt.labels[tgt.event_mask] == 1, np.log1p(np.exp(2.0)), np.log1p(np.exp(-2.0))
@@ -183,7 +183,7 @@ def test_neural_models_train_and_predict_on_ragged_data(kind, sampling):
     ctx, tgt = split_context_target(val, 4, seed=1)
     prediction = model.predict(tgt, context=ctx)
     np.testing.assert_array_equal(prediction.event_counts, tgt.event_counts)
-    # The voxel mean equals the mean over the valid events only.
+    # The design point mean equals the mean over the valid events only.
     expected = [prediction.probabilities[i, :n].mean() for i, n in enumerate(COUNTS - 4)]
     np.testing.assert_allclose(prediction.mean, expected)
 
@@ -212,7 +212,7 @@ def save(folder, name, batch):
 
 
 @pytest.mark.parametrize("transform", ["identity", "log"])
-def test_mfgp_stage_uses_per_voxel_target_counts(tmp_path, transform):
+def test_mfgp_stage_uses_per_design_point_target_counts(tmp_path, transform):
     pytest.importorskip("GPy")
     from core.surrogates.experiment import run_experiment
     from schemas.surrogates import SurrogateRunConfig
@@ -248,7 +248,7 @@ def test_mfgp_stage_uses_per_voxel_target_counts(tmp_path, transform):
         validation_context_events=4,
     )
     out = run_experiment(config)
-    # Model means cover the target events; observed fractions every event of a voxel.
+    # Model means cover the target events; observed fractions every event of a design point.
     with np.load(out / "mfgp/training_arrays.npz") as data:
         np.testing.assert_array_equal(data["events_1"].ravel(), COUNTS - 4)
         np.testing.assert_array_equal(data["events_2"].ravel(), COUNTS)

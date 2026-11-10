@@ -191,7 +191,7 @@ def write_configs(root: Path) -> dict[str, Path]:
             "data_provider": "scripts.smoke:SmokeNpz",
             "data_directory": "data",
             "evaluation": [{"split": "validation", "partition": "gp_validation", "fidelity": "hf"}],
-            "history_voxels": 4,
+            "history_design_points": 4,
             "output_directory": "runs/stream",
             "dim_theta": DIM_THETA,
             "dim_phi": DIM_PHI,

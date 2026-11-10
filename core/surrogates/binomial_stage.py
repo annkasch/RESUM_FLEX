@@ -1,14 +1,14 @@
-"""Binomial count GP: one latent hit probability fitted directly to per-voxel hit counts.
+"""Binomial count GP: one latent hit probability fitted directly to per-design-point hit counts.
 
 Output directory::
 
-    observations.json        observation sets, voxel counts and data provenance
-    training_arrays.npz      theta, hits, events, set index and voxel index per training voxel
+    observations.json        observation sets, design point counts and data provenance
+    training_arrays.npz      theta, hits, events, set and design point index of each GP training row
     model.pkl, model.json    fitted GP and its metadata
     evaluation_<e>.npz       per evaluation set: observed fraction, predictive mean/sd/intervals,
                              quantile_z (randomized quantile residuals of the hits)
     metrics.json             one row per evaluation set
-    development_map.npz      probability mean and variance at every loaded voxel
+    development_map.npz      probability mean and variance at every loaded design point
     compute.json             wall/CPU time and allocated cores per stage (core.compute)
 """
 
@@ -31,9 +31,9 @@ LEVELS = {1: 0.682689492, 2: 0.954499736, 3: 0.997300204}
 
 
 def _counts(batch):
-    """Hits [B] and events [B] per voxel."""
+    """Hits [B] and events [B] per design point."""
     hits = np.where(batch.event_mask, batch.labels, 0).sum(axis=1).astype(int)
-    return hits, batch.events_per_voxel.astype(int)
+    return hits, batch.events_per_design_point.astype(int)
 
 
 def _covariate(cfg, provider, partition, fidelity):
@@ -49,12 +49,12 @@ def _covariate(cfg, provider, partition, fidelity):
     theta, ids = provider.theta(partition, fidelity)
     with np.load(path) as arrays:
         saved_ids, saved_theta, p = (
-            arrays["voxel_ids"].tolist(),
+            arrays["design_point_ids"].tolist(),
             arrays["theta"],
             arrays["mean_probability"].astype(float),
         )
     if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
-        raise ValueError(f"{path} does not match the voxels or normalization of the data")
+        raise ValueError(f"{path} does not match the design points or normalization of the data")
     invalid = int(np.sum(~((p > 0) & (p < 1))))
     if invalid:
         raise ValueError(f"{path}: {invalid} mean probabilities outside (0, 1); no logit")
@@ -73,7 +73,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
     and evaluation and is written to compute.json.
     """
     from core.binomial_gp import BinomialGP
-    from core.gp_subsample import subsample_voxels
+    from core.gp_subsample import subsample_design_points
 
     compute = ComputeLog() if compute is None else compute
     directory = Path(output_directory)
@@ -81,7 +81,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
     thetas, hits, events, sets, indices, records, covariates = [], [], [], [], [], [], []
     for k, item in enumerate(cfg.observations):
         batch, provenance = provider.load(item.partition, item.fidelity)
-        index = subsample_voxels(batch.batch_size, item.max_voxels, cfg.seed, k)
+        index = subsample_design_points(batch.batch_size, item.max_design_points, cfg.seed, k)
         batch = batch.take(index)
         m, n = _counts(batch)
         z, z_provenance = _covariate(cfg, provider, item.partition, item.fidelity)
@@ -97,7 +97,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
             dict(
                 set=k,
                 **item.model_dump(mode="json"),
-                voxels=len(m),
+                design_points=len(m),
                 hits=int(m.sum()),
                 events=int(n.sum()),
                 data=provenance,
@@ -133,7 +133,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
         config=cfg.model_dump(mode="json"),
         likelihood="m ~ Binomial(N, sigmoid(f(theta))), Laplace posterior"
         + ("; f = b logit(p_model) + c + delta(theta)" if z_train is not None else ""),
-        training_voxels=len(m),
+        training_design_points=len(m),
         log_likelihood=float(model.log_likelihood()),
         parameter_names=model.parameter_names_flat().tolist(),
         parameters=model.param_array.tolist(),
@@ -171,7 +171,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
         rng = np.random.default_rng(np.random.SeedSequence([rng_seed, e]))
         p = expit(rng.normal(mu, np.sqrt(variance), size=(cfg.prediction_draws, len(mu))))
         log_mass = logsumexp(binom.logpmf(k, total, p), axis=0) - np.log(len(p))
-        # Quantile residuals of the hits under the same mixture (marginal per voxel).
+        # Quantile residuals of the hits under the same mixture (marginal per design point).
         quantile_z = quantile_residuals(
             *binomial_mixture_log_tails(k, total, p),
             np.random.default_rng(np.random.SeedSequence([rng_seed, e, QUANTILE_KEY])),
@@ -180,7 +180,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
             evaluation=e,
             partition=item.partition,
             fidelity=item.fidelity,
-            voxels=len(observed),
+            design_points=len(observed),
             data=provenance,
             predictive_nll=float(-log_mass.mean()),
             predictive_distribution="binomial counts mixed over logistic Gaussian latent p",
@@ -218,7 +218,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
         np.savez_compressed(
             directory / "development_map.npz", theta=grid, mean=mean, variance=variance
         )
-    else:  # the covariate is known only at loaded voxels; duplicates are kept
+    else:  # the covariate is known only at loaded design points; duplicates are kept
         grid, z_grid = np.concatenate(loaded), np.concatenate(loaded_z)
         mean, variance = gp.predict(grid, covariate=z_grid)
         np.savez_compressed(
@@ -262,7 +262,7 @@ def _plot(directory, coverage_ylim=None):
             sigma,
             out_path=directory / f"{path.stem}_coverage.png",
             title=f"{label}: binomial GP observation-predictive coverage",
-            xlabel="Evaluation voxel index",
+            xlabel="Evaluation design point index",
             predicted_label="GP mean",
             raw_label="Observed fraction",
             ylim=tuple(coverage_ylim) if coverage_ylim else (0, high * 1.05),

@@ -76,8 +76,8 @@ class ContextPointEncoder(nn.Module):
     def forward(
         self,
         z_theta_per_event: torch.Tensor,  # [B, N, Z]
-        z_phi: torch.Tensor,              # [B, N, Z]
-        x: torch.Tensor,                  # [B, N]
+        z_phi: torch.Tensor,  # [B, N, Z]
+        x: torch.Tensor,  # [B, N]
     ) -> torch.Tensor:
         x_in = x.unsqueeze(-1)  # [B, N, 1]
         cat = torch.cat([z_theta_per_event, z_phi, x_in], dim=-1)
@@ -110,8 +110,8 @@ class CnpDecoder(nn.Module):
 
     def forward(
         self,
-        r_trial: torch.Tensor,            # [B, agg]
-        z_phi_target: torch.Tensor,       # [B, N_t, Z]
+        r_trial: torch.Tensor,  # [B, agg]
+        z_phi_target: torch.Tensor,  # [B, N_t, Z]
     ) -> tuple[torch.Tensor, torch.Tensor]:
         N_t = z_phi_target.size(1)
         r_expanded = r_trial.unsqueeze(1).expand(-1, N_t, -1)
@@ -135,7 +135,7 @@ class CnpOutput:
     evaluation (sigmoid of ``mu_logit``).
     """
 
-    mu_logit: torch.Tensor   # [B, N_t]
+    mu_logit: torch.Tensor  # [B, N_t]
     log_sigma: torch.Tensor  # [B, N_t]
 
 
@@ -176,11 +176,9 @@ class ConditionalNeuralProcess(nn.Module):
         self.context_encoder = context_encoder
         self.decoder = decoder
 
-    def _encode_per_event(
-        self, batch: StandardBatch
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    def _encode_per_event(self, batch: StandardBatch) -> tuple[torch.Tensor, torch.Tensor]:
         """Run the universal encoder and broadcast ``z_θ`` to per-event."""
-        z_theta, z_phi = self.encoder(batch)            # [B, Z], [B, N, Z]
+        z_theta, z_phi = self.encoder(batch)  # [B, Z], [B, N, Z]
         N = z_phi.size(1)
         z_theta_per_event = z_theta.unsqueeze(1).expand(-1, N, -1)  # [B, N, Z]
         return z_theta_per_event, z_phi
@@ -189,16 +187,13 @@ class ConditionalNeuralProcess(nn.Module):
         """Encode the context and return the per-trial summary ``r_trial``."""
         B = ctx_batch.batch_size
         z_theta_pe, z_phi = self._encode_per_event(ctx_batch)
-        x_ctx = torch.as_tensor(
-            ctx_batch.labels, dtype=z_phi.dtype, device=z_phi.device
-        )
+        x_ctx = torch.as_tensor(ctx_batch.labels, dtype=z_phi.dtype, device=z_phi.device)
         r_per_event = self.context_encoder(z_theta_pe, z_phi, x_ctx)  # [B, N_ctx, agg]
-        r_trial = r_per_event.mean(dim=1)                              # [B, agg]
+        r_trial = r_per_event.mean(dim=1)  # [B, agg]
         # Hard guard against reducing the wrong axis. If this ever fires,
         # the loss will still go down but predictions will be garbage.
         assert r_trial.shape[0] == B, (
-            f"aggregator collapsed wrong axis: got {tuple(r_trial.shape)}, "
-            f"expected (B={B}, *)"
+            f"aggregator collapsed wrong axis: got {tuple(r_trial.shape)}, expected (B={B}, *)"
         )
         return r_trial
 
@@ -214,16 +209,12 @@ class ConditionalNeuralProcess(nn.Module):
         events into context vs target.
         """
         if ctx_batch.batch_size != target_batch.batch_size:
-            raise ValueError(
-                f"ctx B={ctx_batch.batch_size} != target B={target_batch.batch_size}"
-            )
+            raise ValueError(f"ctx B={ctx_batch.batch_size} != target B={target_batch.batch_size}")
         if ctx_batch.mode is not target_batch.mode:
-            raise ValueError(
-                f"ctx mode {ctx_batch.mode} != target mode {target_batch.mode}"
-            )
+            raise ValueError(f"ctx mode {ctx_batch.mode} != target mode {target_batch.mode}")
 
-        r_trial = self.aggregate(ctx_batch)                   # [B, agg]
-        _, z_phi_tgt = self._encode_per_event(target_batch)   # [B, N_t, Z]
+        r_trial = self.aggregate(ctx_batch)  # [B, agg]
+        _, z_phi_tgt = self._encode_per_event(target_batch)  # [B, N_t, Z]
         mu_logit, log_sigma = self.decoder(r_trial, z_phi_tgt)
         return CnpOutput(mu_logit=mu_logit, log_sigma=log_sigma)
 
@@ -263,14 +254,13 @@ def cnp_loss(
     """
     if objective == "theory-truth":
         from core.binary_losses import binary_focal_loss_with_logits
+
         return binary_focal_loss_with_logits(
-            resum_binary_logits(out), x_target, gamma=focal_gamma, weights=weights)
+            resum_binary_logits(out), x_target, gamma=focal_gamma, weights=weights
+        )
     if objective == "practice-truth":
         return practice_truth_loss(out, x_target, weights=weights)
-    raise ValueError(
-        "objective must be 'theory-truth' or 'practice-truth'; "
-        f"got {objective!r}"
-    )
+    raise ValueError(f"objective must be 'theory-truth' or 'practice-truth'; got {objective!r}")
 
 
 def theory_truth_loss(
@@ -387,7 +377,7 @@ def split_context_target(
     targets and the contexts are nested.
     """
     B, N = batch.batch_size, batch.n_events
-    counts = batch.events_per_voxel                      # [B]
+    counts = batch.events_per_design_point  # [B]
     if not 1 <= n_context <= int(counts.min()) - 1:
         raise ValueError(
             f"n_context must be in [1, N-1] = [1, {int(counts.min()) - 1}]; got {n_context}"
@@ -402,7 +392,7 @@ def split_context_target(
     rng = np.random.default_rng(seed)
     perms = [rng.permutation(int(n)) for n in counts]
     ctx_idx = np.stack([p[:n_context] for p in perms], axis=0)  # [B, n_context]
-    tgt_idx = np.zeros((B, N - n_pool), dtype=np.int64)          # [B, N - n_pool]
+    tgt_idx = np.zeros((B, N - n_pool), dtype=np.int64)  # [B, N - n_pool]
     for b, p in enumerate(perms):
         tgt_idx[b, : len(p) - n_pool] = p[n_pool:]
     tgt_counts = counts - n_pool
@@ -426,9 +416,7 @@ def split_context_target(
     labels_ctx = _gather(batch.labels, ctx_idx)
     labels_tgt = _gather(batch.labels, tgt_idx, tgt_valid)
 
-    ctx = StandardBatch(
-        mode=batch.mode, theta=batch.theta, phi=phi_ctx, labels=labels_ctx
-    )
+    ctx = StandardBatch(mode=batch.mode, theta=batch.theta, phi=phi_ctx, labels=labels_ctx)
     tgt = StandardBatch(
         mode=batch.mode,
         theta=batch.theta,

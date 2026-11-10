@@ -19,7 +19,7 @@ def plot_surrogate_run(directory):
         fig.savefig(directory / f"{name}.png", dpi=150)
         plt.close(fig)
 
-    has_validation = any("voxel_rate_mae" in r for r in history)
+    has_validation = any("design_point_rate_mae" in r for r in history)
     if has_validation:
         keys = ["bernoulli_log_loss", "average_precision", "spearman_r", "calibration_z"]
         fig, axes = plt.subplots(1, 4, figsize=(18, 4), layout="constrained")
@@ -49,12 +49,12 @@ def plot_surrogate_run(directory):
             # z-scores of the selected checkpoint: binomial counting noise only. Quantile
             # residuals of the hits if saved, else the Pearson z of older runs.
             with np.load(directory / f"{fidelity}_{split}_best.npz") as arrays:
-                if "voxel_quantile_z" in arrays or "voxel_z" in arrays:
+                if "design_point_quantile_z" in arrays or "design_point_z" in arrays:
                     from viz.zscore import plot_zscores
 
-                    quantile = "voxel_quantile_z" in arrays
+                    quantile = "design_point_quantile_z" in arrays
                     plot_zscores(
-                        arrays["voxel_quantile_z" if quantile else "voxel_z"],
+                        arrays["design_point_quantile_z" if quantile else "design_point_z"],
                         arrays["predicted"],
                         directory / f"{fidelity}_{split}_zscore",
                         title=f"{fidelity.upper()} {split}, best checkpoint: "
@@ -288,7 +288,9 @@ def plot_fine_tuning_comparison(directory):
                 ylabel="Detection fraction",
             )
             axes[1].axhline(0, color="black", ls="--")
-            axes[1].set(xlabel=f"{split.capitalize()} voxel index", ylabel="Predicted − observed")
+            axes[1].set(
+                xlabel=f"{split.capitalize()} design point index", ylabel="Predicted − observed"
+            )
             for ax in axes:
                 ax.grid(alpha=0.2)
                 ax.legend()
@@ -362,7 +364,7 @@ def plot_mfgp_training_inputs(directory):
                 )
             ax.set(
                 title=f"Level {k}: {level['partition']}/{level['fidelity']} ({len(values)})",
-                xlabel="GP training voxel index (saved row order)",
+                xlabel="GP training design point index (saved row order)",
                 yscale="log" if log_mode else "linear",
             )
             ax.grid(alpha=0.2)
@@ -423,11 +425,11 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         if model is not None:
             axes[0].plot(x, model, "x", label="Event-model mean")
         axes[0].plot(x, obs, "k.", label="Observed fraction")
-        axes[0].set(title=f"{label}: held-out voxels", ylabel="Detection fraction")
+        axes[0].set(title=f"{label}: held-out design points", ylabel="Detection fraction")
         axes[0].legend()
         axes[1].plot(x, mean - obs, "o-", label="MFGP residual")
         axes[1].axhline(0, color="black", ls="--")
-        axes[1].set(xlabel="Evaluation voxel index", ylabel="Predicted − observed")
+        axes[1].set(xlabel="Evaluation design point index", ylabel="Predicted − observed")
         fig.savefig(directory / f"{name}_means.png", dpi=150)
         plt.close(fig)
         from viz.dispatch import plot_coverage_test
@@ -441,7 +443,7 @@ def plot_mfgp_run(directory, coverage_ylim=None):
             sigma,
             out_path=directory / f"{name}_coverage.png",
             title=f"{label}: MFGP observation-predictive coverage",
-            xlabel="Evaluation voxel index",
+            xlabel="Evaluation design point index",
             predicted_label="MFGP mean",
             raw_label="Observed fraction",
             ylim=tuple(coverage_ylim)
@@ -457,14 +459,19 @@ def plot_mfgp_run(directory, coverage_ylim=None):
         fig = plt.figure(figsize=(8, 6), layout="constrained")
         ax = fig.add_subplot(111, projection="3d")
         points = ax.scatter(*theta.T, c=mean, cmap="viridis")
-        ax.set(xlabel="x", ylabel="y", zlabel="z", title="Target-level map at development voxels")
+        ax.set(
+            xlabel="x",
+            ylabel="y",
+            zlabel="z",
+            title="Target-level map at development design points",
+        )
         fig.colorbar(points, ax=ax, label="Predicted detection fraction", shrink=0.7)
         fig.savefig(directory / "development_map.png", dpi=150)
         plt.close(fig)
 
 
 def plot_stream_run(directory):
-    """Plots of a field trained on events, beside plot_surrogate_run's voxel plots:
+    """Plots of a field trained on events, beside plot_surrogate_run's design point plots:
     stream log loss history, and calibration and precision-recall on the validation events.
     """
     directory = Path(directory)

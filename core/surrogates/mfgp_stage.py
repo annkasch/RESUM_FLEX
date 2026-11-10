@@ -1,8 +1,8 @@
 """Multi-fidelity GP over configurable levels, after training (combined) or standalone.
 
 Each level is one (X, Y) set, ordered from the lowest to the highest fidelity:
-``model_mean`` = mean predicted p of an event model per voxel (precomputed inference file
-or the model itself), ``observed_fraction`` = simulated hit fraction m/N per voxel. The
+``model_mean`` = mean predicted p of an event model per design point (precomputed inference file
+or the model itself), ``observed_fraction`` = simulated hit fraction m/N per design point. The
 top level is the target. GP hyperparameters are fitted on the configured levels only;
 evaluation partitions are scored afterwards.
 
@@ -13,12 +13,12 @@ Output directory::
                              log_offset_k of the bias correction per observed-fraction level;
                              point_noise_k with observation_noise: binomial
     transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
-    levels.json              level settings, voxel counts, data provenance, log_offset_mean
+    levels.json              level settings, design point counts, data provenance, log_offset_mean
     model.pkl, model.json    fitted GP and its metadata
     evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals,
                              quantile_z (randomized quantile residuals of the hits), ...
     metrics.json             one row per evaluation set
-    development_map.npz      top-level prediction at every loaded voxel
+    development_map.npz      top-level prediction at every loaded design point
     compute.json             wall/CPU time and allocated cores per stage (core.compute)
 """
 
@@ -32,7 +32,7 @@ from core.gp_metrics import coverage_by_brightness, mfgp_metrics
 
 
 def _model_mean(model, batch, *, n_context, seed):
-    """Mean predicted p per voxel [B]; only context models split off a context."""
+    """Mean predicted p per design point [B]; only context models split off a context."""
     from core.mfgp_pipeline import model_mean
 
     return model_mean(model, batch, n_context=n_context if model.uses_context else None, seed=seed)
@@ -106,13 +106,13 @@ class _Data:
 
 
 def _level_arrays(level, stream, data, cfg, model):
-    """X [n, D], Y [n], events [n], voxel index [n] and provenance of one level."""
-    from core.gp_subsample import subsample_voxels
+    """X [n, D], Y [n], events [n], design point index [n] and provenance of one level."""
+    from core.gp_subsample import subsample_design_points
 
-    seed = cfg.seed + 1 + 100 * stream  # context split of this level's voxels
+    seed = cfg.seed + 1 + 100 * stream  # context split of this level's design points
     if level.source == "observed_fraction":
         batch, provenance = data.labeled(level.partition, level.fidelity)
-        index = subsample_voxels(batch.batch_size, level.max_voxels, cfg.seed, stream)
+        index = subsample_design_points(batch.batch_size, level.max_design_points, cfg.seed, stream)
         batch = batch.take(index)
         from core.mfgp_pipeline import observed_fraction
 
@@ -134,10 +134,10 @@ def _level_arrays(level, stream, data, cfg, model):
             )
     load = data.labeled if model.uses_context else data.inputs
     batch, provenance = load(level.partition, level.fidelity)
-    index = subsample_voxels(batch.batch_size, level.max_voxels, cfg.seed, stream)
+    index = subsample_design_points(batch.batch_size, level.max_design_points, cfg.seed, stream)
     batch = batch.take(index)
     mean = _model_mean(model, batch, n_context=cfg.n_context, seed=seed)
-    events = batch.events_per_voxel.astype(float)
+    events = batch.events_per_design_point.astype(float)
     if model.uses_context:
         events = events - cfg.n_context  # the mean covers the target events only
     return batch.theta, mean, events, index, provenance
@@ -145,7 +145,7 @@ def _level_arrays(level, stream, data, cfg, model):
 
 def _inference_arrays(level, stream, data, cfg):
     """Level from a saved inference file, checked against the prepared partition."""
-    from core.gp_subsample import subsample_voxels
+    from core.gp_subsample import subsample_design_points
 
     path = Path(level.inference)
     meta = json.loads(path.with_suffix(".json").read_text())
@@ -156,11 +156,11 @@ def _inference_arrays(level, stream, data, cfg):
         )
     theta, ids = data.provider.theta(level.partition, level.fidelity)
     with np.load(path) as arrays:
-        saved_ids, saved_theta = arrays["voxel_ids"].tolist(), arrays["theta"]
+        saved_ids, saved_theta = arrays["design_point_ids"].tolist(), arrays["theta"]
         mean, events = arrays["mean_probability"], arrays["event_counts"].astype(float)
     if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
-        raise ValueError(f"{path} does not match the voxels or normalization of {data.root}")
-    index = subsample_voxels(len(mean), level.max_voxels, cfg.seed, stream)
+        raise ValueError(f"{path} does not match the design points or normalization of {data.root}")
+    index = subsample_design_points(len(mean), level.max_design_points, cfg.seed, stream)
     provenance = dict(
         inference=str(path), checkpoint=meta["checkpoint"], step=meta["step"], data=meta["data"]
     )
@@ -210,7 +210,7 @@ def run_mfgp(
     directory.mkdir(parents=True, exist_ok=False)
     data = _Data(provider)
     metrics_seed = cfg.seed if metrics_seed is None else metrics_seed
-    streams = {}  # one voxel subset per (partition, fidelity), shared by its levels
+    streams = {}  # one design point subset per (partition, fidelity), shared by its levels
     arrays, fit, records = {}, {}, []
     for k, level in enumerate(cfg.levels):
         stream = streams.setdefault((level.partition, level.fidelity), len(streams))
@@ -221,7 +221,9 @@ def run_mfgp(
             {f"X_{k}": X, f"Y_{k}": Y[:, None], f"events_{k}": events[:, None], f"index_{k}": index}
         )
         fit[f"X_{k}"], fit[f"Y_{k}"] = X, _fit_targets(level, Y, events, cfg)[:, None]
-        record = dict(level=k, **level.model_dump(mode="json"), voxels=len(Y), data=provenance)
+        record = dict(
+            level=k, **level.model_dump(mode="json"), design_points=len(Y), data=provenance
+        )
         if cfg.output_transform == "log" and level.source == "model_mean":
             record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
         records.append(record)
@@ -359,7 +361,7 @@ def run_mfgp(
             partition=evaluation.partition,
             fidelity=evaluation.fidelity,
             level=level,
-            voxels=len(observed),
+            design_points=len(observed),
             data=provenance,
             coverage={
                 str(k): float(
@@ -395,7 +397,7 @@ def run_mfgp(
         )
         thetas.append(batch.theta)
     (directory / "metrics.json").write_text(json.dumps(metrics, indent=2, allow_nan=False))
-    # Target-level map at every loaded voxel (levels and evaluation sets).
+    # Target-level map at every loaded design point (levels and evaluation sets).
     theta = np.unique(np.concatenate(thetas), axis=0)
     mean, variance = gp.predict(theta, fidelity=n - 1)
     physical = theta

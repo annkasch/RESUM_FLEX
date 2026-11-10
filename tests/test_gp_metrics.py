@@ -82,7 +82,7 @@ def test_coverage_by_brightness_splits_at_median_prediction():
     intervals = {1: (np.array([0.0, 0.3, 0.8, 0.8]), np.array([0.2, 0.4, 1.0, 1.2]))}
     result = coverage_by_brightness(observed, intervals, rate)
     assert result["threshold"] == pytest.approx(0.6)
-    assert result["dim_voxels"] == 2 and result["bright_voxels"] == 2
+    assert result["dim_design_points"] == 2 and result["bright_design_points"] == 2
     assert result["dim"] == {"1": 0.5} and result["bright"] == {"1": 1.0}
     json.dumps(result, allow_nan=False)
     with pytest.raises(ValueError):

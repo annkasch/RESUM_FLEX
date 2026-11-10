@@ -19,7 +19,8 @@ def main():
     train = commands.add_parser("train", help="Train any configured event surrogate")
     train.add_argument("config")
     predict = commands.add_parser(
-        "predict", help="Mean predicted p per voxel of a prepared partition (no labels needed)"
+        "predict",
+        help="Mean predicted p per design point of a prepared partition (no labels needed)",
     )
     predict.add_argument("checkpoint")
     predict.add_argument("data_directory")
@@ -34,8 +35,8 @@ def main():
     predict.add_argument(
         "--events-from",
         metavar="PARTITION/FIDELITY",
-        help="use the event inputs of seeded random donor voxels of this partition (a fresh "
-        "emission sample) instead of each voxel's own",
+        help="use the event inputs of seeded random donor design points of this partition (a fresh "
+        "emission sample) instead of each design point's own",
     )
     predict.add_argument("--seed", type=int, default=0, help="donor draw seed")
     predict.add_argument(

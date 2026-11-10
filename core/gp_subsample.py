@@ -1,16 +1,20 @@
-"""Seeded voxel subsets for exact GPs on large training partitions (numpy only)."""
+"""Seeded design point subsets for exact GPs on large training partitions (numpy only)."""
 
 import numpy as np
 
 
-def subsample_voxels(n: int, max_voxels: int | None, seed: int, stream: int) -> np.ndarray:
-    """Sorted voxel indices ``[min(n, max_voxels)]``; all voxels when ``max_voxels`` is None.
+def subsample_design_points(
+    n: int, max_design_points: int | None, seed: int, stream: int
+) -> np.ndarray:
+    """Sorted design point indices ``[min(n, max_design_points)]``.
+
+    All design points when ``max_design_points`` is None.
 
     ``stream`` separates independent draws (e.g. LF vs HF) under the same seed.
     """
     if n <= 0:
         raise ValueError("Cannot subsample an empty partition")
-    if max_voxels is None or max_voxels >= n:
+    if max_design_points is None or max_design_points >= n:
         return np.arange(n)
     rng = np.random.default_rng(np.random.SeedSequence([seed, stream]))
-    return np.sort(rng.choice(n, size=max_voxels, replace=False))
+    return np.sort(rng.choice(n, size=max_design_points, replace=False))

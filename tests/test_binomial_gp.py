@@ -76,7 +76,7 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
     root = write_batches(tmp_path / "data")
     config = BinomialGPRunConfig(
         observations=[
-            {"partition": "train", "fidelity": "lf", "max_voxels": 4},
+            {"partition": "train", "fidelity": "lf", "max_design_points": 4},
             {"partition": "train", "fidelity": "hf"},
         ],
         evaluation=[{"partition": "validation", "fidelity": "hf"}],
@@ -88,14 +88,14 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
     )
     out = run_binomial_config(config)
     sets = json.loads((out / "observations.json").read_text())
-    assert [(s["partition"], s["fidelity"], s["voxels"]) for s in sets] == [
+    assert [(s["partition"], s["fidelity"], s["design_points"]) for s in sets] == [
         ("train", "lf", 4),
         ("train", "hf", 6),
     ]
     with np.load(out / "training_arrays.npz") as arrays:
         assert len(arrays["hits"]) == 10 and set(arrays["events"]) == {30, 80}
     row = json.loads((out / "metrics.json").read_text())[0]
-    assert row["voxels"] == 6 and np.isfinite(row["predictive_nll"])
+    assert row["design_points"] == 6 and np.isfinite(row["predictive_nll"])
     assert set(row["coverage"]) == {"1", "2", "3"}
     with np.load(out / "evaluation_0.npz") as arrays:
         assert (arrays["lower_1"] <= arrays["upper_1"]).all()
@@ -194,7 +194,7 @@ def test_runner_with_covariate(tmp_path):
         path = tmp_path / f"{partition}_{fidelity}.npz"
         np.savez(
             path,
-            voxel_ids=np.array(ids),
+            design_point_ids=np.array(ids),
             theta=theta,
             mean_probability=np.clip(0.3 + 0.1 * theta[:, 0], 0.05, 0.95),
         )

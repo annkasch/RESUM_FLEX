@@ -75,7 +75,7 @@ def test_natural_targets_are_unique_and_class_weights_only_change_loss():
 
 def test_target_coverage_counts_only_valid_events():
     labels = np.zeros((2, 10), dtype=int)
-    labels[0, :2] = 1  # padded events 6..9 of voxel 1 are never valid
+    labels[0, :2] = 1  # padded events 6..9 of design point 1 are never valid
     phi = np.zeros((2, 10, 1))
     b = StandardBatch(
         mode=InputMode.FULL,

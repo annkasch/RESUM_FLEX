@@ -20,7 +20,7 @@ from schemas.surrogates import SurrogateRunConfig
 
 
 def drawn(rates, n_events, seed=0):
-    """Voxels with constant true rate per voxel: (batch, true probabilities [B, N])."""
+    """Design points with a constant true rate each: (batch, true probabilities [B, N])."""
     rng = np.random.default_rng(seed)
     p = np.repeat(np.asarray(rates, dtype=float)[:, None], n_events, axis=1)
     labels = (rng.random(p.shape) < p).astype(np.int64)
@@ -45,25 +45,25 @@ def test_true_probabilities_pass_every_calibration_check():
     rng = np.random.default_rng(1)
     batch, p = drawn(rng.uniform(0.002, 0.05, 2000), 400)
     metrics, arrays = probability_metrics(batch, batch.labels, p)
-    assert abs(metrics["voxel_z_mean"]) < 0.1
-    assert abs(metrics["voxel_z2_mean"] - 1) < 0.15
+    assert abs(metrics["design_point_z_mean"]) < 0.1
+    assert abs(metrics["design_point_z2_mean"] - 1) < 0.15
     assert abs(metrics["calibration_z"]) < 3
-    assert abs(metrics["voxel_rate_mse_denoised"]) < 1e-5  # noise sd ~2e-6
+    assert abs(metrics["design_point_rate_mse_denoised"]) < 1e-5  # noise sd ~2e-6
     assert metrics["calibration_chi2_per_bin"] < 3
     assert arrays["calibration_events"].sum() == batch.labels.size
     # Twice the true rate: too many predicted hits, positive real error.
     high, _ = probability_metrics(batch, batch.labels, 2 * p)
-    assert high["calibration_z"] < -10 and high["voxel_z_mean"] < -1
-    assert high["voxel_rate_mse_denoised"] > 1e-4
+    assert high["calibration_z"] < -10 and high["design_point_z_mean"] < -1
+    assert high["design_point_rate_mse_denoised"] > 1e-4
 
 
 def test_denoised_squared_error_is_unbiased_where_mae_prefers_zero():
-    # Dim voxels: 0.5 expected hits each, the MAE example from the metric discussion.
+    # Dim design points: 0.5 expected hits each, the MAE example from the metric discussion.
     n = 1125
     batch, p = drawn(np.full(20000, 0.5 / n), n, seed=2)
     observed = batch.labels.mean(axis=1)
-    truth = probability_metrics(batch, batch.labels, p)[0]["voxel_rate_mse_denoised"]
-    low = probability_metrics(batch, batch.labels, p / 4)[0]["voxel_rate_mse_denoised"]
+    truth = probability_metrics(batch, batch.labels, p)[0]["design_point_rate_mse_denoised"]
+    low = probability_metrics(batch, batch.labels, p / 4)[0]["design_point_rate_mse_denoised"]
     assert abs(truth) < 0.05 * (0.5 / n) ** 2
     assert low == pytest.approx((0.75 * 0.5 / n) ** 2, rel=0.1)
     assert np.abs(observed).mean() < np.abs(observed - 0.5 / n).mean()  # MAE favours 0
@@ -132,7 +132,7 @@ def test_noise_ceiling_and_bootstrap_are_seeded():
 
 
 class ContextRate:
-    """Predicts each voxel's context hit fraction (plus a floor) for all targets."""
+    """Predicts each design point's context hit fraction (plus a floor) for all targets."""
 
     uses_context = True
 
@@ -166,7 +166,7 @@ def test_context_sweep_rows_and_zeroed_labels():
         (100, "observed"),
     ]
     by = {(r["n_context"], r["context_labels"]): r for r in rows}
-    # The model uses its context labels: zeroing them breaks the voxel trend.
+    # The model uses its context labels: zeroing them breaks the design point trend.
     assert by[50, "observed"]["spearman_r"] > 0.5
     assert by[50, "zeroed"]["spearman_r"] is None
     assert by[100, "observed"]["spearman_r"] > by[10, "observed"]["spearman_r"]
@@ -213,12 +213,12 @@ def test_experiment_writes_readout_and_sweep(tmp_path):
     validation = [r for r in rows if r["split"] == "validation"]
     assert all("spearman_noise_ceiling" in r and "log_loss_skill" in r for r in validation)
     assert all("spearman_noise_ceiling" not in r for r in rows if r["split"] == "train")
-    assert all(r["voxel_z2_mean"] is not None for r in rows)
+    assert all(r["design_point_z2_mean"] is not None for r in rows)
     sweep = json.loads((output / "context_sweep.json").read_text())
     assert {r["n_context"] for r in sweep} == {2, 4, 8}
     assert len(sweep) == 2 * 2 * 4  # best + final, validation + test, three sizes + zeroed
     history = json.loads((output / "history.json").read_text())
     assert all("log_loss_skill" in r for r in history if "bernoulli_log_loss" in r)
     assert (output / "lf_calibration.png").exists()
-    assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
+    assert not (output / "lf_means.png").exists()  # per-design-point means plot was dropped
     assert (output / "context_sweep.png").exists()

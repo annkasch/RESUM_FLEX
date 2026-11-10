@@ -1,4 +1,4 @@
-"""Neural field trained on ungrouped events: units, voxel evaluation, training run, schema."""
+"""Neural field trained on ungrouped events: units, design point scoring, training run, schema."""
 
 import json
 
@@ -21,7 +21,7 @@ from tests.test_bernoulli_field import (
     _random_physical,
 )
 
-# Store normalization of x, y, z (m) and px, py, pz (MeV), deliberately unlike the voxel one.
+# Store normalization of x, y, z (m) and px, py, pz (MeV), deliberately unlike the design point one.
 STREAM_NORMALIZATION = {
     "offset": [0.45, -0.21, 1.02, 0.0, 0.0, 0.0],
     "scale": [0.08, 0.04, 0.09, 5.6e-6, 5.6e-6, 5.6e-6],
@@ -75,20 +75,20 @@ class FakeEventSource:
 
 
 @pytest.mark.parametrize("changes", [{}, MLP_CHANGES], ids=["field", "mlp"])
-def test_stream_trained_field_gives_the_same_logits_on_voxel_inputs(changes):
+def test_stream_trained_field_gives_the_same_logits_on_design_point_inputs(changes):
     model = _field(**changes)
     model.module.set_stream_normalization(STREAM_NORMALIZATION)
-    model.configure_normalization(NORMALIZATION)  # voxel data of the evaluation
+    model.configure_normalization(NORMALIZATION)  # design point data of the evaluation
     rng = np.random.default_rng(1)
     centre, offset, direction = _random_physical(rng)
     direction *= rng.uniform(0.9, 1.1, direction.shape[:-1])[..., None]  # wavelength spread
     batch = _physical_batch(centre, offset, direction)
     with torch.no_grad():
-        voxel = model.module(None, batch)  # [B, N]
+        design_point = model.module(None, batch)  # [B, N]
         position = (centre[:, None, :] + offset).reshape(-1, 3)
         events = torch.as_tensor(_records(position, direction.reshape(-1, 3)))
-        direct = model.module.forward_events(events).reshape(voxel.shape)
-    torch.testing.assert_close(voxel, direct, rtol=1e-4, atol=1e-4)
+        direct = model.module.forward_events(events).reshape(design_point.shape)
+    torch.testing.assert_close(design_point, direct, rtol=1e-4, atol=1e-4)
 
 
 def test_stream_mlp_sees_the_momentum_length_and_the_field_does_not():
@@ -127,7 +127,7 @@ def test_stream_mlp_config_is_the_unencoded_field():
     assert list(network.architecture.hidden_dims) == [32, 32]
 
 
-def test_voxel_trained_field_is_unchanged_and_old_weights_load():
+def test_design_point_trained_field_is_unchanged_and_old_weights_load():
     model = _field()
     rng = np.random.default_rng(2)
     batch = _physical_batch(*_random_physical(rng))
@@ -151,8 +151,8 @@ def _stream_split(rng, n):
     return _records(position, momentum, rng.random(n) < p)
 
 
-def _voxel_data(root, rng):
-    """Voxel evaluation data (NpzBatches layout) with the same rate as the events."""
+def _design_point_data(root, rng):
+    """Design point evaluation data (NpzBatches layout) with the same rate as the events."""
     x0 = STREAM_NORMALIZATION["offset"][0]
     for partition, fidelity in (("cnp_validation", "lf"), ("gp_validation", "hf")):
         centre, offset, direction = _random_physical(rng, b=6, n=60)
@@ -176,7 +176,7 @@ def _run_config(tmp_path, **training):
     rng = np.random.default_rng(0)
     for split, n in (("train", 6000), ("validation", 2000)):
         np.save(store / f"{split}.npy", _stream_split(rng, n))
-    _voxel_data(tmp_path / "voxels", rng)
+    _design_point_data(tmp_path / "design_points", rng)
     return StreamRunConfig.model_validate(
         {
             "model": {**SPEC, "last_layer": {"prior_precision": "evidence", "draws": 100}},
@@ -193,12 +193,12 @@ def _run_config(tmp_path, **training):
             "event_source": "tests.test_stream_field:FakeEventSource",
             "output_directory": str(tmp_path / "run"),
             "data_provider": "tests.test_bernoulli_field:FieldNpz",
-            "data_directory": str(tmp_path / "voxels"),
+            "data_directory": str(tmp_path / "design_points"),
             "evaluation": [
                 {"split": "validation", "partition": "cnp_validation", "fidelity": "lf"},
                 {"split": "validation", "partition": "gp_validation", "fidelity": "hf"},
             ],
-            "history_voxels": 4,
+            "history_design_points": 4,
             "dim_theta": 3,
             "dim_phi": 6,
         }
@@ -211,8 +211,8 @@ def test_stream_training_learns_selects_and_fits_the_last_layer(tmp_path):
     history = report["history"]
     assert report["steps"] == 3 * -(-6000 // 256)
     assert history[-1]["stream_log_loss"] < history[0]["stream_log_loss"]
-    # Every validation step also scores the (subsampled) LF validation voxels.
-    assert all(r["voxels"] == 4 and "voxel_rate_mae" in r for r in history)
+    # Every validation step also scores the (subsampled) LF validation design points.
+    assert all(r["design_points"] == 4 and "design_point_rate_mae" in r for r in history)
     run = tmp_path / "run"
     experiment = json.loads((run / "experiment.json").read_text())
     assert experiment["stream_normalization"] == STREAM_NORMALIZATION
@@ -223,13 +223,18 @@ def test_stream_training_learns_selects_and_fits_the_last_layer(tmp_path):
     assert best.metadata["last_layer"]["events"] == 6000
     assert best.metadata["best_stream_log_loss"] == pytest.approx(report["best"]["loss"])
     assert best.metadata["step"] == report["best"]["step"]
-    # Same metrics and plots as voxel training, plus the stream ones.
+    # Same metrics and plots as design point training, plus the stream ones.
     rows = json.loads((run / "metrics.json").read_text())
     keys = {(r["checkpoint"], r["split"], r["fidelity"]) for r in rows}
     assert keys == {(c, "validation", f) for c in ("best", "final") for f in ("stream", "lf", "hf")}
-    voxel = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
-    for key in ("voxel_rate_mae", "voxel_count_nll", "log_loss_skill", "voxel_predictive"):
-        assert voxel[key] is not None
+    design_point = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
+    for key in (
+        "design_point_rate_mae",
+        "design_point_count_nll",
+        "log_loss_skill",
+        "design_point_predictive",
+    ):
+        assert design_point[key] is not None
     events = next(r for r in rows if r["fidelity"] == "stream" and r["checkpoint"] == "best")
     assert events["bernoulli_log_loss"] == pytest.approx(report["best"]["loss"], rel=1e-5)
     for name in (
@@ -253,7 +258,7 @@ def test_stream_training_learns_selects_and_fits_the_last_layer(tmp_path):
         run_stream(config)
 
 
-def test_stream_mlp_trains_and_scores_on_voxels(tmp_path):
+def test_stream_mlp_trains_and_scores_on_design_points(tmp_path):
     config = _run_config(tmp_path, n_passes=1)
     config = config.model_copy(
         update={

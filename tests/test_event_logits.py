@@ -1,4 +1,4 @@
-"""Per-event logits from context-free inference: float32 shards of whole voxels + index."""
+"""Per-event logits from context-free inference: float32 shards of whole design points + index."""
 
 import json
 
@@ -29,29 +29,29 @@ def test_round_trip_keeps_event_order_and_drops_padding(tmp_path):
     assert flat.dtype == np.float32
     np.testing.assert_allclose(flat, _valid(logits, counts).astype(np.float32))
     index = json.loads((tmp_path / "events/index.json").read_text())
-    # Whole voxels per shard, at most 6 events unless one voxel alone exceeds it.
-    assert [s["voxels"] for s in index["shards"]] == [[0, 1], [1, 3], [3, 5]]
-    assert index["events"] == counts.sum() and index["voxels"] == 5
+    # Whole design points per shard, at most 6 events unless one design point alone exceeds it.
+    assert [s["design_points"] for s in index["shards"]] == [[0, 1], [1, 3], [3, 5]]
+    assert index["events"] == counts.sum() and index["design_points"] == 5
 
 
-def test_voxel_larger_than_shard_gets_its_own_shard(tmp_path):
+def test_design_point_larger_than_shard_gets_its_own_shard(tmp_path):
     counts = np.array([2, 9, 2])
     write_event_logits(tmp_path / "e", _logits(counts, 9), counts, np.arange(3), shard_events=4)
     shards = json.loads((tmp_path / "e/index.json").read_text())["shards"]
-    assert [s["voxels"] for s in shards] == [[0, 1], [1, 2], [2, 3]]
+    assert [s["design_points"] for s in shards] == [[0, 1], [1, 2], [2, 3]]
 
 
-def test_voxel_range_reads_only_that_range(tmp_path):
+def test_design_point_range_reads_only_that_range(tmp_path):
     counts = np.array([3, 5, 1, 4, 2])
     logits = _logits(counts, 6)
     write_event_logits(tmp_path / "e", logits, counts, np.arange(5), shard_events=6)
-    ids, read_counts, flat = read_event_logits(tmp_path / "e", voxels=(2, 4))
+    ids, read_counts, flat = read_event_logits(tmp_path / "e", design_points=(2, 4))
     np.testing.assert_array_equal(ids, [2, 3])
     np.testing.assert_array_equal(read_counts, [1, 4])
     np.testing.assert_allclose(flat, _valid(logits[2:4], counts[2:4]).astype(np.float32))
-    assert read_event_logits(tmp_path / "e", voxels=(3, 3))[2].size == 0
+    assert read_event_logits(tmp_path / "e", design_points=(3, 3))[2].size == 0
     with pytest.raises(ValueError, match="outside"):
-        read_event_logits(tmp_path / "e", voxels=(0, 6))
+        read_event_logits(tmp_path / "e", design_points=(0, 6))
 
 
 def test_never_overwrites(tmp_path):

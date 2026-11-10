@@ -1,4 +1,4 @@
-"""Checkpoint selection on HF validation and by the voxel count NLL."""
+"""Checkpoint selection on HF validation and by the design point count NLL."""
 
 import json
 
@@ -26,13 +26,13 @@ def _write(root, sets):
         )
 
 
-def test_voxel_count_nll_is_the_binomial_plugin_score():
+def test_design_point_count_nll_is_the_binomial_plugin_score():
     batch = for_scenario("S1", seed=0).generate(n_trials=5, n_events=40, seed=0)
     model = build_surrogate({"kind": "mlp", "architecture": {"hidden_dims": [8]}}, 1, 1)
     metrics, arrays = evaluate_surrogate(model, batch)
     k, n = batch.labels.sum(axis=1), np.full(5, 40)
     expected = -binom.logpmf(k, n, arrays["predicted"]).mean()
-    assert metrics["voxel_count_nll"] == pytest.approx(expected)
+    assert metrics["design_point_count_nll"] == pytest.approx(expected)
 
 
 def test_hf_selection_uses_hf_validation(tmp_path):
@@ -52,7 +52,7 @@ def test_hf_selection_uses_hf_validation(tmp_path):
         output_directory=tmp_path / "run",
         lf_validation=False,
         selection_fidelity="hf",
-        selection="voxel_count_nll",
+        selection="design_point_count_nll",
         validation_context_events=4,
     )
     output = run_experiment(config)
@@ -60,7 +60,7 @@ def test_hf_selection_uses_hf_validation(tmp_path):
     assert experiment["selection_split"] == "validation/hf"
     history = json.loads((output / "history.json").read_text())
     best = json.loads((output / "checkpoints/best/model.json").read_text())["metadata"]["step"]
-    scores = {r["step"]: r["voxel_count_nll"] for r in history}
+    scores = {r["step"]: r["design_point_count_nll"] for r in history}
     assert best == min(scores, key=scores.get)
     rows = json.loads((output / "metrics.json").read_text())
     assert {(r["split"], r["fidelity"]) for r in rows} == {("train", "lf"), ("validation", "hf")}

@@ -73,7 +73,7 @@ def test_common_api_all_modes(kind, scenario, tmp_path):
     report = model.fit(
         train, training(kind), validation=Episode(ctx, tgt), checkpoints=tmp_path / "run"
     )
-    assert report.best_step == min(report.history, key=lambda r: r["voxel_rate_mae"])["step"]
+    assert report.best_step == min(report.history, key=lambda r: r["design_point_rate_mae"])["step"]
     prediction = model.predict(tgt, context=ctx)
     assert prediction.logits.shape == tgt.labels.shape
     np.testing.assert_allclose(prediction.mean, prediction.probabilities.mean(1))
@@ -234,7 +234,7 @@ def test_full_experiment_artifacts_and_no_test_access(kind, mixup, tmp_path):
     assert experiment["evaluation_targets"] == (
         "after_context_pool" if uses_context(kind) else "all_events"
     )
-    assert not (output / "lf_means.png").exists()  # per-voxel means plot was dropped
+    assert not (output / "lf_means.png").exists()  # per-design-point means plot was dropped
     assert (output / "lf_precision_recall_log.png").exists()
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
     assert len(manifest["metadata"]["data"]["train/lf"]["sha256"]) == 64

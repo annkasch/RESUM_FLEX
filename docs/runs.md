@@ -8,7 +8,7 @@ CLI stages, what a run writes, compute accounting and context-free inference.
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 # 1. Train an event model (data preparation runs automatically from data_config)
 .venv/bin/python -m core.surrogates train TRAINING.yaml
-# 2. Mean predicted p per voxel of a partition (context-free models; labels not needed)
+# 2. Mean predicted p per design point of a partition (context-free models; labels not needed)
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 # 3. Fit the multi-fidelity GP on its configured levels
 .venv/bin/python -m core.surrogates mfgp GP.yaml
@@ -24,7 +24,7 @@ overwritten. Data/output paths resolve relative to the YAML file.
 The runner loads prepared LF training and LF/HF validation batches. Inputs must
 already have the training-only normalization applied. It never reads test data.
 `train_sets` replaces the LF training partition by several sets, e.g. LF2 + HF train
-for a model that is benchmarked against the GPs on their own training data; their voxels
+for a model that is benchmarked against the GPs on their own training data; their design points
 form one zero-padded batch, and the training split is labelled by their common fidelity
 (`mixed` otherwise). LF validation selects the model by default; HF is then scored after
 selection (`selection_fidelity` changes this). Training PR is in-sample. Files under the output directory are uniform across model families:
@@ -35,7 +35,7 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
 - `checkpoints/{best,final}/`: versioned model manifest and backend weights.
 - `history.json`, `sampling_audit.json`, `metrics.json`.
 - `{lf,hf}_{train,validation}_{best,final}.npz` where evaluated: logits, labels,
-  voxel means, residuals, PR arrays and the per-design-point within-point gain terms;
+  design point means, residuals, PR arrays and the per-design-point within-point gain terms;
   held-out splits add the gain null bands, the feature-calibration bins and, with
   `residual_test:`, the residual-test arrays (`docs/evaluation.md`). Only LF training is evaluated.
 - Added later by `python -m core.surrogates within_point` (runs from before the within-point
@@ -77,20 +77,20 @@ inference + GP fit for NN + GP.
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION --threads 8
 ```
 
-writes `RUN/inference/best/<partition>_<fidelity>.{npz,json}`: per voxel the provider's voxel
+writes `RUN/inference/best/<partition>_<fidelity>.{npz,json}`: per design point the provider's design point
 id and coordinates, normalized theta, event count and `mean_probability` (mean predicted p
-over the voxel's events), plus provenance. It uses the provider the checkpoint was trained
+over the design point's events), plus provenance. It uses the provider the checkpoint was trained
 with (`--data-provider` overrides it). Only context-free models (mlp, field, transformer, bdt)
 are accepted, and the provider normalization must equal the checkpoint's. Results are never
-overwritten. Use voxels the model was not trained on, so no labels can be memorized.
+overwritten. Use design points the model was not trained on, so no labels can be memorized.
 With a Bayesian last layer the file also holds `probability_draws` [S, B] and their
-`probability_mean` / `probability_sd` per voxel.
+`probability_mean` / `probability_sd` per design point.
 
 `--event-logits` (off by default) also writes every event's logit to
 `RUN/inference/best/<partition>_<fidelity>_events/`: float32, padding dropped, in the
-provider's event order (voxel by voxel, each voxel's events in load order). Shards
-`shard_NNNNN.npz` (`logits` [E], `event_counts` [b], `voxel_ids` [b]) hold whole voxels, up to
-2²² events each unless one voxel alone has more; `index.json` lists each shard's voxel range
-and event count. `core.surrogates.inference.read_event_logits(directory, voxels=(start, stop))`
+provider's event order (design point by design point, each design point's events in load order). Shards
+`shard_NNNNN.npz` (`logits` [E], `event_counts` [b], `design_point_ids` [b]) hold whole design points, up to
+2²² events each unless one design point alone has more; `index.json` lists each shard's design point range
+and event count. `core.surrogates.inference.read_event_logits(directory, design_points=(start, stop))`
 reads them back, opening only the shards it needs. With a Bayesian last layer these are the
 MAP logits. Not combinable with `--events-from`.

@@ -5,7 +5,7 @@ Posterior marginalizations and predictive projections of a fitted GP over physic
 ## Shared engine and adapters
 
 `core/spatial_projections.py` implements the integration grid, physical-volume
-averages, individual-voxel mixtures, and all x/y/z and xy/xz/yz projections.
+averages, individual-design-point mixtures, and all x/y/z and xy/xz/yz projections.
 `viz/spatial_projections.py` renders the common artifact format. The old MFGP
 entry points and `MFGPProjectionConfig` remain compatible aliases/wrappers of
 `schemas.projections.ProjectionConfig`. YAML `projections.enabled` controls this step. Saved outputs are `projections/` (latent mean) and
@@ -119,12 +119,12 @@ Artifacts under `RUN_DIR/mfgp/projections/`:
 - `metadata.json`: configuration, model/input hashes, numerical jitter, domain,
   weighting and uncertainty definitions. Matching artifacts are cached.
 
-Overlaid observations are individual voxel measurements at different omitted
+Overlaid observations are individual design point measurements at different omitted
 coordinates, not volume-marginalized measurements. Their scatter includes spatial
 variation and counting noise. Their inclusion in the marginal bands is **not** a
 coverage test. Three-sigma tail quantiles are Monte Carlo estimates, not exact.
 
-## Predictive projections for observed voxel fractions (projection 3)
+## Predictive projections for observed design point fractions (projection 3)
 
 `mfgp.projections.quantity: observed_fraction` selects this mode; `latent_mean` remains available for uncertainty in spatial averages. Predictive
 projections retain variation between locations: for each posterior draw and each
@@ -135,7 +135,7 @@ spatial averaging occurs before these quantiles. The central curve remains the
 population mean. Both 1D and plane projections support this mode.
 
 `target_events: null` (default) recovers N from the saved evaluation set when all its
-voxels have the same event count; otherwise set it explicitly. A different N describes a different simulation
+design points have the same event count; otherwise set it explicitly. A different N describes a different simulation
 budget and should not be interpreted as matched to the overlaid measurements.
 
 Only latent GP uncertainty is sampled; fitted Gaussian observation noise is not

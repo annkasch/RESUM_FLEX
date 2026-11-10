@@ -1,15 +1,16 @@
-"""Context-free event-model predictions for prepared voxels, also without labels.
+"""Context-free event-model predictions for prepared design points, also without labels.
 
-The mean predicted probability per voxel is the input of the GP stage. Results are written
+The mean predicted probability per design point is the input of the GP stage. Results are written
 next to the checkpoint's run, never into the prepared data::
 
-    <run>/inference/<checkpoint>/<partition>_<fidelity>.npz    per-voxel arrays
+    <run>/inference/<checkpoint>/<partition>_<fidelity>.npz    per-design-point arrays
     <run>/inference/<checkpoint>/<partition>_<fidelity>.json   provenance and compute
     <run>/inference/<checkpoint>/<partition>_<fidelity>_events/ optional per-event logits
 
 The per-event logits (``event_logits=True``, off by default) are float32, padding dropped,
-in the provider's event order: voxel by voxel, each voxel's events in load order. Shards hold
-whole voxels (``shard_00000.npz``, ...); ``index.json`` lists each shard's voxel range.
+in the provider's event order: design point by design point, each one's events in load order.
+Shards hold whole design points (``shard_00000.npz``, ...); ``index.json`` lists each shard's
+design point range.
 ``read_event_logits`` puts them back together.
 """
 
@@ -25,7 +26,7 @@ from core.surrogates.evaluation import _predict, evaluation_threads
 
 # Marks "use the provider recorded in the checkpoint" (None means NpzBatches).
 FROM_CHECKPOINT = "checkpoint"
-# Events per event-logit shard (float32: 16 MB); a voxel with more events gets its own shard.
+# Events per event-logit shard (float32: 16 MB); a design point with more events gets its own shard.
 SHARD_EVENTS = 2**22
 
 
@@ -55,13 +56,13 @@ def predict_partition(
     event_logits=False,
     shard_events=SHARD_EVENTS,
 ):
-    """Predict every voxel of a prepared partition with a context-free checkpoint.
+    """Predict every design point of a prepared partition with a context-free checkpoint.
 
-    ``events_from`` = (partition, fidelity): each voxel keeps its own theta but takes the
-    event inputs (phi) of a randomly drawn donor voxel of that partition (seeded). For event
-    features defined relative to the voxel (offset, direction), this is a fresh emission
-    sample: the prediction then uses nothing from the voxel's own simulation, as for a
-    position that was never simulated. Default: the voxel's own event inputs (no labels).
+    ``events_from`` = (partition, fidelity): each design point keeps its own theta but takes the
+    event inputs (phi) of a randomly drawn donor design point of that partition (seeded). For event
+    features defined relative to the design point (offset, direction), this is a fresh emission
+    sample: the prediction then uses nothing from the design point's own simulation, as for a
+    position that was never simulated. Default: the design point's own event inputs (no labels).
 
     ``data_provider`` defaults to the provider the checkpoint was trained with. The inputs
     must be normalized exactly as the training data: the provider's normalization must
@@ -85,7 +86,7 @@ def predict_partition(
     provider = load_provider(data_provider, data_directory)
     if stream_units(model):
         # A field trained on ungrouped events works in physical units: map this data's
-        # voxel inputs (theta + offset) into them instead of requiring equal normalization.
+        # design point inputs (theta + offset) into them instead of requiring equal normalization.
         model.configure_normalization(provider.normalization())
     elif not normalization_matches(
         model.metadata.get("normalization.json"), provider.normalization()
@@ -113,22 +114,22 @@ def predict_partition(
     with evaluation_threads(threads), compute.stage("prediction"):
         prediction = _predict(model, batch, None)
         if getattr(model, "last_layer", None) is not None:
-            from core.surrogates.last_layer import voxel_probability_draws
+            from core.surrogates.last_layer import design_point_probability_draws
 
-            draws = voxel_probability_draws(model, batch)  # [S, B]
+            draws = design_point_probability_draws(model, batch)  # [S, B]
             uncertainty = dict(
                 probability_draws=draws.astype(np.float32),  # [S, B] last-layer draws
-                probability_mean=draws.mean(axis=0),  # [B] posterior mean of the voxel p
+                probability_mean=draws.mean(axis=0),  # [B] posterior mean of the design point p
                 probability_sd=draws.std(axis=0),  # [B] its epistemic sd
             )
     output.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         stem.with_suffix(".npz"),
-        voxel_ids=np.array(ids),  # [B] provider voxel identifiers
+        design_point_ids=np.array(ids),  # [B] provider design point identifiers
         coordinates=provider.coordinates(partition, fidelity),  # [B, D] physical
         theta=batch.theta,  # [B, D_theta] normalized model input
-        event_counts=batch.events_per_voxel,  # [B]
-        mean_probability=prediction.mean,  # [B] mean predicted p over each voxel's events
+        event_counts=batch.events_per_design_point,  # [B]
+        mean_probability=prediction.mean,  # [B] mean predicted p over each design point's events
         **uncertainty,
     )
     if event_logits:
@@ -136,7 +137,7 @@ def predict_partition(
             write_event_logits(
                 events_directory,
                 prediction.logits,
-                batch.events_per_voxel,
+                batch.events_per_design_point,
                 np.array(ids),
                 shard_events=shard_events,
             )
@@ -148,10 +149,10 @@ def predict_partition(
         data=data,
         partition=partition,
         fidelity=fidelity,
-        voxels=int(batch.batch_size),
-        events=int(batch.events_per_voxel.sum()),
+        design_points=int(batch.batch_size),
+        events=int(batch.events_per_design_point.sum()),
         normalization_check=(
-            "voxel inputs mapped into the stream-trained field's physical units"
+            "design point inputs mapped into the stream-trained field's physical units"
             if stream_units(model)
             else "provider normalization equals checkpoint normalization"
         ),
@@ -182,17 +183,23 @@ def predict_partition(
     return stem.with_suffix(".npz")
 
 
-def write_event_logits(directory, logits, event_counts, voxel_ids, *, shard_events=SHARD_EVENTS):
-    """Write valid-event logits as float32 shards of whole voxels plus ``index.json``.
+def write_event_logits(
+    directory, logits, event_counts, design_point_ids, *, shard_events=SHARD_EVENTS
+):
+    """Write valid-event logits as float32 shards of whole design points plus ``index.json``.
 
-    logits: [B, N] (positions beyond a voxel's count are padding and dropped);
-    event_counts: [B]; voxel_ids: [B]. ``directory`` must not exist.
+    logits: [B, N] (positions beyond a design point's count are padding and dropped);
+    event_counts: [B]; design_point_ids: [B]. ``directory`` must not exist.
     """
     logits, counts = np.asarray(logits), np.asarray(event_counts, dtype=np.int64)
-    if logits.ndim != 2 or counts.shape != (logits.shape[0],) or len(voxel_ids) != len(counts):
+    if (
+        logits.ndim != 2
+        or counts.shape != (logits.shape[0],)
+        or len(design_point_ids) != len(counts)
+    ):
         raise ValueError(
-            f"Expected logits [B, N] with B event counts and voxel ids; got {logits.shape}, "
-            f"{counts.shape}, {len(voxel_ids)}"
+            f"Expected logits [B, N] with B event counts and design point ids; got {logits.shape}, "
+            f"{counts.shape}, {len(design_point_ids)}"
         )
     if shard_events < 1:
         raise ValueError(f"shard_events must be positive, got {shard_events}")
@@ -210,16 +217,19 @@ def write_event_logits(directory, logits, event_counts, voxel_ids, *, shard_even
         name = f"shard_{len(shards):05d}.npz"
         np.savez(
             directory / name,
-            logits=part[valid].astype(np.float32),  # [E] valid events, voxel by voxel
+            logits=part[valid].astype(np.float32),  # [E] valid events, design point by design point
             event_counts=counts[start:stop],  # [b]
-            voxel_ids=np.asarray(voxel_ids)[start:stop],  # [b]
+            design_point_ids=np.asarray(design_point_ids)[start:stop],  # [b]
         )
-        shards.append(dict(file=name, voxels=[int(start), int(stop)], events=int(total)))
+        shards.append(dict(file=name, design_points=[int(start), int(stop)], events=int(total)))
         start = stop
     index = dict(
-        content="per-event logits of the voxels' valid events, voxel by voxel in load order",
+        content=(
+            "per-event logits of the design points' valid events, design point by design "
+            "point in load order"
+        ),
         dtype="float32",
-        voxels=int(len(counts)),
+        design_points=int(len(counts)),
         events=int(counts.sum()),
         shards=shards,
     )
@@ -227,27 +237,28 @@ def write_event_logits(directory, logits, event_counts, voxel_ids, *, shard_even
     return directory
 
 
-def read_event_logits(directory, voxels=None):
-    """(voxel_ids [b], event_counts [b], logits [E]) from ``write_event_logits`` output.
+def read_event_logits(directory, design_points=None):
+    """(design_point_ids [b], event_counts [b], logits [E]) from ``write_event_logits`` output.
 
-    ``voxels`` = (start, stop) reads only that voxel range, opening only the shards it
-    touches; default: all voxels.
+    ``design_points`` = (start, stop) reads only that design point range, opening only the shards it
+    touches; default: all design points.
     """
     directory = Path(directory)
     index = json.loads((directory / "index.json").read_text())
-    start, stop = (0, index["voxels"]) if voxels is None else voxels
-    if not 0 <= start <= stop <= index["voxels"]:
-        raise ValueError(f"voxel range {voxels} outside [0, {index['voxels']}]")
+    total = index["design_points"]
+    start, stop = (0, total) if design_points is None else design_points
+    if not 0 <= start <= stop <= total:
+        raise ValueError(f"design point range {design_points} outside [0, {total}]")
     ids, counts, logits = [], [], []
     for shard in index["shards"]:
-        first, last = shard["voxels"]
+        first, last = shard["design_points"]
         if last <= start or first >= stop:
             continue
         with np.load(directory / shard["file"]) as arrays:
             shard_counts = arrays["event_counts"]
             offsets = np.concatenate([[0], np.cumsum(shard_counts)])
             lo, hi = max(start, first) - first, min(stop, last) - first
-            ids.append(arrays["voxel_ids"][lo:hi])
+            ids.append(arrays["design_point_ids"][lo:hi])
             counts.append(shard_counts[lo:hi])
             logits.append(arrays["logits"][offsets[lo] : offsets[hi]])
     if not ids:
@@ -256,7 +267,7 @@ def read_event_logits(directory, voxels=None):
 
 
 def _donor_batch(batch, donor, seed):
-    """batch with each voxel's phi replaced by a seeded random donor voxel's phi."""
+    """batch with each design point's phi replaced by a seeded random donor design point's phi."""
     from schemas.data_models import StandardBatch
 
     if donor.phi is None or batch.phi is None:
@@ -264,7 +275,7 @@ def _donor_batch(batch, donor, seed):
     index = np.random.default_rng(np.random.SeedSequence([seed, 0])).integers(
         donor.batch_size, size=batch.batch_size
     )
-    counts = donor.events_per_voxel[index]
+    counts = donor.events_per_design_point[index]
     return StandardBatch(
         mode=batch.mode,
         theta=batch.theta,

@@ -3,7 +3,7 @@
 Optional GPy backend, Laplace posterior approximation, logistic probability link.
 No fidelity input, pseudo-count targets, CNP or Gaussian observation noise.
 
-Optional covariate z (e.g. the logit of an event model's mean probability per voxel):
+Optional covariate z (e.g. the logit of an event model's mean probability per design point):
 logit p(x) = b z(x) + c + delta(x), with b ~ N(0, s_b^2) and c ~ N(0, s_c^2) marginalized
 as a linear and a bias kernel term (GPy's Laplace inference has no mean functions) and the
 spatial kernel modelling the residual delta. s_b, s_c and the spatial hyperparameters are

@@ -37,10 +37,10 @@ SWEEP_METRICS = (
     "average_precision",
     "lift",
     "spearman_r",
-    "voxel_rate_mse_denoised",
+    "design_point_rate_mse_denoised",
     "calibration_z",
-    "voxel_z_mean",
-    "voxel_z2_mean",
+    "design_point_z_mean",
+    "design_point_z2_mean",
 )
 
 
@@ -58,10 +58,10 @@ def spearman_noise_ceiling(target, probabilities, *, seed, draws=READOUT_DRAWS):
     """Median Spearman r a model equal to the truth would reach at this counting noise.
 
     Labels are redrawn from the model's own probabilities [B, N] and correlated with
-    its predicted voxel rates.
+    its predicted design point rates.
     """
     rng = _rng(seed, CEILING_KEY)
-    mask, n = target.event_mask, target.events_per_voxel  # [B, N], [B]
+    mask, n = target.event_mask, target.events_per_design_point  # [B, N], [B]
     predicted = np.where(mask, probabilities, 0.0).sum(axis=1) / n  # [B]
     values = []
     for _ in range(draws):
@@ -91,9 +91,9 @@ def bootstrap_intervals(target, labels, logits, *, seed, draws=READOUT_DRAWS):
 
     Log loss, AP, Spearman r and the within-design-point log-loss gain and AUC.
     """
-    mask, n = target.event_mask, target.events_per_voxel  # [B, N], [B]
+    mask, n = target.event_mask, target.events_per_design_point  # [B, N], [B]
     loss = np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits))
-    voxel_loss = np.where(mask, loss, 0.0).sum(axis=1)  # [B]
+    design_point_loss = np.where(mask, loss, 0.0).sum(axis=1)  # [B]
     observed = np.where(mask, labels, 0).sum(axis=1) / n  # [B]
     predicted = np.where(mask, expit(logits), 0.0).sum(axis=1) / n  # [B]
     terms = within_point_terms(target, labels, logits)
@@ -102,7 +102,7 @@ def bootstrap_intervals(target, labels, logits, *, seed, draws=READOUT_DRAWS):
     for index in _bootstrap_indices(seed, len(n), draws):
         for key, value in _within_sample(terms, index).items():
             samples[key].append(value)
-        samples["bernoulli_log_loss"].append(voxel_loss[index].sum() / n[index].sum())
+        samples["bernoulli_log_loss"].append(design_point_loss[index].sum() / n[index].sum())
         y, s = labels[index][mask[index]], logits[index][mask[index]]
         samples["average_precision"].append(
             precision_recall(y, s)["average_precision"] if y.any() else np.nan
@@ -178,7 +178,7 @@ def readout_metrics(
 ):
     """Noise ceiling, bootstrap intervals, within-design-point null coverage, feature
     calibration (``feature_bins`` equal-count bins per column), randomized quantile
-    residuals of the hits per design point (array ``voxel_quantile_z``) and, with
+    residuals of the hits per design point (array ``design_point_quantile_z``) and, with
     ``residual`` (ResidualTestConfig), the residual learnability test for one evaluated
     episode. Returns (metrics, arrays)."""
     probabilities = expit(arrays["logits"])
@@ -198,7 +198,7 @@ def readout_metrics(
     extra = {"within_point_gain_null": null}
     mask = target.event_mask  # [B, N]
     hits = np.where(mask, arrays["labels"], 0).sum(axis=1)  # [B]
-    extra["voxel_quantile_z"] = quantile_residuals(
+    extra["design_point_quantile_z"] = quantile_residuals(
         *poisson_binomial_log_tails(hits, probabilities, mask), _rng(seed, QUANTILE_KEY)
     )
     names, values = feature_columns(target)

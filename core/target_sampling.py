@@ -1,4 +1,4 @@
-"""Real-event target oversampling with per-voxel sampling corrections."""
+"""Real-event target oversampling with per-design-point sampling corrections."""
 
 import numpy as np
 
@@ -8,16 +8,16 @@ from schemas.data_models import StandardBatch, valid_event_mask
 class RealTargetSampler:
     """Uniform real contexts; uniform or stratified real targets from their complement.
 
-    Voxels have equal sampling probability. With positive_fraction set, both
+    Design points have equal sampling probability. With positive_fraction set, both
     classes are sampled uniformly within their remaining event pools. Weights
     p/q and (1-p)/(1-q) use the remaining pool's empirical prevalence and actual
-    integer allocation, independently for each voxel. This estimates the same
+    integer allocation, independently for each design point. This estimates the same
     conditional empirical risk as uniform targets. Single-class pools retain
     their real labels and unit weights. Repeated targets are allowed when a
     class has too few distinct events; contexts and targets never overlap.
     Separate context/target RNGs match contexts across sampling strategies.
-    With unequal event counts, each voxel samples from its own valid events, so
-    every voxel has equal weight; episodes must fit the smallest voxel.
+    With unequal event counts, each design point samples from its own valid events, so
+    every design point has equal weight; episodes must fit the smallest design point.
     With joint=True (natural sampling only) the targets are the context followed
     by the same non-context draws, so both modes see identical events per seed.
     Context size 0 (context-free models): every drawn event is a target and the
@@ -44,7 +44,7 @@ class RealTargetSampler:
             raise ValueError("Joint targets require natural sampling")
         if not 0 <= n_context_min <= n_context_max <= n_events - (1 if joint else 2):
             raise ValueError("Context range must leave enough target events")
-        if batch_size < 1 or n_events > int(batch.events_per_voxel.min()):
+        if batch_size < 1 or n_events > int(batch.events_per_design_point.min()):
             raise ValueError("Invalid batch or episode size")
         self.batch, self.batch_size, self.n_events = batch, batch_size, n_events
         self.n_context_min, self.n_context_max = n_context_min, n_context_max
@@ -62,7 +62,7 @@ class RealTargetSampler:
         nt = self.n_events - nc
         contexts, targets, weights = [], [], []
         self.last_provenance = []
-        counts = b.events_per_voxel
+        counts = b.events_per_design_point
         for trial in trials:
             n = int(counts[trial])
             context = crng.choice(n, nc, replace=False)

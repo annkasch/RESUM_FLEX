@@ -5,8 +5,8 @@ Application-independent toolkit for rare-event surrogates, a modular refactor of
 probabilities from simulated binary outcomes; a Bayesian last layer or a Gaussian process turns
 them into rates with uncertainty per design point. No application code lives here: applications
 bring their data through a dataset provider and keep their own configs, outputs and job scripts.
-Keep the vocabulary generic (design point, event, outcome); application terms such as voxels
-appear only in code names.
+Keep the vocabulary generic (design point, event, outcome), also in code names; no application
+terms such as voxels.
 
 If `.claude/status.md` exists (local, open items only), read it first. On a Slurm cluster (e.g.
 NERSC Perlmutter), read `docs/nersc.md` first: login nodes take one single-threaded process of up

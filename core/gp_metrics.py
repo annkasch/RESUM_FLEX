@@ -1,4 +1,4 @@
-"""Shared held-out GP metrics in original response units, equally weighted by voxel."""
+"""Shared held-out GP metrics in original response units, equally weighted by design point."""
 
 from math import erf, sqrt
 
@@ -10,7 +10,7 @@ def gp_metrics(observed, predicted, *, intervals=None, samples=None, median=None
     """Evaluate supplied predictions; never infer a likelihood from error bars.
 
     Intervals are equal-tail bands keyed by Gaussian-equivalent sigma level.
-    Samples have shape (draws, voxels). Undefined correlations are JSON null.
+    Samples have shape (draws, design points). Undefined correlations are JSON null.
     Calibration fits observed = intercept + slope * predicted (descriptive OLS).
     """
     y, p = np.asarray(observed, float), np.asarray(predicted, float)
@@ -31,8 +31,8 @@ def gp_metrics(observed, predicted, *, intervals=None, samples=None, median=None
         else float(np.dot(p - p.mean(), y - y.mean()) / np.sum((p - p.mean()) ** 2))
     )
     result = dict(
-        voxels=len(y),
-        weighting="equal per validation voxel",
+        design_points=len(y),
+        weighting="equal per validation design point",
         response_units="original response",
         mean_observed=float(y.mean()),
         mean_predicted=float(p.mean()),
@@ -55,7 +55,7 @@ def gp_metrics(observed, predicted, *, intervals=None, samples=None, median=None
             or not len(samples)
             or not np.isfinite(samples).all()
         ):
-            raise ValueError("Predictive samples must be finite with shape (draws, voxels)")
+            raise ValueError("Predictive samples must be finite with shape (draws, design points)")
         ordered = np.sort(samples, axis=0)
         n = len(ordered)
         # Empirical CRPS = E|X-y| - E|X-X'|/2, without a quadratic pair matrix.
@@ -154,7 +154,7 @@ def coverage_by_brightness(observed, intervals, rate):
     groups = dict(dim=dim, bright=~dim)
     result = dict(split="median predicted rate", threshold=threshold)
     for name, mask in groups.items():
-        result[f"{name}_voxels"] = int(mask.sum())
+        result[f"{name}_design_points"] = int(mask.sum())
         result[name] = {
             str(k): None if not mask.any() else float(((y >= lo) & (y <= hi))[mask].mean())
             for k, (lo, hi) in intervals.items()
@@ -167,7 +167,7 @@ SIGMA_LEVELS = {1: erf(1 / sqrt(2)), 2: erf(2 / sqrt(2)), 3: erf(3 / sqrt(2))}
 
 
 def count_predictive_scores(hits, trials, probability_draws, *, seed=0):
-    """Score a count prediction given draws of each voxel's hit probability.
+    """Score a count prediction given draws of each design point's hit probability.
 
     hits, trials: [B] observed counts; probability_draws: [S, B] equal-weight draws of p.
     The observation predictive is k ~ Binomial(N, p) mixed over the draws: its fractions

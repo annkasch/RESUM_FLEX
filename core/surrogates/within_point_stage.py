@@ -32,8 +32,8 @@ def within_point_readout(target, labels, logits, *, seed, null_draws):
     """Within-design-point metrics and arrays of one evaluated set, as in the read-out."""
     terms = within_point_terms(target, labels, logits)
     metrics = dict(
-        voxels=int(len(terms["gain"])),
-        events=int(target.events_per_voxel.sum()),
+        design_points=int(len(terms["gain"])),
+        events=int(target.events_per_design_point.sum()),
         positives=int(terms["hits"].sum()),
         **within_point_summary(terms),
         **within_point_bootstrap(terms, seed=seed),

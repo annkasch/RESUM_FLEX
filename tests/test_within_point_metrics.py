@@ -39,7 +39,7 @@ def phi_dependent(n_points=400, n_events=300, seed=0, event_counts=None):
 
 def point_mean(batch, p):
     mask = batch.event_mask
-    mean = np.where(mask, p, 0).sum(axis=1) / batch.events_per_voxel  # [B]
+    mean = np.where(mask, p, 0).sum(axis=1) / batch.events_per_design_point  # [B]
     return np.broadcast_to(mean[:, None], p.shape).copy()
 
 
@@ -157,9 +157,12 @@ def test_readout_returns_null_bands_feature_bins_and_intervals():
     metrics, arrays = evaluate_surrogate(Fixed(p), batch)
     readout, extra = readout_metrics(batch, arrays, seed=2)
     assert extra["within_point_gain_null"].shape == (3, 2, 60)
-    assert extra["voxel_quantile_z"].shape == (60,) and np.isfinite(extra["voxel_quantile_z"]).all()
-    again = readout_metrics(batch, arrays, seed=2)[1]["voxel_quantile_z"]
-    assert np.array_equal(again, extra["voxel_quantile_z"])  # seeded
+    assert (
+        extra["design_point_quantile_z"].shape == (60,)
+        and np.isfinite(extra["design_point_quantile_z"]).all()
+    )
+    again = readout_metrics(batch, arrays, seed=2)[1]["design_point_quantile_z"]
+    assert np.array_equal(again, extra["design_point_quantile_z"])  # seeded
     assert set(readout["within_point_gain_coverage"]) == {"1sigma", "2sigma", "3sigma"}
     assert set(readout["feature_calibration"]) == {"theta_0", "phi_0", "phi_1"}
     for key in ("within_point_log_loss_gain", "within_point_auc"):

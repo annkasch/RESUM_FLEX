@@ -1,4 +1,4 @@
-"""Per-voxel z-score plots for event models and GPs."""
+"""Per-design-point z-score plots for event models and GPs."""
 
 import numpy as np
 import pytest
@@ -11,7 +11,7 @@ def test_plot_zscores_summary_and_files(tmp_path):
     z = rng.normal(size=400)
     summary = plot_zscores(z, rng.uniform(1e-3, 1e-2, 400), tmp_path / "z", title="t")
     assert abs(summary["mean"]) < 0.15 and abs(summary["std"] - 1) < 0.1
-    assert summary["voxels"] == 400 and 0 < summary["outside_2"] < 0.1
+    assert summary["design_points"] == 400 and 0 < summary["outside_2"] < 0.1
     assert (tmp_path / "z.png").exists() and not (tmp_path / "z.pdf").exists()
     assert summary["beyond_limit"] == 0
     wide = plot_zscores(np.array([0.0, 7.0, -9.0]), np.ones(3), tmp_path / "w", title="t")

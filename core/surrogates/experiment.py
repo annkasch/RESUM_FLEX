@@ -5,7 +5,7 @@ import json
 import numpy as np
 
 from core.compute import ComputeLog
-from core.gp_subsample import subsample_voxels
+from core.gp_subsample import subsample_design_points
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
 from core.surrogates.checkpoints import load_surrogate
@@ -95,11 +95,13 @@ def run_experiment(config: SurrogateRunConfig):
     episodes = {key: run_episode(batch, config) for key, batch in batches.items()}
     train = batches["train", label]
     selection_episode = episodes.get(("validation", config.selection_fidelity))
-    selection_voxels = None
+    selection_design_points = None
     if selection_episode is not None:
         n = selection_episode.target.batch_size
-        index = subsample_voxels(n, config.selection_max_voxels, config.validation_seed, 0)
-        selection_voxels = dict(available=n, used=len(index))
+        index = subsample_design_points(
+            n, config.selection_max_design_points, config.validation_seed, 0
+        )
+        selection_design_points = dict(available=n, used=len(index))
         if len(index) < n:
             context = selection_episode.context
             selection_episode = Episode(
@@ -133,7 +135,7 @@ def run_experiment(config: SurrogateRunConfig):
         selection_split=(
             f"validation/{config.selection_fidelity}" if selection_episode is not None else None
         ),
-        selection_voxels=selection_voxels,
+        selection_design_points=selection_design_points,
         evaluation_threads=config.evaluation_threads,
         checkpoint_policy=(
             f"best {config.selection_fidelity.upper()} validation"
@@ -204,7 +206,7 @@ def _evaluate(config, output, train, batches, episodes, load_split):
             and train.theta is not None
             and any(np.array_equal(row, other) for row in batch.theta for other in train.theta)
         ):
-            raise ValueError("Test voxel coordinates overlap training inputs")
+            raise ValueError("Test design point coordinates overlap training inputs")
         episodes["test", fidelity] = run_episode(batch, config)
     if test_provenance:
         record = {"status": "unblinded", "data": test_provenance, "used_for_selection": False}
@@ -248,7 +250,7 @@ def _evaluate(config, output, train, batches, episodes, load_split):
                     summary.update(readout)
                     arrays.update(readout_arrays)
                     if getattr(saved, "last_layer", None) is not None:
-                        summary["voxel_predictive"] = _voxel_predictive(
+                        summary["design_point_predictive"] = _design_point_predictive(
                             saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"
                         )
                     if saved.uses_context:
@@ -298,19 +300,19 @@ def _fit_last_layers(directory, train, config):
         model.save(manifest.parent)
 
 
-def _voxel_predictive(model, episode, stem):
+def _design_point_predictive(model, episode, stem):
     """Count-level predictive scores of a Bayesian-last-layer model on one episode.
 
-    Writes ``<stem>.npz`` (per-voxel predictive arrays) and a coverage plot.
+    Writes ``<stem>.npz`` (per-design-point predictive arrays) and a coverage plot.
     """
     from core.gp_metrics import count_predictive_scores
-    from core.surrogates.last_layer import voxel_probability_draws
+    from core.surrogates.last_layer import design_point_probability_draws
 
     target = episode.target
-    draws = voxel_probability_draws(model, target, episode.context)  # [S, B]
+    draws = design_point_probability_draws(model, target, episode.context)  # [S, B]
     hits = np.where(target.event_mask, target.labels, 0).sum(axis=1)
     scores, arrays = count_predictive_scores(
-        hits, target.events_per_voxel, draws, seed=model.config.last_layer.seed
+        hits, target.events_per_design_point, draws, seed=model.config.last_layer.seed
     )
     np.savez_compressed(stem.with_suffix(".npz"), **arrays)
     from viz.dispatch import plot_coverage_test
@@ -323,7 +325,7 @@ def _voxel_predictive(model, episode, stem):
         arrays["sigma"],
         out_path=stem.parent / f"{stem.name}_coverage.png",
         title=f"{stem.name}: Bayesian last layer, observation-predictive coverage",
-        xlabel="Voxel index",
+        xlabel="Design point index",
         predicted_label="Predictive mean",
         raw_label="Observed fraction",
         ylim=(0, high * 1.05),

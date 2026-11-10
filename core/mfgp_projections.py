@@ -48,7 +48,7 @@ def _saved_layout(directory):
     with np.load(directory / "training_arrays.npz") as data:
         levels = json.loads((directory / "levels.json").read_text())
         top = levels[-1]["level"]
-        # Levels on the same voxels (e.g. HF model mean and HF fraction) count once.
+        # Levels on the same design points (e.g. HF model mean and HF fraction) count once.
         thetas = [np.unique(np.concatenate([data[f"X_{r['level']}"] for r in levels]), axis=0)]
         observed = levels[-1]["source"] == "observed_fraction"
         observed_theta = data[f"X_{top}"] if observed else np.zeros((0, thetas[0].shape[1]))

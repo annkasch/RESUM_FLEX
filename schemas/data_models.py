@@ -129,10 +129,10 @@ class StandardBatch(BaseModel):
     labels : ``[B, N]``       (binary X — always present)
     beta   : ``[B, N]``       (CNP-reconstructed continuous score in [0, 1];
                                 populated in Phase 3, ``None`` before that)
-    event_counts : ``[B]``    (optional; valid events per voxel. Voxel ``b``
+    event_counts : ``[B]``    (optional; valid events per design point. Design point ``b``
                                 uses positions ``[:event_counts[b]]``; the
                                 remaining positions are zero padding. ``None``
-                                means every voxel has all ``N`` events.)
+                                means every design point has all ``N`` events.)
 
     The ``mode`` field declares which modality this batch represents and is
     cross-checked against the presence of ``theta`` / ``phi`` so a malformed
@@ -162,7 +162,7 @@ class StandardBatch(BaseModel):
 
     @property
     def n_events(self) -> int:
-        """Padded event axis length; per-voxel counts are ``events_per_voxel``."""
+        """Padded event axis length; per-design-point counts are ``events_per_design_point``."""
         return int(self.labels.shape[1])
 
     @property
@@ -170,8 +170,8 @@ class StandardBatch(BaseModel):
         return self.event_counts is not None
 
     @property
-    def events_per_voxel(self) -> np.ndarray:
-        """Valid events per voxel ``[B]``, also for rectangular batches."""
+    def events_per_design_point(self) -> np.ndarray:
+        """Valid events per design point ``[B]``, also for rectangular batches."""
         if self.event_counts is None:
             return np.full(self.batch_size, self.n_events, dtype=np.int64)
         return self.event_counts
@@ -181,8 +181,8 @@ class StandardBatch(BaseModel):
         """Boolean ``[B, N]`` mask of valid (non-padding) events."""
         return valid_event_mask(self.event_counts, self.labels.shape)
 
-    def voxel_mean(self, values: np.ndarray) -> np.ndarray:
-        """Mean of ``[B, N]`` per-event values over each voxel's valid events."""
+    def design_point_mean(self, values: np.ndarray) -> np.ndarray:
+        """Mean of ``[B, N]`` per-event values over each design point's valid events."""
         values = np.asarray(values, dtype=float)
         if values.shape != self.labels.shape:
             raise ValueError(f"values shape {values.shape} must match labels {self.labels.shape}")
@@ -191,10 +191,10 @@ class StandardBatch(BaseModel):
         return np.where(self.event_mask, values, 0.0).sum(axis=1) / self.event_counts
 
     def take(self, index: np.ndarray) -> StandardBatch:
-        """Voxel subset ``[B']`` keeping each voxel's events, padding and counts."""
+        """Design point subset ``[B']`` keeping each design point's events, padding and counts."""
         index = np.asarray(index)
         if index.ndim != 1 or not np.issubdtype(index.dtype, np.integer):
-            raise ValueError("take expects a 1-D integer voxel index")
+            raise ValueError("take expects a 1-D integer design point index")
 
         def pick(a):
             return None if a is None else a[index]
@@ -210,7 +210,7 @@ class StandardBatch(BaseModel):
 
     def require_rectangular(self, where: str) -> None:
         if self.is_ragged:
-            raise ValueError(f"{where} requires equal event counts per voxel")
+            raise ValueError(f"{where} requires equal event counts per design point")
 
     @model_validator(mode="after")
     def _check_consistency(self) -> StandardBatch:
@@ -269,7 +269,7 @@ class StandardBatch(BaseModel):
         if np.any(counts < 1) or np.any(counts > N):
             raise ValueError(f"event_counts must lie in [1, N={N}]")
         if np.all(counts == N):
-            # Canonical form: full voxels are stored without counts.
+            # Canonical form: full design points are stored without counts.
             object.__setattr__(self, "event_counts", None)
             return
         object.__setattr__(self, "event_counts", counts.astype(np.int64))
@@ -352,9 +352,9 @@ class ModelPrediction(BaseModel):
 
 
 def concatenate_batches(batches: list[StandardBatch]) -> StandardBatch:
-    """All voxels of ``batches`` in one batch ``[sum B, max N]``, in the given order.
+    """All design points of ``batches`` in one batch ``[sum B, max N]``, in the given order.
 
-    Shorter event axes are zero-padded (inputs and labels) and the result carries per-voxel
+    Shorter event axes are zero-padded (inputs and labels) and the result carries per-design-point
     ``event_counts``, so the padding never counts as events. Mode, feature dimensions and the
     presence of ``beta`` must agree.
     """
@@ -389,12 +389,12 @@ def concatenate_batches(batches: list[StandardBatch]) -> StandardBatch:
         theta=None if first.theta is None else np.concatenate([b.theta for b in batches]),
         phi=padded("phi"),
         beta=padded("beta"),
-        event_counts=np.concatenate([b.events_per_voxel for b in batches]),
+        event_counts=np.concatenate([b.events_per_design_point for b in batches]),
     )
 
 
 def valid_event_mask(counts: np.ndarray | None, shape: tuple[int, int]) -> np.ndarray:
-    """``[B, N]`` mask of real events for padded per-voxel arrays (all True if ``None``)."""
+    """``[B, N]`` mask of real events for padded per-design-point arrays (all True if ``None``)."""
     if counts is None:
         return np.ones(shape, dtype=bool)
     return np.arange(shape[1])[None, :] < np.asarray(counts)[:, None]

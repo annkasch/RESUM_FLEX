@@ -1,16 +1,16 @@
 """Glue between event models and the multi-fidelity GP, for any number of levels.
 
 This module is the only place where torch and GPy meet, and only at the numpy boundary:
-event models turn batches into per-voxel arrays, which :func:`fit_mfgp` fits as GP
+event models turn batches into per-design-point arrays, which :func:`fit_mfgp` fits as GP
 levels ordered from the lowest to the highest fidelity.
 
 Each level is one (X, Y) pair built from a batch:
 
-* ``model_mean``: mean predicted p over each voxel's target events (an
+* ``model_mean``: mean predicted p over each design point's target events (an
   :class:`EventSurrogate` or the historical two-output :class:`ConditionalNeuralProcess`).
 * ``observed_fraction``: hit fraction m/N over the same target events.
 
-With ``n_context`` each voxel's events are split into context and targets with ``seed``;
+With ``n_context`` each design point's events are split into context and targets with ``seed``;
 levels built from the same batch, ``n_context`` and ``seed`` share their targets.
 
 EVENT_ONLY data have no ``θ`` and can't drive a GP; the entry points reject them.
@@ -40,7 +40,7 @@ def model_mean(
     seed: int = 0,
     n_mc_samples: int = 50,
 ) -> np.ndarray:
-    """Mean predicted p per voxel [B] over the target events.
+    """Mean predicted p per design point [B] over the target events.
 
     Context models need ``n_context``; context-free models use every event unless
     ``n_context`` is given (then the same targets as an observed fraction).
@@ -61,11 +61,11 @@ def model_mean(
 def observed_fraction(
     batch: StandardBatch, *, n_context: int | None = None, seed: int = 0
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Hit fraction [B] and event count [B] per voxel, over the target events if split."""
+    """Hit fraction [B] and event count [B] per design point, over the target events if split."""
     if n_context is not None:
         batch = split_context_target(batch, n_context, seed=seed)[1]
     hits = np.where(batch.event_mask, batch.labels, 0).sum(axis=1).astype(float)
-    events = batch.events_per_voxel.astype(float)
+    events = batch.events_per_design_point.astype(float)
     return hits / events, events
 
 
@@ -472,7 +472,7 @@ def evaluate_mfgp_coverage(
     n_test_events: int = 128,
     seed: int = 12345,
 ) -> dict[str, np.ndarray | float]:
-    """Coverage on ``n_test_trials`` fresh synthetic voxels (half of the events as context)."""
+    """Coverage on ``n_test_trials`` fresh synthetic design points (half the events as context)."""
     test = generator.generate(n_trials=n_test_trials, n_events=n_test_events, seed=seed)
     return evaluate_mfgp_coverage_from_batch(
         mfgp, test, level=level, n_context=n_test_events // 2, seed=seed

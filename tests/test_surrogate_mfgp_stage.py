@@ -100,7 +100,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         "observed_fraction train/hf",
     ]
     levels = json.loads((out / "mfgp/levels.json").read_text())
-    assert [r["voxels"] for r in levels] == [4, 4, 4]
+    assert [r["design_points"] for r in levels] == [4, 4, 4]
     scores = json.loads((out / "mfgp/metrics.json").read_text())
     expected = [("validation", "hf", 2)]
     if lf_validation:
@@ -125,7 +125,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert "weighted_interval_score" in row
         assert "mean_width" in row["interval_metrics"]["2"]
         split = row["coverage_by_brightness"]
-        assert split["dim_voxels"] + split["bright_voxels"] == row["voxels"]
+        assert split["dim_design_points"] + split["bright_design_points"] == row["design_points"]
         assert set(split["bright"]) == {"1", "2", "3"}
     hf = len(scores) - 1
     assert (out / f"mfgp/evaluation_{hf}_coverage.png").exists()
@@ -139,7 +139,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert not np.isnan(data["quantile_z"]).any()
     with np.load(out / "mfgp/training_arrays.npz") as data:
         assert data["X_2"].shape[0] == 4
-        # Observed fractions use every event of the voxel.
+        # Observed fractions use every event of the design point.
         np.testing.assert_allclose(data["events_2"], 24)
 
     if transform == "identity":

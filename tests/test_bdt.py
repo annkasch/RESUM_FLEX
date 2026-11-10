@@ -6,7 +6,7 @@ from schemas.bdt import BDTConfig
 from schemas.data_models import InputMode, StandardBatch
 
 
-def test_features_exclude_labels_and_preserve_voxel_event_order():
+def test_features_exclude_labels_and_preserve_design_point_event_order():
     theta = np.array([[1.0, 2.0], [3.0, 4.0]])
     phi = np.arange(12, dtype=float).reshape(2, 3, 2)
     b = StandardBatch(mode=InputMode.FULL, theta=theta, phi=phi, labels=np.zeros((2, 3), int))

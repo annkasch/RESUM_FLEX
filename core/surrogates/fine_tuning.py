@@ -38,8 +38,10 @@ def fine_tuning_stages(training, kind):
 
 
 def fit_two_stages(model, train, training, *, validation, selection, checkpoints):
-    if (training.fine_tuning.n_events or training.n_events) > int(train.events_per_voxel.min()):
-        raise ValueError("Fine-tuning n_events exceeds available training events per voxel")
+    if (training.fine_tuning.n_events or training.n_events) > int(
+        train.events_per_design_point.min()
+    ):
+        raise ValueError("Fine-tuning n_events exceeds available training events per design point")
     stages = fine_tuning_stages(training, model.config.kind)
     for stage in stages:
         stage.selection = selection

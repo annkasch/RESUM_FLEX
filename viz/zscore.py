@@ -1,10 +1,10 @@
-"""Per-voxel z-scores of observations against predictions, for event models and GPs.
+"""Per-design-point z-scores of observations against predictions, for event models and GPs.
 
 Plots show randomized quantile residuals (core/quantile_residuals.py) when the run saved
 them: z = Φ⁻¹(u) with u drawn within the predictive CDF step of the observed count, exactly
 N(0, 1) for a right model at any expected count. Older runs fall back to
 z = (observed - predicted) / expected spread, which is discrete and skewed when the
-expected hits per voxel are ~1. A model that is right has mean 0 and spread 1 everywhere,
+expected hits per design point are ~1. A model that is right has mean 0 and spread 1 everywhere,
 also within bins of the predicted rate.
 """
 
@@ -41,7 +41,7 @@ Z_LIMIT = 6.0  # fixed z axis range ±6 so plots of different runs compare direc
 def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", limit=Z_LIMIT):
     """Histogram of z against N(0, 1), and z against the predicted rate with ±1/2/3σ bands.
 
-    z, predicted: [B] per voxel. z may be ±inf (a count with zero predicted probability in
+    z, predicted: [B] per design point. z may be ±inf (a count with zero predicted probability in
     a quantile residual). The z axis is fixed to ±limit; values beyond are drawn at the edge
     and counted in the legend. Mean and std use the finite, unclipped z; ``infinite``
     counts the rest. Writes a PNG next to ``out_path`` (no suffix). Returns the summary
@@ -55,7 +55,7 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
         mean=float(finite.mean()) if len(finite) else float("nan"),
         std=float(finite.std(ddof=1)) if len(finite) > 1 else 0.0,
         outside_2=float(np.mean(np.abs(z) > 2)),
-        voxels=len(z),
+        design_points=len(z),
         beyond_limit=int(np.sum(np.abs(z) > limit)),
         infinite=int(len(z) - len(finite)),
     )
@@ -68,7 +68,7 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
         density=True,
         color="C0",
         alpha=0.6,
-        label=f"{len(z)} voxels"
+        label=f"{len(z)} design points"
         + (f" ({beyond} beyond ±{limit:g}, at edge)" if beyond else "")
         + (f", {summary['infinite']} infinite" if summary["infinite"] else ""),
     )
@@ -93,7 +93,9 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
             lw=0,
             label=f"±{k}σ: {inside:.0%} ({[68.3, 95.4, 99.7][k - 1]}%)",
         )
-    ax_rate.scatter(predicted, shown, s=8, color="black", alpha=0.6, label="voxels", zorder=3)
+    ax_rate.scatter(
+        predicted, shown, s=8, color="black", alpha=0.6, label="design points", zorder=3
+    )
     ax_rate.axhline(0, color="black", lw=1)
     ax_rate.set(
         xlabel=rate_label, ylabel="z [σ]", title="z vs predicted rate", ylim=(-limit, limit)

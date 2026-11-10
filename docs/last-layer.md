@@ -20,13 +20,13 @@ seeded context split as evaluation (`validation_context_events`); only its targe
 enter H. Context-free models use all training events. The posterior is stored as `checkpoints/<name>/last_layer.npz`, its summary in the
 manifest's `metadata.last_layer`.
 
-Predictions: `voxel_probability_draws` samples the weights and averages p over each voxel's
-events per draw, so the uncertainty stays correlated across the voxel's events and does not
-average down. For held-out splits the runner adds `voxel_predictive` to each metrics row:
+Predictions: `design_point_probability_draws` samples the weights and averages p over each design point's
+events per draw, so the uncertainty stays correlated across the design point's events and does not
+average down. For held-out splits the runner adds `design_point_predictive` to each metrics row:
 counts `k ~ Binomial(n, p)` mixed over the draws (`core.gp_metrics.count_predictive_scores`),
 with count NLL, coverage 1/2/3σ, CRPS, MAE/RMSE and interval scores as for the binomial GP,
 and writes `<fidelity>_<split>_<checkpoint>_predictive.npz` and a coverage plot.
 
 Limits: the feature layers are treated as fixed, so their uncertainty is not included, and
 the network was trained by maximum likelihood (the prior is post hoc). Check coverage on
-held-out voxels before relying on the error bars.
+held-out design points before relying on the error bars.

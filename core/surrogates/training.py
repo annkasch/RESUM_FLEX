@@ -18,7 +18,7 @@ class FitResult:
 
 
 def fit_surrogate(
-    model, train, training, *, validation=None, selection="voxel_rate_mae", checkpoints=None
+    model, train, training, *, validation=None, selection="design_point_rate_mae", checkpoints=None
 ):
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
@@ -44,13 +44,13 @@ def _fit_stage(
     training,
     *,
     validation=None,
-    selection="voxel_rate_mae",
+    selection="design_point_rate_mae",
     checkpoints=None,
     last_layer_only=False,
 ):
     config = SurrogateConfig(model=model.config, training=training, selection=selection)
     training = config.training
-    training_events = int(train.events_per_voxel.sum())
+    training_events = int(train.events_per_design_point.sum())
     # Constant-rate reference for the validation log-loss skill (training partition only).
     prevalence = float(train.labels[train.event_mask].mean())
     prevalence = prevalence if 0 < prevalence < 1 else None
@@ -156,8 +156,8 @@ def _fit_stage(
                 output, labels, gamma=training.focal_gamma, weights=weights
             )
 
-        if training.n_events > int(train.events_per_voxel.min()):
-            raise ValueError("n_events exceeds available training events per voxel")
+        if training.n_events > int(train.events_per_design_point.min()):
+            raise ValueError("n_events exceeds available training events per design point")
         if training.device == "cuda" and not torch.cuda.is_available():
             raise ValueError("CUDA requested but unavailable")
         torch.manual_seed(training.seed)

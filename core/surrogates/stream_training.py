@@ -6,13 +6,13 @@ normalization (``BernoulliField.set_stream_normalization``) and encodes the dire
 momentum. Checkpoints are selected by the Bernoulli log loss on the first
 ``validation_events`` validation events, held on the device. With ``last_layer`` the
 selected checkpoints get a Laplace posterior from one streaming pass over all training
-events (exact Bernoulli Hessian of the final layer, as for voxel training).
+events (exact Bernoulli Hessian of the final layer, as for design point training).
 
 Several GPUs: launch with ``torchrun``; every rank reads its own blocks of each pass and
 DistributedDataParallel averages the gradients. Rank 0 validates and writes the outputs.
 
 The checkpoints are ordinary field checkpoints: ``predict`` / ``score_event_model.py``
-evaluate them on voxel data, mapping theta + offset into the field's stream units.
+evaluate them on design point data, mapping theta + offset into the field's stream units.
 """
 
 import json
@@ -127,12 +127,12 @@ def fit_stream_last_layer(model, source, *, batch_size, device):
     return posterior
 
 
-def _voxel_episodes(config: StreamRunConfig):
-    """Labelled voxel episodes of ``config.evaluation`` (context-free: no context events).
+def _design_point_episodes(config: StreamRunConfig):
+    """Labelled design point episodes of ``config.evaluation`` (context-free: no context events).
 
     Returns (episodes {(split, fidelity): Episode}, the history episode, data record).
     """
-    from core.gp_subsample import subsample_voxels
+    from core.gp_subsample import subsample_design_points
     from core.surrogates.datasets import load_provider, prepare_data
 
     if config.data_config is not None:
@@ -146,20 +146,22 @@ def _voxel_episodes(config: StreamRunConfig):
         provenance[f"{item.split}/{item.fidelity}"]["partition"] = item.partition
         episodes[item.split, item.fidelity] = Episode(None, batch)
     first = next((e for e in config.evaluation if e.split == "validation"), None)
-    history_episode, history_voxels = None, None
+    history_episode, history_design_points = None, None
     if first is not None:
         target = episodes["validation", first.fidelity].target
-        index = subsample_voxels(
-            target.batch_size, config.history_voxels, config.evaluation_seed, 0
+        index = subsample_design_points(
+            target.batch_size, config.history_design_points, config.evaluation_seed, 0
         )
         history_episode = Episode(
             None, target.take(index) if len(index) < target.batch_size else target
         )
-        history_voxels = dict(
+        history_design_points = dict(
             set=f"validation/{first.fidelity}", available=target.batch_size, used=len(index)
         )
     data = dict(
-        normalization=provider.normalization(), provenance=provenance, history_voxels=history_voxels
+        normalization=provider.normalization(),
+        provenance=provenance,
+        history_design_points=history_design_points,
     )
     return episodes, history_episode, data
 
@@ -174,7 +176,7 @@ def stream_metrics(
     seed=0,
     feature_bins=CALIBRATION_BINS,
 ):
-    """Event metrics of events without design-point structure, as in voxel evaluation.
+    """Event metrics of events without design-point structure, as in design point evaluation.
 
     labels, logits: [M] numpy; features: optional [M, W] record input columns, which add
     the calibration per record column (``record_j``, ``feature_bins`` bins) and, with ``residual``
@@ -254,12 +256,12 @@ def _evaluate_checkpoints(
     feature_bins=CALIBRATION_BINS,
     null_draws=NULL_DRAWS,
 ):
-    """metrics.json, arrays and plots of best and final, as for voxel training.
+    """metrics.json, arrays and plots of best and final, as for design point training.
 
-    Voxel sets get the voxel-training metrics (and the last-layer predictive scores); the
-    validation events get the event metrics under fidelity ``stream``.
+    Design point sets get the metrics of design point training (and the last-layer predictive
+    scores); the validation events get the event metrics under fidelity ``stream``.
     """
-    from core.surrogates.experiment import _voxel_predictive
+    from core.surrogates.experiment import _design_point_predictive
     from core.surrogates.readout import readout_metrics
 
     rows = []
@@ -310,7 +312,7 @@ def _evaluate_checkpoints(
             summary.update(readout)
             arrays.update(readout_arrays)
             if getattr(saved, "last_layer", None) is not None:
-                summary["voxel_predictive"] = _voxel_predictive(
+                summary["design_point_predictive"] = _design_point_predictive(
                     saved, episode, output / f"{fidelity}_{split}_{checkpoint}_predictive"
                 )
             rows.append(
@@ -399,7 +401,7 @@ def run_stream(config: StreamRunConfig) -> dict:
                 events = events[: training.validation_events]
             validation = torch.as_tensor(np.ascontiguousarray(events), device=device)
             if config.evaluation:
-                episodes, history_episode, data = _voxel_episodes(config)
+                episodes, history_episode, data = _design_point_episodes(config)
                 model.configure_normalization(data["normalization"])
     checkpoints = output / "checkpoints"
     history, best = [], dict(loss=math.inf, step=0)
@@ -418,7 +420,10 @@ def run_stream(config: StreamRunConfig) -> dict:
         uncertainty=False,
     )
     if config.evaluation and rank == 0:
-        metadata.update(voxel_evaluation=data["provenance"], history_voxels=data["history_voxels"])
+        metadata.update(
+            design_point_evaluation=data["provenance"],
+            history_design_points=data["history_design_points"],
+        )
         metadata["normalization.json"] = data["normalization"]
     model.metadata = metadata
 

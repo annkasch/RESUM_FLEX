@@ -12,10 +12,10 @@ from core.surrogate_cnp import split_context_target
 from core.surrogates import load_surrogate
 from core.surrogates.datasets import NpzBatches
 from core.surrogates.last_layer import (
+    design_point_probability_draws,
     feature_chunks,
     fit_last_layer,
     last_layer_weights,
-    voxel_probability_draws,
 )
 from core.surrogates.models import build_surrogate
 from data.pseudo_generator import for_scenario
@@ -80,7 +80,7 @@ def test_draws_center_on_map_and_shrink_with_prior(kind, tmp_path):
     model = build_surrogate(_spec(kind), 1, 1, seed=0)
     context, target = _episode(model, _batch())
     fit_last_layer(model, target, context)
-    draws = voxel_probability_draws(model, target, context)  # [S, B]
+    draws = design_point_probability_draws(model, target, context)  # [S, B]
     assert draws.shape == (200, target.batch_size)
     assert ((draws > 0) & (draws < 1)).all()
     mapped = model.predict(target, context=context).mean
@@ -90,14 +90,14 @@ def test_draws_center_on_map_and_shrink_with_prior(kind, tmp_path):
     tight = build_surrogate(_spec(kind, prior_precision=1e12), 1, 1, seed=0)
     tight.module.load_state_dict(model.module.state_dict())
     fit_last_layer(tight, target, context)
-    collapsed = voxel_probability_draws(tight, target, context)
+    collapsed = design_point_probability_draws(tight, target, context)
     np.testing.assert_allclose(collapsed.mean(axis=0), mapped, atol=1e-5)
     assert collapsed.std(axis=0).max() < 1e-5
     # Persistence keeps the posterior; draws are reproducible from the seed.
     model.save(tmp_path / "ckpt")
     restored = load_surrogate(tmp_path / "ckpt")
     assert restored.capabilities["predictive_distribution"]
-    np.testing.assert_allclose(voxel_probability_draws(restored, target, context), draws)
+    np.testing.assert_allclose(design_point_probability_draws(restored, target, context), draws)
 
 
 def test_saving_without_posterior_removes_stale_file(tmp_path):
@@ -122,7 +122,7 @@ def test_context_model_needs_context_and_unsupported_kinds_fail():
         build_surrogate({"kind": "transformer", "last_layer": {}}, 1, 1)
 
 
-def test_ragged_voxels_average_only_valid_events():
+def test_ragged_design_points_average_only_valid_events():
     model = build_surrogate(_spec("mlp", prior_precision=1e12), 1, 1, seed=0)
     batch = _batch(n_trials=3, n_events=20)
     counts = np.array([20, 7, 12])
@@ -135,7 +135,7 @@ def test_ragged_voxels_average_only_valid_events():
         event_counts=counts,
     )
     fit_last_layer(model, ragged)
-    draws = voxel_probability_draws(model, ragged)
+    draws = design_point_probability_draws(model, ragged)
     np.testing.assert_allclose(draws.mean(axis=0), model.predict(ragged).mean, atol=1e-5)
 
 
@@ -206,9 +206,9 @@ def test_experiment_writes_posterior_and_predictive_scores(kind, tmp_path):
         assert (output / "checkpoints" / name / "last_layer.npz").exists()
     rows = json.loads((output / "metrics.json").read_text())
     held_out = [r for r in rows if r["split"] == "validation"]
-    assert held_out and all("voxel_predictive" in r for r in held_out)
-    assert all("voxel_predictive" not in r for r in rows if r["split"] == "train")
-    assert np.isfinite(held_out[0]["voxel_predictive"]["predictive_nll"])
+    assert held_out and all("design_point_predictive" in r for r in held_out)
+    assert all("design_point_predictive" not in r for r in rows if r["split"] == "train")
+    assert np.isfinite(held_out[0]["design_point_predictive"]["predictive_nll"])
     assert (output / "lf_validation_best_predictive.npz").exists()
     assert (output / "lf_validation_best_predictive_coverage.png").exists()
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())

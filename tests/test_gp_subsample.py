@@ -1,24 +1,24 @@
-"""Seeded GP voxel subsets: helper, batch subset and both GP entry points."""
+"""Seeded GP design point subsets: helper, batch subset and both GP entry points."""
 
 import json
 
 import numpy as np
 import pytest
 
-from core.gp_subsample import subsample_voxels
+from core.gp_subsample import subsample_design_points
 from data.pseudo_generator import for_scenario
 from schemas.data_models import StandardBatch
 
 
-def test_subsample_voxels_is_seeded_sorted_and_stream_independent():
-    np.testing.assert_array_equal(subsample_voxels(5, None, 0, 0), np.arange(5))
-    np.testing.assert_array_equal(subsample_voxels(5, 9, 0, 0), np.arange(5))
-    a = subsample_voxels(100, 10, 3, 0)
+def test_subsample_design_points_is_seeded_sorted_and_stream_independent():
+    np.testing.assert_array_equal(subsample_design_points(5, None, 0, 0), np.arange(5))
+    np.testing.assert_array_equal(subsample_design_points(5, 9, 0, 0), np.arange(5))
+    a = subsample_design_points(100, 10, 3, 0)
     assert len(a) == len(np.unique(a)) == 10 and np.all(np.diff(a) > 0)
-    np.testing.assert_array_equal(a, subsample_voxels(100, 10, 3, 0))
-    assert not np.array_equal(a, subsample_voxels(100, 10, 3, 1))
+    np.testing.assert_array_equal(a, subsample_design_points(100, 10, 3, 0))
+    assert not np.array_equal(a, subsample_design_points(100, 10, 3, 1))
     with pytest.raises(ValueError):
-        subsample_voxels(0, 1, 0, 0)
+        subsample_design_points(0, 1, 0, 0)
 
 
 def test_take_keeps_events_and_ragged_counts():
@@ -35,13 +35,13 @@ def test_take_keeps_events_and_ragged_counts():
     sub = ragged.take(np.array([1, 3]))
     np.testing.assert_array_equal(sub.theta, batch.theta[[1, 3]])
     np.testing.assert_array_equal(sub.phi, batch.phi[[1, 3]])
-    np.testing.assert_array_equal(sub.events_per_voxel, [3, 5])
+    np.testing.assert_array_equal(sub.events_per_design_point, [3, 5])
     assert ragged.take(np.array([0, 2])).event_counts is None  # Canonical full form.
     with pytest.raises(ValueError):
         ragged.take(np.array([0.5]))
 
 
-def test_mfgp_stage_fits_on_voxel_subset(tmp_path):
+def test_mfgp_stage_fits_on_design_point_subset(tmp_path):
     pytest.importorskip("GPy")
     from core.surrogates.experiment import run_experiment
     from schemas.surrogates import SurrogateRunConfig
@@ -77,13 +77,23 @@ def test_mfgp_stage_fits_on_voxel_subset(tmp_path):
             "n_restarts": 1,
             "n_context": 4,
             "levels": [
-                {"source": "model_mean", "partition": "train", "fidelity": "lf", "max_voxels": 5},
-                {"source": "model_mean", "partition": "train", "fidelity": "hf", "max_voxels": 4},
+                {
+                    "source": "model_mean",
+                    "partition": "train",
+                    "fidelity": "lf",
+                    "max_design_points": 5,
+                },
+                {
+                    "source": "model_mean",
+                    "partition": "train",
+                    "fidelity": "hf",
+                    "max_design_points": 4,
+                },
                 {
                     "source": "observed_fraction",
                     "partition": "train",
                     "fidelity": "hf",
-                    "max_voxels": 4,
+                    "max_design_points": 4,
                 },
             ],
             "evaluation": [{"partition": "validation", "fidelity": "hf"}],
@@ -98,13 +108,13 @@ def test_mfgp_stage_fits_on_voxel_subset(tmp_path):
         np.load(root / "batches/train/lf.npz") as full,
     ):
         lf, hf = arrays["index_0"], arrays["index_1"]
-        np.testing.assert_array_equal(lf, subsample_voxels(9, 5, 0, 0))
-        np.testing.assert_array_equal(hf, subsample_voxels(6, 4, 0, 1))
+        np.testing.assert_array_equal(lf, subsample_design_points(9, 5, 0, 0))
+        np.testing.assert_array_equal(hf, subsample_design_points(6, 4, 0, 1))
         # Levels on the same partition share one subset.
         np.testing.assert_array_equal(arrays["index_2"], hf)
         np.testing.assert_array_equal(arrays["X_0"], full["theta"][lf])
         assert arrays["X_1"].shape[0] == 4
     levels = json.loads((out / "mfgp/levels.json").read_text())
-    assert [r["voxels"] for r in levels] == [5, 4, 4]
+    assert [r["design_points"] for r in levels] == [5, 4, 4]
     with np.load(out / "mfgp/evaluation_0.npz") as validation:
         assert len(validation["mean"]) == 3  # Validation is never subsampled.

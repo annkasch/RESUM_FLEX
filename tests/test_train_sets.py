@@ -28,13 +28,13 @@ def test_concatenate_pads_and_counts():
     a, b = _batch(rng, 2, 4), _batch(rng, 3, 6, counts=[6, 5, 2])
     out = concatenate_batches([a, b])
     assert out.labels.shape == (5, 6) and out.phi.shape == (5, 6, 2)
-    np.testing.assert_array_equal(out.events_per_voxel, [4, 4, 6, 5, 2])
+    np.testing.assert_array_equal(out.events_per_design_point, [4, 4, 6, 5, 2])
     np.testing.assert_array_equal(out.theta, np.concatenate([a.theta, b.theta]))
     np.testing.assert_array_equal(out.labels[:2, :4], a.labels)
     assert not out.labels[:2, 4:].any() and not out.phi[:2, 4:].any()
     # Event means are unchanged by the padding.
     values = out.labels.astype(float)
-    np.testing.assert_allclose(out.voxel_mean(values)[:2], a.labels.mean(axis=1))
+    np.testing.assert_allclose(out.design_point_mean(values)[:2], a.labels.mean(axis=1))
     # Equal full event axes stay rectangular.
     assert concatenate_batches([a, a]).event_counts is None
 

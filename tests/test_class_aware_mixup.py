@@ -18,7 +18,7 @@ def make_batch(labels):
 def assert_disjoint(source):
     for row in range(source.batch_size):
         context, target = [r for r in source.last_provenance if r["row"] == row]
-        assert context["voxel"] == target["voxel"]
+        assert context["design_point"] == target["design_point"]
         cp, tp = set(context["source_pool"]), set(target["source_pool"])
         assert not cp & tp
         assert cp | tp == set(range(source.batch.n_events))
@@ -79,7 +79,9 @@ def test_real_context_preserves_events_and_matched_targets():
                 indices = r["real_indices"]
                 assert len(set(indices)) == len(indices)
                 np.testing.assert_array_equal(context.phi[r["row"], :, 0], indices)
-                np.testing.assert_array_equal(context.labels[r["row"]], y[r["voxel"], indices])
+                np.testing.assert_array_equal(
+                    context.labels[r["row"]], y[r["design_point"], indices]
+                )
 
 
 @pytest.mark.parametrize("label", [0, 1])

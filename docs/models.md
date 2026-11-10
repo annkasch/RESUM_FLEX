@@ -5,7 +5,7 @@ The event model kinds behind one API (`core.surrogates`).
 `core.surrogates` is the model-independent API for the single-logit CNP, MLP, neural
 field, feature-token transformer and histogram boosted decision trees. All consume
 `StandardBatch` and produce `EventPrediction`: event logits, probabilities, and
-voxel means. Uncertainty is optional: the MLP, CNP and field can add a Bayesian last
+design point means. Uncertainty is optional: the MLP, CNP and field can add a Bayesian last
 layer ([last-layer.md](last-layer.md)); the other models have none.
 
 ## Python API
@@ -23,7 +23,7 @@ training = NeuralTraining(
 report = model.fit(
     train_batch, training,
     validation=Episode(validation_context, validation_targets),
-    selection="voxel_rate_mae",
+    selection="design_point_rate_mae",
     checkpoints="outputs/my_run/checkpoints",
 )
 prediction = model.predict(validation_targets, context=validation_context)
@@ -33,13 +33,13 @@ restored = load_surrogate("outputs/my_run/checkpoints/best")
 
 Construct `kind="mlp"`, `kind="transformer"` or `kind="bdt"` using the same factory.
 BDT uses `TreeTraining()` and requires the optional `.[bdt]` dependencies.
-The CNP requires context observations from the same voxels. Other models ignore
+The CNP requires context observations from the same design points. Other models ignore
 context (they never see context labels), so the same episodes can be passed to them.
 The runner gives them no context: they train on every drawn event and are scored on all
-events of each voxel, CNPs on the events after the context pool
+events of each design point, CNPs on the events after the context pool
 ([evaluation.md](evaluation.md)). Their training configs reject `context`, `targets`
 and `mixup.mix_context` ([training.md](training.md)). All prediction shapes are
-`[voxel, event]`; the mean is an unweighted average over exactly those events.
+`[design_point, event]`; the mean is an unweighted average over exactly those events.
 
 Architecture options live inside the model spec: `encoder` for CNP and
 `architecture` for MLP/transformer/BDT. MLP architecture exposes only hidden
@@ -74,9 +74,9 @@ model:
 
 A context-free model like the MLP, but on encoded coordinates (`core/bernoulli_field.py`).
 `position` adds the listed phi columns to theta in physical units, using the provider's
-affine normalization (`x_n = (x - offset) / scale`, stored in the checkpoint), so for
-voxel centre + emission offset the field sees the emission point and never the voxel
-grid. The position (in normalized theta units) is Fourier-encoded: the raw value plus
+affine normalization (`x_n = (x - offset) / scale`, stored in the checkpoint), so for a
+position plus an emission offset the field sees the emission point and never the grid of
+design points. The position (in normalized theta units) is Fourier-encoded: the raw value plus
 sin/cos at `n_frequencies` octave-spaced frequencies up to `max_frequency` cycles per unit;
 the finest half-period it can represent is `1 / (2 max_frequency)`. `direction` columns are
 normalized to unit length and encoded by real orthonormal spherical harmonics up to
@@ -110,7 +110,7 @@ weighting: {strategy: sampling_correction}
 ```
 
 Each event's legacy loss (theory-truth BCE or practice-truth Gaussian NLL) is
-multiplied by its per-voxel importance weight p/q or (1-p)/(1-q) before the
+multiplied by its per-design-point importance weight p/q or (1-p)/(1-q) before the
 event mean, so the expected loss matches uniform real targets. For theory-truth
 this is an unbiased estimate of the natural Bernoulli risk. Practice-truth is not
 a Bernoulli likelihood, so the weights only restore its natural-sampling objective. For the combined objective,

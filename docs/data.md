@@ -151,40 +151,40 @@ partitions: {train: train, validation: validation, test: test}   # provider part
 A provider implements `partitions()`, `load(partition, fidelity, labels=True)` returning
 `(StandardBatch, provenance)` (with `labels=False` also for inputs without outcomes; the
 labels are then a zero placeholder that is never scored), `theta(partition, fidelity)`
-returning normalized theta and voxel ids, `coordinates(partition, fidelity)` and
+returning normalized theta and design point ids, `coordinates(partition, fidelity)` and
 `normalization()`. Optionally a classmethod `prepare(data_config, data_directory)` rebuilds
 the prepared data and returns a record that the run stores in `experiment.json`. GP levels
 and evaluation sets name provider partitions directly. Application packages ship their own
 provider and configs.
 
-Two settings make large validation sets cheap. `selection_max_voxels: N` selects
-checkpoints during training on a seeded subset of at most N validation voxels; the full
+Two settings make large validation sets cheap. `selection_max_design_points: N` selects
+checkpoints during training on a seeded subset of at most N validation design points; the full
 validation and test sets are still evaluated once after training. `evaluation_threads: N`
 runs evaluation passes with N torch CPU threads; results are identical.
 
-## Unequal event counts per voxel
+## Unequal event counts per design point
 
-Voxels may contain different numbers of events. Data preparation pads every voxel
+Design points may contain different numbers of events. Data preparation pads every design point
 of a split/fidelity group to the largest count and stores the true counts as
 `event_counts` (`[B]`) in `StandardBatch.event_counts` and in
 `metadata.json`. Padded positions have zero labels and features.
 Groups with equal counts keep the previous rectangular format, so existing
 prepared datasets and checkpoints are unaffected.
 
-- **Training** weighs voxels equally: voxels are drawn uniformly and each episode
-  samples context and targets only from that voxel's own events. `n_events` must
-  fit the smallest training voxel. This holds for natural sampling, positive quota
-  (pool prevalence uses the voxel's own events) and class-aware mixup. BDT fits all
+- **Training** weighs design points equally: design points are drawn uniformly and each episode
+  samples context and targets only from that design point's own events. `n_events` must
+  fit the smallest training design point. This holds for natural sampling, positive quota
+  (pool prevalence uses the design point's own events) and class-aware mixup. BDT fits all
   valid events and drops padding.
 - **Context/target splits** (`split_context_target`, evaluation manifests) use a
-  fixed context size; each voxel's target is its remaining events, so target
-  counts differ per voxel and are carried as `event_counts` / `target_counts`.
-- **Voxel means** (`EventPrediction.mean`, `StandardBatch.voxel_mean`, observed
-  `m/N`) divide by each voxel's own count. Event-level metrics (log loss, Brier,
+  fixed context size; each design point's target is its remaining events, so target
+  counts differ per design point and are carried as `event_counts` / `target_counts`.
+- **Design point means** (`EventPrediction.mean`, `StandardBatch.design_point_mean`, observed
+  `m/N`) divide by each design point's own count. Event-level metrics (log loss, Brier,
   AP) use valid events only.
-- **MFGP**: `training_arrays.npz` stores `events_k` per voxel of level k, and log
-  smoothing `(m + a)/(N + 2a)` uses each voxel's own N. The GP still has one
-  constant noise per level, so voxels with smaller N are noisier than the model
+- **MFGP**: `training_arrays.npz` stores `events_k` per design point of level k, and log
+  smoothing `(m + a)/(N + 2a)` uses each design point's own N. The GP still has one
+  constant noise per level, so design points with smaller N are noisier than the model
   assumes. Observed-fraction projections
   need an explicit `projections.target_events` when validation counts differ.
 - The legacy `core.training.train_cnp` loop, `cnp_trial_predictive`, `evaluate_bernoulli`, `score_bdt` and the legacy MFGP

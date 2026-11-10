@@ -21,7 +21,7 @@ class BernoulliCNP(ConditionalNeuralProcess):
 
     def forward(self, context, target):
         if context.batch_size != target.batch_size or context.mode is not target.mode:
-            raise ValueError("Context and target must have matching voxel count and mode")
+            raise ValueError("Context and target must have matching design point count and mode")
         representation = self.aggregate(context)
         _, features = self._encode_per_event(target)
         expanded = representation[:, None, :].expand(-1, target.n_events, -1)
@@ -52,16 +52,16 @@ def evaluate_bernoulli(model, context, target):
                 else None
             )
             summary = dict(
-                voxels=len(observed),
-                target_events_per_voxel=target.n_events,
+                design_points=len(observed),
+                target_events_per_design_point=target.n_events,
                 mean_observed=float(observed.mean()),
                 mean_predicted=float(predicted.mean()),
                 ratio_of_means=float(predicted.mean() / observed.mean())
                 if observed.mean() > 0
                 else None,
                 pearson_r=correlation,
-                voxel_rate_mae=float(np.abs(residual).mean()),
-                voxel_rate_rmse=float(np.sqrt(np.square(residual).mean())),
+                design_point_rate_mae=float(np.abs(residual).mean()),
+                design_point_rate_rmse=float(np.sqrt(np.square(residual).mean())),
                 bernoulli_log_loss=float(
                     F.binary_cross_entropy_with_logits(logits.double(), labels.double())
                 ),

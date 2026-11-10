@@ -1,4 +1,4 @@
-"""Episode building: voxels per step, events per voxel, context size, joint/disjoint targets."""
+"""Episodes: design points and events per step, context size, joint/disjoint targets."""
 
 import numpy as np
 import pytest
@@ -16,13 +16,13 @@ CNP = {"kind": "cnp", "encoder": {"type": "mlp", "latent_dim": 8, "hidden_dims":
 MLP = {"kind": "mlp", "architecture": {"hidden_dims": [8]}}
 
 
-def batch(n_voxels=4, n_events=60):
+def batch(n_design_points=4, n_events=60):
     rng = np.random.default_rng(np.random.SeedSequence([3, 0]))
-    labels = (rng.random((n_voxels, n_events)) < 0.2).astype(int)
-    phi = np.broadcast_to(np.arange(n_events)[None, :, None], (n_voxels, n_events, 1))
+    labels = (rng.random((n_design_points, n_events)) < 0.2).astype(int)
+    phi = np.broadcast_to(np.arange(n_events)[None, :, None], (n_design_points, n_events, 1))
     return StandardBatch(
         mode=InputMode.FULL,
-        theta=np.arange(n_voxels, dtype=float)[:, None],
+        theta=np.arange(n_design_points, dtype=float)[:, None],
         phi=phi.astype(float).copy(),
         labels=labels,
     )
@@ -189,7 +189,7 @@ def test_random_context_size_covers_range_once_per_step():
     sizes = set()
     for _ in range(60):
         context, target, _ = sampler.next()
-        assert context.labels.shape[0] == 4  # one size shared by all voxels of a step
+        assert context.labels.shape[0] == 4  # one size shared by all design points of a step
         assert context.labels.shape[1] + target.labels.shape[1] == 40
         sizes.add(context.labels.shape[1])
     assert sizes == {3, 4, 5, 6}
@@ -216,7 +216,7 @@ def test_training_records_targets_and_context_range(targets, tmp_path):
     )
     audit = report.sampling_audit
     assert audit["targets"] == targets and audit["context_range"] == [2, 5]
-    # Joint scores all 20 events per voxel; disjoint only the non-context ones.
+    # Joint scores all 20 events per design point; disjoint only the non-context ones.
     per_step = audit["events"] / (settings.n_steps * settings.batch_size)
     assert per_step == 20 if targets == "joint" else 15 <= per_step <= 18
     restored = load_surrogate(tmp_path / "run/best")
@@ -226,7 +226,9 @@ def test_training_records_targets_and_context_range(targets, tmp_path):
 
 def test_n_passes_resolve_to_steps():
     events = 1999 * 1500
-    disjoint = NeuralTraining(n_passes=10, n_events=750)  # context 16-375: 554.5 targets/voxel
+    disjoint = NeuralTraining(
+        n_passes=10, n_events=750
+    )  # context 16-375: 554.5 targets/design point
     assert disjoint.n_steps is None
     assert disjoint.target_events_per_step() == 16 * 554.5
     assert disjoint.resolve_n_steps(events) == 3380

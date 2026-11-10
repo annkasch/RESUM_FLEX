@@ -22,23 +22,23 @@ parentheses.
 | `data_provider` | Provider as `module:Class` (none: `.npz` batches, `batches/<partition>/<fidelity>.npz`). |
 | `data_config` | Data-preparation YAML for the provider; the data are rebuilt when it or the raw files change (none). |
 | `partitions` | Provider partitions for `train`, `validation`, `test` (each named like the key). |
-| `train_sets` | Train on these sets instead of `partitions.train` at LF: a list of `{partition, fidelity}`, e.g. the GP's training data `[{partition: gp_unlabeled, fidelity: lf}, {partition: gp_train, fidelity: hf}]` for a model that predicts voxel rates itself. Their voxels form one zero-padded batch; the validation and test partitions are not allowed (none). |
+| `train_sets` | Train on these sets instead of `partitions.train` at LF: a list of `{partition, fidelity}`, e.g. the GP's training data `[{partition: gp_unlabeled, fidelity: lf}, {partition: gp_train, fidelity: hf}]` for a model that predicts design point rates itself. Their design points form one zero-padded batch; the validation and test partitions are not allowed (none). |
 | `output_directory` | Run directory. Required; must be new or empty. |
 
 ### Evaluation
 
 | Key | Meaning |
 |---|---|
-| `selection` | Checkpoint metric on the selection set: `bernoulli_log_loss`, `average_precision`, `voxel_rate_mae`, `voxel_count_nll` (`voxel_rate_mae`). Use log loss or `voxel_count_nll` (plug-in binomial count NLL per voxel, much more sensitive with few hits) for natural-event runs, AP for mixup runs. |
+| `selection` | Checkpoint metric on the selection set: `bernoulli_log_loss`, `average_precision`, `design_point_rate_mae`, `design_point_count_nll` (`design_point_rate_mae`). Use log loss or `design_point_count_nll` (plug-in binomial count NLL per design point, much more sensitive with few hits) for natural-event runs, AP for mixup runs. |
 | `lf_validation` | Load and report LF validation; without a loaded selection set the final checkpoint is kept (`true`). |
 | `hf_validation` | Load and report HF validation (`true`). |
 | `selection_fidelity` | Validation fidelity that selects the checkpoint: `lf` or `hf` (`lf`). With `hf` that set's scores are selection-biased; keep a blinded test set for the final comparison. |
 | `test_fidelities` | Test sets that exist, e.g. `[lf]` (`[]`). |
 | `unblind_test` | Evaluate the test sets. Leave `false` until all choices are final (`false`). |
-| `validation_context_events` | Context events per voxel for context models during evaluation (64). Context-free models score all events. |
+| `validation_context_events` | Context events per design point for context models during evaluation (64). Context-free models score all events. |
 | `validation_context_sweep` | Extra context sizes evaluated after training, on the same targets (`[]`). |
 | `validation_seed` | Seed of the evaluation context/target split (12345). |
-| `selection_max_voxels` | Select checkpoints on a seeded subset of this many validation voxels (all). |
+| `selection_max_design_points` | Select checkpoints on a seeded subset of this many validation design points (all). |
 | `evaluation_threads` | CPU threads for evaluation passes (1). |
 | `within_point_null_draws` | Label draws per design point for the within-design-point null (1000, ≥ 100). The ±3σ coverage is rough at 1000; 10 000 costs ~10×. Also in stream configs. |
 | `feature_calibration` | Calibration per input column on every held-out split: `{bins: 10}`, equal-count bins per column (≥ 2). Also in stream configs (validation events and evaluation sets). |
@@ -84,8 +84,8 @@ parentheses.
 | `n_steps` / `n_passes` | Run length: steps, or passes over the training events. Set one (10000 steps). |
 | `eval_every` | Steps between validation passes (250). |
 | `learning_rate` | Adam learning rate (0.001). |
-| `batch_size` | Voxels per step (16). |
-| `n_events` | Events drawn per voxel per step (128). |
+| `batch_size` | Design points per step (16). |
+| `n_events` | Events drawn per design point per step (128). |
 | `seed` | Training seed (0). |
 | `device` | `cpu` or `cuda` (`cpu`). |
 | `grad_clip` | Gradient-norm clip, `null` to disable (1.0). |
@@ -123,11 +123,11 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 
 | Key | Meaning |
 |---|---|
-| `source` | `model_mean`: mean predicted p per voxel of an event model. `observed_fraction`: simulated hit fraction m/N. |
-| `partition` | Provider partition of the level's voxels. |
+| `source` | `model_mean`: mean predicted p per design point of an event model. `observed_fraction`: simulated hit fraction m/N. |
+| `partition` | Provider partition of the level's design points. |
 | `fidelity` | `lf` or `hf` (`lf` for `model_mean`, `hf` for `observed_fraction`). |
 | `inference` | `model_mean` only: file from `core.surrogates predict`; without it the event model predicts at fit time. |
-| `max_voxels` | Fit on a seeded subset of this many voxels (all). |
+| `max_design_points` | Fit on a seeded subset of this many design points (all). |
 
 ### Evaluation and fit
 
@@ -142,7 +142,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `observation_noise` | `learned` (one constant noise per level) or `binomial`: observed-fraction points also get their count noise at the predicted rate (log: Var[log y]; identity: p(1 − p)/N), held-out points scored against an observed-fraction level at their own N. Needs an observed-fraction level and `max_refits` > 0; points with a predicted rate outside (0, 1) keep the learned noise only and are counted (`rates_outside_unit_interval`). |
 | `kernel` | `rbf` or `matern52` (`rbf`). |
 | `n_restarts` | Hyperparameter optimizer restarts (5). |
-| `seed` | Seed of fits, voxel subsets and context splits (0). |
+| `seed` | Seed of fits, design point subsets and context splits (0). |
 | `n_context` | Context events when a context model computes a level (64). |
 | `unblind_test` | Allow test partitions in `evaluation` (`false`). |
 | `projections` | Spatial projections of the target level: `enabled`, `plots`, `quantity`, `domain`, `bounds`, `grid_steps`, `n_draws`, … (disabled). |
@@ -157,17 +157,17 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 
 ## Binomial GP config
 
-`BinomialGPRunConfig`: one latent hit probability fitted directly to per-voxel hit counts,
+`BinomialGPRunConfig`: one latent hit probability fitted directly to per-design-point hit counts,
 m ~ Binomial(N, sigmoid(f(θ))) with a Laplace posterior. No event model is involved.
 
 | Key | Meaning |
 |---|---|
-| `observations` | List of count sets, each `partition`, `fidelity` and `max_voxels` (all). All sets share one latent probability; N enters the likelihood exactly. |
+| `observations` | List of count sets, each `partition`, `fidelity` and `max_design_points` (all). All sets share one latent probability; N enters the likelihood exactly. |
 | `evaluation` | List of `{partition, fidelity}` scored with the observation-predictive distribution (`fidelity` defaults to `hf`). |
 | `kernel` | `matern52` or `rbf`, plus a constant kernel (`matern52`). |
 | `n_restarts` | Hyperparameter optimizer restarts (2). |
 | `max_iters` | Optimizer iterations per restart (300). |
-| `seed` | Seed of fits, voxel subsets and predictive draws (42). |
+| `seed` | Seed of fits, design point subsets and predictive draws (42). |
 | `prediction_draws` | Monte Carlo draws of the predictive counts per evaluation set (32768). |
 | `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
 | `covariate` | Optional `{inference: {"partition/fidelity": file}}` of `python -m core.surrogates predict`, one per observation and evaluation set: logit p = b logit(p_model) + c + delta(theta), b and c marginalized as linear/bias kernel terms. The event model must not be trained or selected on these sets. |

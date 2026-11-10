@@ -5,15 +5,15 @@ The multi-fidelity GP over configurable levels and the binomial count GP.
 ## Multi-fidelity GP: configurable levels
 
 The MFGP fits an ordered list of levels, lowest fidelity first; the last level is the
-target. Each level is one (X, Y) set of prepared voxels:
+target. Each level is one (X, Y) set of prepared design points:
 
-- `model_mean`: mean predicted p per voxel of an event model. With `inference:` (a file
+- `model_mean`: mean predicted p per design point of an event model. With `inference:` (a file
   from `python -m core.surrogates predict`) the saved values are used after checking that
-  voxels and normalization match the data; otherwise the event model predicts at fit time
-  (context models split each voxel's labeled events with `n_context`).
-- `observed_fraction`: simulated hit fraction m/N over all events of each voxel.
+  design points and normalization match the data; otherwise the event model predicts at fit time
+  (context models split each design point's labeled events with `n_context`).
+- `observed_fraction`: simulated hit fraction m/N over all events of each design point.
 
-`max_voxels` takes a seeded voxel subset (exact GPs scale as O(n³)); levels on the same
+`max_design_points` takes a seeded design point subset (exact GPs scale as O(n³)); levels on the same
 partition/fidelity share it. `evaluation` lists held-out partitions whose observed
 fraction is scored against one level (default: the top level). Log mode smooths observed
 fractions to (m + a)/(N + 2a) and floors model means at `cnp_log_floor`.
@@ -38,10 +38,10 @@ Two ways to run it, with the same code and outputs:
   only for `model_mean` levels without an inference file). Paths are relative to the YAML.
 
 Every `mfgp:` block lists its levels explicitly. Observed fractions use all events of a
-voxel; model means of context models cover the events left after the context split.
+design point; model means of context models cover the events left after the context split.
 
 Outputs: `training_arrays.npz` (`X_k`, `Y_k`, `events_k`, `index_k`), `fit_arrays.npz`,
-`transformed_training_arrays.npz`, `levels.json` (settings, voxel counts, provenance),
+`transformed_training_arrays.npz`, `levels.json` (settings, design point counts, provenance),
 `model.pkl`/`model.json`, `evaluation_<e>.npz` + `metrics.json` (one row per evaluation
 set), `development_map.npz`, and plots (`training_inputs`, `evaluation_<e>_means`,
 `evaluation_<e>_coverage`, `development_map`).
@@ -60,9 +60,9 @@ context-free models identical comparisons, or eliminate validation-selection bia
 
 The optional `mfgp` run-config section enables this second stage (levels: see "Multi-fidelity
 GP: configurable levels"). It requires the GP dependencies. Large datasets: a level's
-`max_voxels` fits the exact GP on a seeded subset of its partition (`index_k` in
+`max_design_points` fits the exact GP on a seeded subset of its partition (`index_k` in
 `training_arrays.npz`; one stream per partition/fidelity in order of appearance). Evaluation
-sets and the development map use every voxel, and event-model training is not subsampled.
+sets and the development map use every design point, and event-model training is not subsampled.
 Omitting the section preserves neural-only runs. With `lf_validation: true` (the API default), the CNP is selected by LF
 validation. With `lf_validation: false` the run uses the final checkpoint after all
 configured steps, without selecting on HF. LF validation files and diagnostics are skipped; LF training PR and training
@@ -96,7 +96,7 @@ detection-fraction units. Keep normalization alongside the GP checkpoint.
 
 `mfgp.output_transform: log` fits all three GP levels to natural logarithms;
 `identity` remains the shared API default and reproduces linear-space behavior.
-Observed-fraction levels use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and each voxel's
+Observed-fraction levels use `(m+a)/(N+2a)` with `raw_pseudocount: 0.5` and each design point's
 event count. This Beta(1/2,1/2) posterior-mean
 smoothing applies to all HF raw training fractions, including zeros. CNP means
 are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
@@ -156,7 +156,7 @@ offline training and prediction workflow supports both transforms.
 
 ## Default GP validation metrics
 
-MFGP runs write original-scale, equally weighted per-voxel scores to `metrics.json`: mean bias (predicted minus
+MFGP runs write original-scale, equally weighted per-design-point scores to `metrics.json`: mean bias (predicted minus
 observed), MAE, RMSE, Pearson/Spearman correlations, descriptive calibration
 intercept/slope, CRPS, and weighted interval score. `interval_metrics` contains
 nominal probability, inside/total counts, measured coverage, mean width and
@@ -185,7 +185,7 @@ physical evaluation design; no volume weighting is inferred from sparse points.
 m ~ Binomial(N, sigmoid(f(θ))), Matérn-5/2 (or RBF) plus a constant kernel, Laplace
 posterior (`core/binomial_gp.py`). Several count sets (e.g. LF and HF partitions with the same
 physics) share the latent probability; their different event counts N enter the likelihood
-exactly, so the counting noise is per voxel by construction. Evaluation draws joint latent
+exactly, so the counting noise is per design point by construction. Evaluation draws joint latent
 probabilities and then binomial counts (observation-predictive); the NLL is a count probability
 mass and must not be ranked against the MFGP's density NLL. Outputs: `observations.json`,
 `training_arrays.npz`, `model.pkl`/`model.json`, `evaluation_<e>.npz`, `metrics.json`,

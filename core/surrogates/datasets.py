@@ -34,10 +34,10 @@ class DatasetProvider(Protocol):
         """
 
     def theta(self, partition: str, fidelity: str):
-        """(theta [B, D_theta] normalized, voxel ids [B]) without reading events."""
+        """(theta [B, D_theta] normalized, design point ids [B]) without reading events."""
 
     def coordinates(self, partition: str, fidelity: str) -> np.ndarray:
-        """Physical voxel coordinates [B, D] for reports and maps."""
+        """Physical design point coordinates [B, D] for reports and maps."""
 
     def normalization(self) -> dict | None:
         """Affine input normalization ({'theta': ..., 'phi': ...}) or None if unnormalized."""

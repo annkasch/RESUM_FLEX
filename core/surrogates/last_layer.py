@@ -2,9 +2,9 @@
 
 After training, the final linear layer gets a Laplace posterior (core.last_layer) from one
 pass over the natural training events; nothing is retrained. Predictions then carry
-uncertainty: weight draws give, per voxel, draws of the mean hit probability over that
-voxel's events. The draws share the weights across all events and voxels, so the
-correlation of the uncertainty is kept (it does not average down over a voxel's events).
+uncertainty: weight draws give, per design point, draws of the mean hit probability over that
+design point's events. The draws share the weights across all events and design points, so the
+correlation of the uncertainty is kept (it does not average down over a design point's events).
 """
 
 import numpy as np
@@ -97,8 +97,8 @@ def fit_last_layer(model, train, context=None) -> LastLayerPosterior:
     return posterior
 
 
-def voxel_probability_draws(model, target, context=None, *, n_draws=None, seed=None):
-    """Draws [S, B] of each voxel's mean hit probability over its valid events.
+def design_point_probability_draws(model, target, context=None, *, n_draws=None, seed=None):
+    """Draws [S, B] of each design point's mean hit probability over its valid events.
 
     Defaults to the configured ``last_layer.draws`` and ``last_layer.seed``.
     """

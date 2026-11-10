@@ -1,4 +1,4 @@
-"""Backend-independent spatial marginalization and individual-voxel projections."""
+"""Backend-independent spatial marginalization and individual-design-point projections."""
 
 from itertools import combinations
 from math import erf, sqrt
@@ -149,6 +149,6 @@ def project_response(adapter, training_theta, settings, *, observation_model=Non
         if settings.domain == "training_convex_hull"
         else "User-specified physical box",
         observation_note=(
-            "Overlaid target fractions are individual voxels, not marginalized measurements"
+            "Overlaid target fractions are individual design points, not marginalized measurements"
         ),
     )

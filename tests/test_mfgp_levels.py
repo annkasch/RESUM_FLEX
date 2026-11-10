@@ -30,8 +30,6 @@ def test_mfgp_blocks_need_explicit_levels():
     )
     with pytest.raises(ValueError, match="levels"):
         SurrogateRunConfig(**base, mfgp={"n_restarts": 1})
-    with pytest.raises(ValueError, match="max_lf_voxels"):
-        SurrogateRunConfig(**base, mfgp={"levels": TWO_LEVELS, "max_lf_voxels": 3})
     run = SurrogateRunConfig(**base, mfgp={"levels": TWO_LEVELS})
     assert [lv.source for lv in run.mfgp.levels] == ["model_mean", "observed_fraction"]
 
@@ -39,8 +37,8 @@ def test_mfgp_blocks_need_explicit_levels():
 def test_level_settings_are_validated(tmp_path):
     with pytest.raises(ValueError, match="at least 2"):
         MFGPStageConfig(levels=TWO_LEVELS[:1])
-    with pytest.raises(ValueError, match="same max_voxels"):
-        MFGPStageConfig(levels=[{**TWO_LEVELS[1], "max_voxels": 2}, TWO_LEVELS[1]])
+    with pytest.raises(ValueError, match="same max_design_points"):
+        MFGPStageConfig(levels=[{**TWO_LEVELS[1], "max_design_points": 2}, TWO_LEVELS[1]])
     with pytest.raises(ValueError, match="blinded"):
         MFGPStageConfig(levels=TWO_LEVELS, evaluation=[{"partition": "gp_test"}])
     unblinded = MFGPStageConfig(
@@ -106,7 +104,7 @@ def test_standalone_two_levels_with_checkpoint(tmp_path):
     )
     save_surrogate(tmp_path / "run/checkpoints/best", model)
     config = MFGPRunConfig(
-        levels=[{**TWO_LEVELS[0], "max_voxels": 5}, TWO_LEVELS[1]],
+        levels=[{**TWO_LEVELS[0], "max_design_points": 5}, TWO_LEVELS[1]],
         evaluation=[
             {"partition": "validation", "fidelity": "hf"},
             {"partition": "validation", "fidelity": "lf", "level": 0},

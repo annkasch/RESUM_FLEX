@@ -127,7 +127,9 @@ def stream_run_inputs(experiment, sets):
                 partitions[split, fidelity], fidelity
             )
             provenance["partition"] = partitions[split, fidelity]
-            check_provenance(experiment.get("voxel_evaluation", {}).get(name), provenance, name)
+            check_provenance(
+                experiment.get("design_point_evaluation", {}).get(name), provenance, name
+            )
     if len(grouped) < len(sets):
         from core.event_stream import open_event_source
 

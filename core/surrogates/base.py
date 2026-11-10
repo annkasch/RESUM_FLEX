@@ -12,10 +12,10 @@ from schemas.data_models import StandardBatch, valid_event_mask
 
 @dataclass(frozen=True)
 class EventPrediction:
-    """Raw logits [voxel,event]; no inferred Gaussian/epistemic uncertainty.
+    """Raw logits [design_point,event]; no inferred Gaussian/epistemic uncertainty.
 
     ``event_counts`` mirrors ``StandardBatch.event_counts``: logits beyond a
-    voxel's count are padding and are excluded from ``mean``.
+    design point's count are padding and are excluded from ``mean``.
     """
 
     logits: np.ndarray
@@ -25,7 +25,7 @@ class EventPrediction:
     def __post_init__(self):
         value = np.asarray(self.logits, dtype=float)
         if value.ndim != 2 or not value.size or not np.isfinite(value).all():
-            raise ValueError("Expected finite nonempty [voxel,event] logits")
+            raise ValueError("Expected finite nonempty [design_point,event] logits")
         object.__setattr__(self, "logits", value)
         if self.legacy_scale is not None:
             scale = np.asarray(self.legacy_scale, dtype=float)
@@ -71,9 +71,13 @@ class EventSurrogate(ABC):
     @property
     def capabilities(self):
         neural = self.config.kind != "bdt"
-        return {"event_predictions": True, "context": self.uses_context,
-                "output_layer_training": neural, "ordered_continuation": neural,
-                "predictive_distribution": False}
+        return {
+            "event_predictions": True,
+            "context": self.uses_context,
+            "output_layer_training": neural,
+            "ordered_continuation": neural,
+            "predictive_distribution": False,
+        }
 
     def validate(self, target, context=None):
         for name, dimension in [("theta", self.dim_theta), ("phi", self.dim_phi)]:
@@ -86,7 +90,7 @@ class EventSurrogate(ABC):
             if context is None:
                 raise ValueError("CNP prediction requires context observations")
             if context.mode != target.mode or context.batch_size != target.batch_size:
-                raise ValueError("Context must match target mode and voxel count")
+                raise ValueError("Context must match target mode and design point count")
             for name in ("theta", "phi"):
                 value, other = getattr(context, name), getattr(target, name)
                 if (value is None) != (other is None):
@@ -96,13 +100,21 @@ class EventSurrogate(ABC):
                 ):
                     raise ValueError("Context feature schema does not match target")
             if target.theta is not None and not np.array_equal(target.theta, context.theta):
-                raise ValueError("Context and target must refer to the same voxel coordinates")
+                raise ValueError(
+                    "Context and target must refer to the same design point coordinates"
+                )
 
     @abstractmethod
     def predict(self, target: StandardBatch, *, context=None) -> EventPrediction: ...
 
     def fit(
-        self, train, training, *, validation=None, selection="voxel_rate_mae", checkpoints=None
+        self,
+        train,
+        training,
+        *,
+        validation=None,
+        selection="design_point_rate_mae",
+        checkpoints=None,
     ):
         from core.surrogates.training import fit_surrogate
 

@@ -1,4 +1,4 @@
-"""Within-voxel permutation and class-aware mixup augmentation."""
+"""Within-design-point permutation and class-aware mixup augmentation."""
 
 import numpy as np
 
@@ -14,9 +14,9 @@ class SoftTargetBatch(StandardBatch):
 
 
 class ClassAwareMixupSource:
-    """Fresh, label-independent source split for each voxel in every batch.
+    """Fresh, label-independent source split for each design point in every batch.
 
-    Voxels are sampled uniformly with replacement. Their full event sets are
+    Design points are sampled uniformly with replacement. Their full event sets are
     randomly partitioned in the nominal context/target proportion on each draw.
     Each side mixes negative anchors with positive partners from its own pool,
     using independent Beta weights. Single-class pools emit real events.
@@ -27,7 +27,7 @@ class ClassAwareMixupSource:
     needed to fill the requested output size.
     No once-per-epoch coverage guarantee is made. With equal seeds, switching
     mix_context leaves target batches and source splits identical.
-    With unequal event counts each voxel partitions only its own valid events.
+    With unequal event counts each design point partitions only its own valid events.
     Context size 0 (context-free models): all events form the target pool and the
     context is None.
     """
@@ -37,8 +37,10 @@ class ClassAwareMixupSource:
             raise ValueError("Class-aware mixup requires positive finite alpha")
         if not 0 <= n_context < n_events or batch_size < 1:
             raise ValueError("Invalid mixup episode dimensions")
-        if int(batch.events_per_voxel.min()) < 2 or batch.batch_size < 1:
-            raise ValueError("Class-aware mixup requires at least two source events per voxel")
+        if int(batch.events_per_design_point.min()) < 2 or batch.batch_size < 1:
+            raise ValueError(
+                "Class-aware mixup requires at least two source events per design point"
+            )
         self.batch, self.alpha = batch, alpha
         self.mix_context = mix_context
         self.context_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
@@ -64,8 +66,8 @@ class ClassAwareMixupSource:
         nt = n_events - nc
         trials = self.rng.integers(self.batch.batch_size, size=self.batch_size)
         pools = []
-        for voxel in trials:
-            n = int(self.batch.events_per_voxel[voxel])
+        for design_point in trials:
+            n = int(self.batch.events_per_design_point[design_point])
             # Context size 0 (context-free models): every event is in the target pool.
             pool_size = min(n - 1, max(1, round(n * nc / n_events))) if nc else 0
             indices = self.rng.permutation(n)
@@ -78,9 +80,9 @@ class ClassAwareMixupSource:
                 result.append(None)
                 continue
             labels, features = [], []
-            for row, voxel in enumerate(trials):
+            for row, design_point in enumerate(trials):
                 pool = pools[row][side]
-                source_labels = self.batch.labels[voxel]
+                source_labels = self.batch.labels[design_point]
                 negatives = pool[source_labels[pool] == 0]
                 positives = pool[source_labels[pool] == 1]
                 if len(negatives) and len(positives):
@@ -94,7 +96,7 @@ class ClassAwareMixupSource:
                 y = (1 - weight) * source_labels[anchors] + weight * source_labels[partners]
                 provenance = dict(
                     row=row,
-                    voxel=int(voxel),
+                    design_point=int(design_point),
                     side=side,
                     source_pool=pool.copy(),
                     anchors=anchors.copy(),
@@ -109,11 +111,11 @@ class ClassAwareMixupSource:
                 labels.append(y)
                 if self.batch.phi is not None:
                     if side == 0 and not self.mix_context:
-                        features.append(self.batch.phi[voxel, real_indices])
+                        features.append(self.batch.phi[design_point, real_indices])
                     else:
                         features.append(
-                            (1 - weight[:, None]) * self.batch.phi[voxel, anchors]
-                            + weight[:, None] * self.batch.phi[voxel, partners]
+                            (1 - weight[:, None]) * self.batch.phi[design_point, anchors]
+                            + weight[:, None] * self.batch.phi[design_point, partners]
                         )
                 self.last_provenance.append(provenance)
             carrier = StandardBatch if side == 0 and not self.mix_context else SoftTargetBatch

@@ -45,14 +45,12 @@ class FixedBatchSource:
             raise ValueError("n_trials and n_events must be positive")
         if not self.replace_trials and n_trials > self.batch.batch_size:
             raise ValueError("n_trials exceeds available trials without replacement")
-        counts = self.batch.events_per_voxel
+        counts = self.batch.events_per_design_point
         if not self.replace_events and n_events > int(counts.min()):
             raise ValueError("n_events exceeds available events without replacement")
 
         rng = np.random.default_rng(seed)
-        trial_idx = rng.choice(
-            self.batch.batch_size, size=n_trials, replace=self.replace_trials
-        )
+        trial_idx = rng.choice(self.batch.batch_size, size=n_trials, replace=self.replace_trials)
         event_idx = np.stack(
             [
                 rng.choice(int(counts[t]), size=n_events, replace=self.replace_events)

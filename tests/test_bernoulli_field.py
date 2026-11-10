@@ -15,7 +15,7 @@ from core.surrogates.models import build_surrogate
 from schemas.data_models import InputMode, StandardBatch
 from schemas.surrogates import FieldModel
 
-# theta = voxel centre (3), phi = emission offset (3) + direction vector (3).
+# theta = design point centre (3), phi = emission offset (3) + direction vector (3).
 NORMALIZATION = {
     "theta": {"method": "standard", "offset": [0.5, -0.2, 1.0], "scale": [0.06, 0.05, 0.07]},
     "phi": {
@@ -87,8 +87,8 @@ def test_fourier_features_shape_and_frequencies():
     assert out.shape == (2, 5, encoding.output_dim(3)) == (2, 5, 27)
 
 
-def test_position_is_continuous_across_voxels():
-    """Same emission point from two different voxel centres gives the same logit."""
+def test_position_is_continuous_across_design_points():
+    """Same emission point from two different design point centres gives the same logit."""
     rng = np.random.default_rng(1)
     model = _field()
     centre, offset, direction = _random_physical(rng)
@@ -201,7 +201,7 @@ def test_field_runs_through_the_pipeline(tmp_path):
     expected = NORMALIZATION["phi"]["scale"][0] / NORMALIZATION["theta"]["scale"][0]
     assert restored.module.position_scale[0].item() == pytest.approx(expected, rel=1e-6)
     rows = json.loads((output / "metrics.json").read_text())
-    assert all("voxel_predictive" in r for r in rows if r["split"] == "validation")
+    assert all("design_point_predictive" in r for r in rows if r["split"] == "validation")
     compute = json.loads((output / "compute.json").read_text())
     assert [s["name"] for s in compute["stages"]] == [
         "data_preparation",

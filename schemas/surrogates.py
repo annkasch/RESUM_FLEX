@@ -27,7 +27,7 @@ class BayesianLastLayer(StrictConfigModel):
     The trained weights are the posterior mean. The precision is the exact Bernoulli
     Hessian over all natural training events plus an isotropic Gaussian prior:
     ``prior_precision`` = "evidence" maximizes the Laplace marginal likelihood (training
-    data only), a number fixes it. ``draws`` weight samples give event and voxel
+    data only), a number fixes it. ``draws`` weight samples give event and design point
     predictive distributions; ``seed`` makes them reproducible.
     """
 
@@ -81,9 +81,9 @@ class MLPModel(StrictConfigModel):
 class FieldPosition(StrictConfigModel):
     """Event columns that, added to theta in physical units, give one continuous position.
 
-    For example theta = voxel centre and phi[0:3] = emission offset from that centre. The
-    sum uses the data normalization stored with the model, so it is exact in physical
-    units; the field never sees the voxel structure.
+    For example theta = a position and phi[0:3] = an emission offset from it. The sum uses the
+    data normalization stored with the model, so it is exact in physical units; the field never
+    sees the design point structure.
     """
 
     phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=1)
@@ -275,8 +275,8 @@ class NeuralTraining(StrictConfigModel):
     n_passes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     eval_every: int = Field(default=250, gt=0)
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
-    batch_size: int = Field(default=16, gt=0)  # voxels per step
-    n_events: int = Field(default=128, ge=3)  # events drawn per voxel per step
+    batch_size: int = Field(default=16, gt=0)  # design points per step
+    n_events: int = Field(default=128, ge=3)  # events drawn per design point per step
     # Context models only (cnp, legacy_cnp); context-free models score all n_events events.
     # disjoint: targets are the non-context events; joint: targets also include the
     # context events (Garnelo et al. 2018). Evaluation is always disjoint.
@@ -317,7 +317,7 @@ class NeuralTraining(StrictConfigModel):
         return data
 
     def context_range(self, n_events: int | None = None, *, context=True) -> tuple[int, int]:
-        """Smallest and largest context size for episodes of n_events per voxel.
+        """Smallest and largest context size for episodes of n_events per design point.
 
         context=False (context-free models): (0, 0), every drawn event is a target.
         """
@@ -413,10 +413,10 @@ class TreeTraining(StrictConfigModel):
 
 
 TrainingSpec = Annotated[NeuralTraining | TreeTraining, Field(discriminator="backend")]
-# voxel_count_nll: mean -log Binomial(k | n, mean predicted p) per voxel (plug-in); far more
-# sensitive than the event log loss when voxels have few hits.
+# design_point_count_nll: mean -log Binomial(k | n, mean predicted p) per design point
+# (plug-in); far more sensitive than the event log loss when design points have few hits.
 SelectionMetric = Literal[
-    "voxel_rate_mae", "average_precision", "bernoulli_log_loss", "voxel_count_nll"
+    "design_point_rate_mae", "average_precision", "bernoulli_log_loss", "design_point_count_nll"
 ]
 
 
@@ -425,7 +425,7 @@ class TrainingStage(StrictConfigModel):
     start_from: str = "initial"
     trainable: Literal["all", "output_layer"] = "all"
     training: TrainingSpec
-    selection: SelectionMetric = "voxel_rate_mae"
+    selection: SelectionMetric = "design_point_rate_mae"
 
     @model_validator(mode="after")
     def no_nested_schedule(self):
@@ -439,7 +439,7 @@ class TrainingStage(StrictConfigModel):
 class SurrogateConfig(StrictConfigModel):
     model: ModelSpec
     training: TrainingSpec
-    selection: SelectionMetric = "voxel_rate_mae"
+    selection: SelectionMetric = "design_point_rate_mae"
 
     @model_validator(mode="after")
     def backend_matches(self):
@@ -460,27 +460,27 @@ Fidelity = Literal["lf", "hf"]
 
 
 class ModelMeanLevel(StrictConfigModel):
-    """GP level from an event model: mean predicted p per voxel of a prepared partition.
+    """GP level from an event model: mean predicted p per design point of a prepared partition.
 
     ``inference``: a file written by ``python -m core.surrogates predict``; without it the
     run's (or the configured) checkpoint predicts at fit time. Context models need labeled
-    voxels for their context; context-free models also predict unlabeled voxels.
+    design points for their context; context-free models also predict unlabeled design points.
     """
 
     source: Literal["model_mean"]
     partition: str
     fidelity: Fidelity = "lf"
     inference: Path | None = None
-    max_voxels: int | None = Field(default=None, gt=0)
+    max_design_points: int | None = Field(default=None, gt=0)
 
 
 class ObservedFractionLevel(StrictConfigModel):
-    """GP level from simulation: observed hit fraction m/N over all events of each voxel."""
+    """GP level from simulation: observed hit fraction m/N over all events of each design point."""
 
     source: Literal["observed_fraction"]
     partition: str
     fidelity: Fidelity = "hf"
-    max_voxels: int | None = Field(default=None, gt=0)
+    max_design_points: int | None = Field(default=None, gt=0)
 
 
 GPLevel = Annotated[ModelMeanLevel | ObservedFractionLevel, Field(discriminator="source")]
@@ -491,7 +491,10 @@ TEST_PARTITIONS = ("test", "cnp_test", "gp_test")
 
 
 class GPEvaluation(StrictConfigModel):
-    """Held-out voxels whose observed fraction is compared with one GP level (default: top)."""
+    """Held-out design points whose observed fraction is compared with one GP level.
+
+    Default level: the top one.
+    """
 
     partition: str
     fidelity: Fidelity = "hf"
@@ -530,7 +533,7 @@ class MFGPStageConfig(StrictConfigModel):
             raise ValueError(f"coverage_ylim must be (low, high) with low < high, got {value}")
         return value
 
-    # Context events per voxel when a context model computes a model_mean level.
+    # Context events per design point when a context model computes a model_mean level.
     n_context: int = Field(default=64, gt=0)
     # Test partitions stay blinded until all choices are final; then set true once.
     unblind_test: bool = False
@@ -558,8 +561,8 @@ class MFGPStageConfig(StrictConfigModel):
                 )
         for level in self.levels:
             key = level.partition, level.fidelity
-            if limits.setdefault(key, level.max_voxels) != level.max_voxels:
-                raise ValueError(f"Levels on {key[0]}/{key[1]} need the same max_voxels")
+            if limits.setdefault(key, level.max_design_points) != level.max_design_points:
+                raise ValueError(f"Levels on {key[0]}/{key[1]} need the same max_design_points")
         for evaluation in self.evaluation:
             if evaluation.level is not None and not 0 <= evaluation.level < len(self.levels):
                 raise ValueError(f"evaluation level must be in [0, {len(self.levels) - 1}]")
@@ -604,12 +607,12 @@ def load_mfgp_config(path: str | Path) -> MFGPRunConfig:
 
 
 class CountSet(StrictConfigModel):
-    """Prepared partition whose per-voxel hit counts enter the binomial likelihood."""
+    """Prepared partition whose per-design-point hit counts enter the binomial likelihood."""
 
     partition: str
     fidelity: Fidelity
-    # Fit on a seeded subset of this many voxels (exact Laplace GPs scale as O(n^3)).
-    max_voxels: int | None = Field(default=None, gt=0)
+    # Fit on a seeded subset of this many design points (exact Laplace GPs scale as O(n^3)).
+    max_design_points: int | None = Field(default=None, gt=0)
 
 
 class CountEvaluation(StrictConfigModel):
@@ -618,7 +621,7 @@ class CountEvaluation(StrictConfigModel):
 
 
 class BinomialCovariate(StrictConfigModel):
-    """Event-model mean probability per voxel as GP covariate z = logit(p).
+    """Event-model mean probability per design point as GP covariate z = logit(p).
 
     ``inference`` maps every observation and evaluation set ("partition/fidelity") to a file
     of ``python -m core.surrogates predict`` for exactly that partition (paths relative to
@@ -759,8 +762,8 @@ class SurrogateRunConfig(SurrogateConfig):
     partitions: dict[Literal["train", "validation", "test"], str] = Field(
         default_factory=lambda: {"train": "train", "validation": "validation", "test": "test"}
     )
-    # Train on the voxels of several sets instead of partitions.train at LF, e.g. the GP's
-    # training data (LF2 + HF train) for a model that predicts voxel rates itself. Selection
+    # Train on the design points of several sets instead of partitions.train at LF, e.g. the GP's
+    # training data (LF2 + HF train) for a model that predicts design point rates itself. Selection
     # still uses partitions.validation; the sets may not include it or partitions.test.
     train_sets: list[TrainingSet] | None = Field(default=None, min_length=1)
     # Optional data-preparation YAML for the provider. When set, each run first lets the
@@ -773,9 +776,9 @@ class SurrogateRunConfig(SurrogateConfig):
     # same targets; the contexts are nested.
     validation_context_sweep: list[int] = Field(default_factory=list)
     validation_seed: int = 12345
-    # Checkpoint selection during training uses a seeded subset of LF validation voxels;
+    # Checkpoint selection during training uses a seeded subset of LF validation design points;
     # None uses all. Full validation and test sets are evaluated once after training.
-    selection_max_voxels: int | None = Field(default=None, gt=0)
+    selection_max_design_points: int | None = Field(default=None, gt=0)
     # CPU threads for evaluation passes only; training steps keep their own thread count.
     evaluation_threads: int = Field(default=1, gt=0)
     # Label draws per design point for the within-design-point null (read-out); the ±3σ
@@ -788,7 +791,7 @@ class SurrogateRunConfig(SurrogateConfig):
 
     @property
     def validation_context_pool(self) -> int:
-        """Events per voxel reserved for contexts; the targets are all later events."""
+        """Events per design point reserved for contexts; the targets are all later events."""
         return max([self.validation_context_events, *self.validation_context_sweep])
 
     @model_validator(mode="after")
@@ -906,8 +909,8 @@ class StreamTraining(StrictConfigModel):
     validation_events: int | None = Field(default=20_000_000, gt=0)
 
 
-class VoxelEvaluationSet(StrictConfigModel):
-    """A prepared voxel partition on which a stream-trained field is scored, under the split
+class DesignPointEvaluationSet(StrictConfigModel):
+    """A prepared design point partition on which a stream-trained field is scored, under the split
     name used in metrics.json and the plots (``{fidelity}_{split}_{checkpoint}.npz``)."""
 
     split: Literal["validation", "test"]
@@ -937,14 +940,15 @@ class StreamRunConfig(StrictConfigModel):
     # reading/shuffling options, passed to it unchanged.
     event_source: str
     event_source_options: dict[str, Any] = Field(default_factory=dict)
-    # Voxel data the field is evaluated on, with the metrics and plots of voxel training.
+    # Design point data the field is evaluated on, with the metrics and plots of design point
+    # training.
     data_provider: str | None = None  # None: NpzBatches
     data_directory: Path | None = None
     data_config: Path | None = None  # prepares data_directory when outdated
-    evaluation: list[VoxelEvaluationSet] = Field(default_factory=list)
-    # Voxels of the first validation set scored at every validation step (validation history
+    evaluation: list[DesignPointEvaluationSet] = Field(default_factory=list)
+    # Design points of the first validation set scored at every validation step (validation history
     # plot; seeded subset, None = all). Selection itself uses the validation events.
-    history_voxels: int | None = Field(default=500, gt=0)
+    history_design_points: int | None = Field(default=500, gt=0)
     evaluation_seed: int = 0
     # Label draws per design point for the within-design-point null on the evaluation sets.
     within_point_null_draws: int = Field(default=1000, ge=100)
