@@ -49,13 +49,17 @@ Constant learned noise, 5 seeds (2026-11-09): identity mode has no systematic bi
 1 / 5 / 50 hits, about pseudocount + Jensen + back-conversion (+16 − 12 + 18 % at 5 hits).
 With the rate mean exp(μ + v_f/2) (noise excluded, same day): log mode ≈ +30 % / +2.5 % /
 +1 % at 1 / 5 / 50 hits, the remaining pseudocount + Jensen terms; coverage unchanged.
-With the log-target bias correction as well (`log_bias_max_refits`, default): ≈ +5 % /
+With the log-target bias correction as well (`max_refits`, default): ≈ +5 % /
 +0.1 % / +1 % (dim points +1.5 % / −1 % / +0.5 %); 1σ coverage at 1 hit stays ≈ 0.3, as
 positive lognormal bounds can't cover the many zero observed fractions there.
 `--noise learned,binomial` compares per-point binomial noise (log mode): bias unchanged
 (+6 / +0.4 / +0.5 %), coverage evened out between dim and bright points (50 hits: 1σ/2σ
 0.69/0.94 dim, 0.69/0.95 bright; `learned`: 0.59/0.87 dim, 0.86/0.99 bright). The table
 prints 1σ/2σ coverage of dim and bright points next to the overall coverage.
+Identity mode, same comparison: bias ≈ 0 either way; `learned` 0.86/0.99 dim, 0.56/0.89
+bright at 50 hits; `binomial` 0.70/0.96 dim, 0.64/0.94 bright. In identity mode with
+`binomial`, 2 of 5 seeds at 1 hit and 1 of 5 at 5 hits stop because the GP predicts rates
+≤ 0 at a few dim points (training or held-out); the sweep records these as `failed`.
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 

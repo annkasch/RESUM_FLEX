@@ -10,7 +10,7 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-@pytest.mark.parametrize("transform", ["identity", "log", "log-binomial"])
+@pytest.mark.parametrize("transform", ["identity", "identity-binomial", "log", "log-binomial"])
 @pytest.mark.parametrize("lf_validation", [True, False])
 def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     pytest.importorskip("GPy")
@@ -138,7 +138,13 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         np.testing.assert_allclose(data["events_2"], 24)
 
     if transform == "identity":
-        assert meta["log_bias_correction"] is None
+        if noise == "binomial":
+            assert meta["refits"]["point_noise"] and not meta["refits"]["bias_correction"]
+            assert scores[-1]["observation_noise"].startswith("learned + binomial")
+            with np.load(out / "mfgp/fit_arrays.npz") as fit:
+                assert "point_noise_2" in fit and "log_offset_2" not in fit
+        else:
+            assert meta["refits"] is None
     if transform == "log":
         with (
             np.load(out / "mfgp/training_arrays.npz") as raw,
@@ -154,8 +160,8 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
                     exact["Y_2"], np.log(fit["Y_2"]) - fit["log_offset_2"][:, None]
                 )
                 np.testing.assert_allclose(exact["Y_0"], np.log(fit["Y_0"]))
-        assert meta["log_bias_correction"]["refits"] >= 1
-        assert meta["log_bias_correction"]["point_noise"] == (noise == "binomial")
+        assert meta["refits"]["refits"] >= 1
+        assert meta["refits"]["point_noise"] == (noise == "binomial")
         with np.load(out / "mfgp/fit_arrays.npz") as fit:
             assert ("point_noise_2" in fit) == (noise == "binomial")
         assert ("observation_noise" in scores[-1]) == (noise == "binomial")

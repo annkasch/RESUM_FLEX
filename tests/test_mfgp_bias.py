@@ -63,10 +63,10 @@ def test_noise_study_runs_and_is_seeded(transform):
     assert log_terms <= set(row) if transform == "log" else not log_terms & set(row)
     if transform == "log":
         binomial = noise_study(5, seed=3, observation_noise="binomial", **kwargs)
-        assert binomial["log_bias_correction"]["point_noise"] is True
+        assert binomial["refits"]["point_noise"] and binomial["refits"]["bias_correction"]
     else:
-        with pytest.raises(ValueError, match="binomial"):
-            noise_study(5, seed=3, observation_noise="binomial", **kwargs)
+        binomial = noise_study(50, seed=3, observation_noise="binomial", **kwargs)
+        assert binomial["refits"]["point_noise"] and not binomial["refits"]["bias_correction"]
 
 
 def test_sweep_script_writes_rows(tmp_path):
@@ -124,12 +124,18 @@ def _two_levels():
 
 def test_log_corrected_fit_offsets_and_stopping():
     pytest.importorskip("GPy")
-    from core.mfgp_pipeline import fit_mfgp, fit_mfgp_log_corrected, log_target_offset
+    from core.mfgp_pipeline import fit_mfgp, fit_mfgp_corrected, log_target_offset
 
     X, Y, events = _two_levels()
     np.random.seed(0)
-    result = fit_mfgp_log_corrected(
-        X, Y, events=[None, events], max_refits=8, pseudocount=0.5, n_restarts=1
+    result = fit_mfgp_corrected(
+        X,
+        Y,
+        events=[None, events],
+        output_transform="log",
+        max_refits=8,
+        pseudocount=0.5,
+        n_restarts=1,
     )
     gp, offsets = result.gp, result.offsets
     assert offsets[0] is None and offsets[1].shape == (12,)
@@ -140,31 +146,46 @@ def test_log_corrected_fit_offsets_and_stopping():
         rate, _ = gp.predict(X[1], fidelity=1)
         np.testing.assert_allclose(offsets[1], log_target_offset(rate, events, 0.5), atol=0.02)
     np.random.seed(0)
-    plain = fit_mfgp_log_corrected(
-        X, Y, events=[None, events], max_refits=0, pseudocount=0.5, n_restarts=1
+    plain = fit_mfgp_corrected(
+        X,
+        Y,
+        events=[None, events],
+        output_transform="log",
+        max_refits=0,
+        pseudocount=0.5,
+        n_restarts=1,
     )
     assert plain.offsets == [None, None] and plain.refits == 0
     np.random.seed(0)
     reference = fit_mfgp(X, Y, output_transform="log", n_restarts=1)
     np.testing.assert_allclose(plain.gp.model.param_array, reference.model.param_array)
     with pytest.raises(ValueError, match="one entry"):
-        fit_mfgp_log_corrected(X, Y, events=[events], max_refits=1, pseudocount=0.5)
+        fit_mfgp_corrected(
+            X, Y, events=[events], output_transform="log", max_refits=1, pseudocount=0.5
+        )
     with pytest.raises(ValueError, match="refit"):
-        fit_mfgp_log_corrected(
-            X, Y, events=[None, events], max_refits=0, pseudocount=0.5, point_noise=True
+        fit_mfgp_corrected(
+            X,
+            Y,
+            events=[None, events],
+            output_transform="log",
+            max_refits=0,
+            pseudocount=0.5,
+            point_noise=True,
         )
 
 
 def test_log_corrected_fit_with_point_noise():
     pytest.importorskip("GPy")
-    from core.mfgp_pipeline import binomial_log_moments, fit_mfgp_log_corrected, log_count_noise
+    from core.mfgp_pipeline import binomial_log_moments, count_noise, fit_mfgp_corrected
 
     X, Y, events = _two_levels()
     np.random.seed(0)
-    result = fit_mfgp_log_corrected(
+    result = fit_mfgp_corrected(
         X,
         Y,
         events=[None, events],
+        output_transform="log",
         max_refits=8,
         pseudocount=0.5,
         n_restarts=1,
@@ -182,10 +203,11 @@ def test_log_corrected_fit_with_point_noise():
     np.testing.assert_allclose(level[30:], learned[1] + noise)
     rate, _ = gp.predict(X[1], fidelity=1)
     np.testing.assert_allclose(
-        log_count_noise(rate, events, 0.5), binomial_log_moments(rate, events, 0.5)[1]
+        count_noise(rate, events, output_transform="log", pseudocount=0.5),
+        binomial_log_moments(rate, events, 0.5)[1],
     )
     with pytest.raises(ValueError, match="outside"):
-        log_count_noise(np.array([1.2]), np.array([10.0]), 0.5)
+        count_noise(np.array([1.2]), np.array([10.0]), output_transform="identity")
 
 
 def test_predict_adds_point_noise():
@@ -213,24 +235,74 @@ def test_predict_adds_point_noise():
         fit_mfgp(X, Y, output_transform="log", n_restarts=1, point_noise=[None])
 
 
-def test_log_bias_refits_config():
-    from core.mfgp_pipeline import resolve_log_bias_refits
+def test_refit_and_noise_config():
+    from core.mfgp_pipeline import resolve_max_refits
     from schemas.surrogates import MFGPStageConfig
 
     levels = [
         {"source": "model_mean", "partition": "train", "fidelity": "lf"},
         {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
     ]
-    assert MFGPStageConfig(levels=levels).log_bias_max_refits is None
-    MFGPStageConfig(levels=levels, output_transform="log", log_bias_max_refits=0)
-    MFGPStageConfig(levels=levels, log_bias_max_refits=0)
-    with pytest.raises(ValueError, match="log only"):
-        MFGPStageConfig(levels=levels, log_bias_max_refits=3)
-    MFGPStageConfig(levels=levels, output_transform="log", observation_noise="binomial")
-    for bad in ({}, {"output_transform": "log", "log_bias_max_refits": 0}):
-        with pytest.raises(ValueError, match="binomial needs"):
-            MFGPStageConfig(levels=levels, observation_noise="binomial", **bad)
-    assert resolve_log_bias_refits(None, "log") == 8
-    assert resolve_log_bias_refits(None, "identity") == 0
+    assert MFGPStageConfig(levels=levels).max_refits is None
+    MFGPStageConfig(levels=levels, output_transform="log", max_refits=0)
+    MFGPStageConfig(levels=levels, max_refits=0)
+    with pytest.raises(ValueError, match="max_refits needs"):
+        MFGPStageConfig(levels=levels, max_refits=3)
+    for transform in ("identity", "log"):
+        MFGPStageConfig(levels=levels, output_transform=transform, observation_noise="binomial")
+        with pytest.raises(ValueError, match="max_refits > 0"):
+            MFGPStageConfig(
+                levels=levels,
+                output_transform=transform,
+                observation_noise="binomial",
+                max_refits=0,
+            )
+    with pytest.raises(ValueError, match="observed_fraction level"):
+        MFGPStageConfig(levels=levels[:1] * 2, observation_noise="binomial")
+    assert resolve_max_refits(None, "log") == 8
+    assert resolve_max_refits(None, "identity") == 0
+    assert resolve_max_refits(None, "identity", "binomial") == 8
     with pytest.raises(ValueError):
-        resolve_log_bias_refits(2, "identity")
+        resolve_max_refits(2, "identity")
+    with pytest.raises(ValueError):
+        resolve_max_refits(0, "identity", "binomial")
+
+
+def test_identity_point_noise_from_predicted_rate():
+    pytest.importorskip("GPy")
+    from core.mfgp_pipeline import fit_mfgp_corrected
+
+    X, _, events = _two_levels()
+    rng = np.random.default_rng(np.random.SeedSequence([5, 1]))
+    p_top = 0.02 * np.exp(np.sin(3 * X[1][:, 0]))
+    Y = [0.02 * np.exp(np.sin(3 * X[0])), (rng.binomial(200, p_top) / 200)[:, None]]
+    np.random.seed(0)
+    result = fit_mfgp_corrected(
+        X,
+        Y,
+        events=[None, events],
+        output_transform="identity",
+        max_refits=8,
+        n_restarts=1,
+        point_noise=True,
+    )
+    assert result.offsets == [None, None]  # no bias correction in identity mode
+    assert result.refits >= 2  # the first refit only sets the noise
+    np.testing.assert_allclose(result.gp.model.Y[30:], Y[1])  # targets unchanged
+    np.testing.assert_allclose(
+        result.gp.model.Y_metadata["point_noise"][30:], result.point_noise[1]
+    )
+    assert result.summary()["point_noise"] and not result.summary()["bias_correction"]
+    with pytest.raises(ValueError, match="only for point_noise"):
+        fit_mfgp_corrected(X, Y, events=[None, events], output_transform="identity", max_refits=2)
+    # A predicted rate <= 0 fails instead of being clipped.
+    with pytest.raises(ValueError, match="outside"):
+        fit_mfgp_corrected(
+            X,
+            [Y[0], Y[1] - 0.05],
+            events=[None, events],
+            output_transform="identity",
+            max_refits=2,
+            n_restarts=1,
+            point_noise=True,
+        )

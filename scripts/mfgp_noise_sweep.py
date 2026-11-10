@@ -5,8 +5,9 @@ prints one row each: relative bias of the predicted rate (all / dim / bright hel
 points), 1σ/2σ/3σ coverage of fresh observed fractions (all; 1σ/2σ for dim and bright
 points) and, in log mode, the bias terms
 (pseudocount, Jensen, back-conversion with the learned top-level noise; the
-fit corrects the first two unless --log-bias-max-refits 0). Writes the rows
-to ``--out`` (JSON).
+fit corrects the first two unless --max-refits 0). Writes the rows
+to ``--out`` (JSON); a fit that fails (e.g. predicted rates outside (0, 1) for binomial
+noise) is printed and recorded with ``failed``.
 
     python scripts/mfgp_noise_sweep.py --hits 1,5,50 --transforms identity,log --seeds 0,1
 """
@@ -31,10 +32,13 @@ def main(argv=None):
     parser.add_argument("--seeds", default="0")
     parser.add_argument("--n-restarts", type=int, default=2)
     parser.add_argument(
-        "--log-bias-max-refits", type=int, default=None, help="log mode; default 8, 0 = off"
+        "--max-refits",
+        type=int,
+        default=None,
+        help="default 8 where needed; 0 = log correction off",
     )
     parser.add_argument(
-        "--noise", default="learned", help="observation noise(s), e.g. learned,binomial (log)"
+        "--noise", default="learned", help="observation noise(s), e.g. learned,binomial"
     )
     parser.add_argument("--out", type=Path, default=Path("viz_output/mfgp_noise_sweep.json"))
     args = parser.parse_args(argv)
@@ -51,19 +55,33 @@ def main(argv=None):
         (transform, noise)
         for transform in args.transforms.split(",")
         for noise in args.noise.split(",")
-        if noise == "learned" or transform == "log"
     ]
     for transform, noise in settings:
         for hits in map(float, args.hits.split(",")):
             for seed in map(int, args.seeds.split(",")):
-                row = noise_study(
-                    hits,
-                    output_transform=transform,
-                    n_restarts=args.n_restarts,
-                    log_bias_max_refits=args.log_bias_max_refits if transform == "log" else None,
-                    observation_noise=noise,
-                    seed=seed,
-                )
+                try:
+                    row = noise_study(
+                        hits,
+                        output_transform=transform,
+                        n_restarts=args.n_restarts,
+                        max_refits=args.max_refits
+                        if transform == "log" or noise == "binomial"
+                        else None,
+                        observation_noise=noise,
+                        seed=seed,
+                    )
+                except ValueError as error:  # e.g. predicted rates outside (0, 1)
+                    rows.append(
+                        dict(
+                            output_transform=transform,
+                            observation_noise=noise,
+                            hits=hits,
+                            seed=seed,
+                            failed=str(error),
+                        )
+                    )
+                    print(f"{transform:9} {noise:8} {hits:5g} {'':5} {seed:4d} failed: {error}")
+                    continue
                 rows.append(row)
                 terms = "".join(
                     f" {row[key]:+7.1%}" if key in row else f" {'':>7}"

@@ -10,7 +10,7 @@ Output directory::
 
     training_arrays.npz      X_k, Y_k, events_k, index_k per level k (original units)
     fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged); log mode:
-                             log_offset_k of the bias correction per observed-fraction level,
+                             log_offset_k of the bias correction per observed-fraction level;
                              point_noise_k with observation_noise: binomial
     transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
     levels.json              level settings, voxel counts, data provenance, log_offset_mean
@@ -154,11 +154,11 @@ def run_mfgp(
     and evaluation and is written to compute.json.
     """
     from core.mfgp_pipeline import (
+        count_noise,
         fit_mfgp,
-        fit_mfgp_log_corrected,
-        log_count_noise,
+        fit_mfgp_corrected,
         observed_fraction,
-        resolve_log_bias_refits,
+        resolve_max_refits,
     )
     from core.surrogate_mfgp import load_mfgp, save_mfgp
 
@@ -186,7 +186,7 @@ def run_mfgp(
     compute.lap("data_loading")
     n = len(cfg.levels)
     X_list, Y_list = [fit[f"X_{k}"] for k in range(n)], [fit[f"Y_{k}"] for k in range(n)]
-    max_refits = resolve_log_bias_refits(cfg.log_bias_max_refits, cfg.output_transform)
+    max_refits = resolve_max_refits(cfg.max_refits, cfg.output_transform, cfg.observation_noise)
     counted = [
         arrays[f"events_{k}"].ravel() if level.source == "observed_fraction" else None
         for k, level in enumerate(cfg.levels)
@@ -196,10 +196,11 @@ def run_mfgp(
     try:
         np.random.seed(cfg.seed)
         if max_refits and any(c is not None for c in counted):
-            result = fit_mfgp_log_corrected(
+            result = fit_mfgp_corrected(
                 X_list,
                 Y_list,
                 events=counted,
+                output_transform=cfg.output_transform,
                 max_refits=max_refits,
                 pseudocount=cfg.raw_pseudocount,
                 point_noise=cfg.observation_noise == "binomial",
@@ -247,10 +248,10 @@ def run_mfgp(
         noise=(
             "Learned per-level constant noise"
             if cfg.observation_noise == "learned"
-            else "Learned per-level constant noise plus count noise Var[log y] at the "
+            else "Learned per-level constant noise plus binomial count noise at the "
             "predicted rate per observed-fraction point (fit_arrays point_noise_k)"
         ),
-        log_bias_correction=correction,
+        refits=correction,
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names_flat().tolist(),
         parameters=gp.model.param_array.tolist(),
@@ -270,7 +271,12 @@ def run_mfgp(
         noise = None
         if cfg.observation_noise == "binomial" and cfg.levels[level].source == "observed_fraction":
             rate, _ = gp.predict(batch.theta, fidelity=level)
-            noise = log_count_noise(rate, events, cfg.raw_pseudocount)
+            noise = count_noise(
+                rate,
+                events,
+                output_transform=cfg.output_transform,
+                pseudocount=cfg.raw_pseudocount,
+            )
         extra_noise = {} if noise is None else dict(noise=noise)
         mean, variance = gp.predict(batch.theta, fidelity=level, **extra_noise)
         loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level, **extra_noise)

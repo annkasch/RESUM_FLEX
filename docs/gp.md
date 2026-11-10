@@ -107,21 +107,27 @@ The log of a smoothed fraction does not average to log p: the pseudocount pushes
 exact binomial offset E[log((m+a)/(N+2a))] − log p (`core.mfgp_pipeline.log_target_offset`)
 at the rate p of the previous fit: first fit with uncorrected targets, then refits from the
 previous hyperparameters (one optimizer run each) until no offset changes by more than 0.01,
-at most `log_bias_max_refits` (default 8; 0 = off). `fit_arrays.npz` holds the offsets
-(`log_offset_k`), `levels.json` their mean, `model.json` `log_bias_correction` (refits,
-converged, max_change). The synthetic sweep (`scripts/mfgp_noise_sweep.py`) converges in
+at most `max_refits` (default 8; 0 = off). `fit_arrays.npz` holds the offsets
+(`log_offset_k`), `levels.json` their mean, `model.json` `refits` (refits, converged,
+max_change, bias_correction, point_noise). The synthetic sweep (`scripts/mfgp_noise_sweep.py`) converges in
 2–3 refits at 5 hits per point and in 7–8 at 1 hit.
 
-`observation_noise: binomial` (log mode, needs the correction) gives every observed-fraction
-point its count noise Var[log((m+a)/(N+2a))] at the rate of the previous fit, as a fixed
-variance on top of the learned noise of its level (`LevelPlusPointNoise`), updated in the
-same refits; the first fit has the learned noise only, so the noise never depends on the
-point's own observation. Held-out points scored against an observed-fraction level get the
-same count noise from their N and the predicted rate in the intervals and scores, never in
-the mean; `development_map.npz` has the learned noise only (no N). Per-point noise is
-stored as `point_noise_k` in `fit_arrays.npz`. On the synthetic sweep it keeps the bias of
-`learned` and evens out coverage: at 50 hits 1σ/2σ dim 0.69/0.94 and bright 0.69/0.95,
-against 0.59/0.87 and 0.86/0.99 with `learned`.
+Observation noise: `observation_noise: learned` (default) gives each level one constant
+noise variance. With `binomial`, every observed-fraction point also gets its count noise at
+the rate of the previous fit, as a fixed variance on top of the learned noise of its level
+(`LevelPlusPointNoise`): Var[log((m+a)/(N+2a))] in log mode, p(1 − p)/N in identity mode
+(`core.mfgp_pipeline.count_noise`). It is updated in the same refits (`max_refits`; identity
+mode refits only for it, stopping once no noise standard deviation changes by more than 1 %);
+the first fit has the learned noise only, so a point's noise never depends on its own
+observation. Held-out points scored against an observed-fraction level get the same count
+noise from their N and the predicted rate in the intervals and scores, never in the mean;
+`development_map.npz` has the learned noise only (no N). Per-point noise is stored as
+`point_noise_k` in `fit_arrays.npz`. A predicted rate ≤ 0 or ≥ 1 (possible in identity mode
+for dim points) stops the run: rates are never clipped. Constant noise covers dim and
+bright points unequally (log mode: dim too narrow; identity: bright too narrow); on the
+synthetic sweep at 50 hits, 1σ/2σ coverage of dim/bright points is 0.59/0.87 and 0.86/0.99
+(log) and 0.86/0.99 and 0.56/0.89 (identity) with `learned`, 0.69/0.94 and 0.69/0.95 (log)
+and 0.70/0.96 and 0.64/0.94 (identity) with `binomial`, with unchanged bias.
 
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
 adjusted original-scale targets and offsets, `transformed_training_arrays.npz` records
