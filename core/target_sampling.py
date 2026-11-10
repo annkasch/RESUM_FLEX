@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from schemas.data_models import StandardBatch
+from schemas.data_models import StandardBatch, valid_event_mask
 
 
 class RealTargetSampler:
@@ -22,6 +22,8 @@ class RealTargetSampler:
     by the same non-context draws, so both modes see identical events per seed.
     Context size 0 (context-free models): every drawn event is a target and the
     context is None.
+    target_counts counts how often each event was drawn as a target; coverage()
+    reports the share of events and of positives that were a target at least once.
     """
 
     def __init__(
@@ -51,6 +53,7 @@ class RealTargetSampler:
         self.context_rng = np.random.default_rng(np.random.SeedSequence([seed, 0]))
         self.target_rng = np.random.default_rng(np.random.SeedSequence([seed, 1]))
         self.last_provenance = []
+        self.target_counts = np.zeros(batch.labels.shape, dtype=np.int32)  # [B, N]
 
     def next(self):
         b, crng, trng = self.batch, self.context_rng, self.target_rng
@@ -87,6 +90,7 @@ class RealTargetSampler:
                 weight = np.concatenate([np.full(npos, p / q), np.full(nneg, (1 - p) / (1 - q))])
                 permutation = trng.permutation(nt)
                 target, weight = target[permutation], weight[permutation]
+            np.add.at(self.target_counts[trial], target, 1)
             contexts.append(context)
             targets.append(target)
             weights.append(weight)
@@ -105,3 +109,17 @@ class RealTargetSampler:
 
         context = gather(contexts) if nc else None
         return context, gather(targets), np.asarray(weights)
+
+    def coverage(self) -> dict:
+        """Share of valid events (and positives) drawn as a target at least once."""
+        b = self.batch
+        valid = valid_event_mask(b.event_counts, b.labels.shape)  # [B, N]
+        counts = self.target_counts[valid]
+        positive = b.labels[valid] == 1
+        seen = counts > 0
+        return dict(
+            target_event_coverage=float(seen.mean()),
+            target_positive_coverage=float(seen[positive].mean()) if positive.any() else None,
+            target_count_median=float(np.median(counts)),
+            target_count_max=int(counts.max()),
+        )

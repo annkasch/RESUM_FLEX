@@ -289,6 +289,8 @@ def _fit_stage(
             # Scored target slots per training event; mixup slots are synthetic events.
             target_passes=events / training_events,
         )
+        if not mixup:
+            audit.update(sampler.coverage())
     model.metadata["sampling_audit"] = audit
     if destination:
         model.save(destination / "final", metadata={"step": last_step})

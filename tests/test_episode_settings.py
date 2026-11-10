@@ -266,6 +266,8 @@ def test_training_with_n_passes_and_fine_tuning_stage(tmp_path):
     assert audit["n_steps"] == 6 and report.history[-1]["step"] == 6
     assert audit["requested_passes"] == 2
     assert audit["target_passes"] == pytest.approx(6 * 45 / 120)
+    assert 0 < audit["target_event_coverage"] <= 1
+    assert audit["target_count_max"] >= 1
     staged = NeuralTraining.model_validate({**settings.model_dump(), "fine_tuning": {"n_steps": 3}})
     _, fine = fine_tuning_stages(staged, "cnp")
     assert fine.training.n_steps == 3 and fine.training.n_passes is None

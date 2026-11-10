@@ -98,7 +98,12 @@ training:
   context 16-375, `n_passes: 10` -> 3380 steps.
 - The sampling audit records `targets` (`all_events` for context-free models), the
   resolved `context_range` (`[0, 0]` without context), `n_steps`,
-  `requested_passes` and the realized `target_passes`.
+  `requested_passes` and the realized `target_passes`. Without mixup it also records
+  the coverage: `target_event_coverage` and `target_positive_coverage` (share of training
+  events and of positives scored as a target at least once; `null` without positives) and
+  `target_count_median`/`_max` (target draws per event). With uniform targets about
+  `exp(-target_passes)` of the events are never drawn; `positive_quota` repeats positives
+  and can leave negatives unseen.
 
 Validation and reported train/validation metrics use real binary events. The
 sampling audit records soft-label mass, mean target label, and soft-label event
