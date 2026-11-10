@@ -89,3 +89,73 @@ def test_sweep_script_writes_rows(tmp_path):
     )
     (row,) = json.loads(out.read_text())
     assert row["output_transform"] == "log" and row["hits"] == 50
+
+
+def test_log_target_offset_is_pseudocount_plus_jensen():
+    pytest.importorskip("GPy")
+    from core.mfgp_bias import log_target_terms
+    from core.mfgp_pipeline import log_target_offset
+
+    p, n = np.array([0.001, 0.01, 0.3]), np.array([1000.0, 500.0, 50.0])
+    terms = log_target_terms(p, n, 0.5)
+    np.testing.assert_allclose(
+        log_target_offset(p, n, 0.5),
+        np.log1p(terms["pseudocount_shift"]) + np.log1p(terms["jensen_shift"]),
+    )
+
+
+def _two_levels():
+    rng = np.random.default_rng(np.random.SeedSequence([5, 0]))
+    x_low, x_top = rng.uniform(size=(30, 1)), rng.uniform(size=(12, 1))
+    p_top = 0.02 * np.exp(np.sin(3 * x_top[:, 0]))
+    events = np.full(12, 200.0)
+    fraction = rng.binomial(200, p_top) / 200
+    low = 0.02 * np.exp(np.sin(3 * x_low))
+    top = fit_targets(fraction, events, source="observed_fraction", output_transform="log")
+    return [x_low, x_top], [low, top[:, None]], events
+
+
+def test_log_corrected_fit_offsets_and_stopping():
+    pytest.importorskip("GPy")
+    from core.mfgp_pipeline import fit_mfgp, fit_mfgp_log_corrected, log_target_offset
+
+    X, Y, events = _two_levels()
+    np.random.seed(0)
+    gp, offsets, info = fit_mfgp_log_corrected(
+        X, Y, events=[None, events], max_refits=8, pseudocount=0.5, n_restarts=1
+    )
+    assert offsets[0] is None and offsets[1].shape == (12,)
+    assert 1 <= info["refits"] <= 8 and info["converged"] == (info["max_change"] <= 0.01)
+    np.testing.assert_allclose(gp.model.Y[30:, 0], np.log(Y[1][:, 0]) - offsets[1])
+    if info["converged"]:  # offsets are (to tolerance) those of the final rate
+        rate, _ = gp.predict(X[1], fidelity=1)
+        np.testing.assert_allclose(offsets[1], log_target_offset(rate, events, 0.5), atol=0.02)
+    np.random.seed(0)
+    plain, none, info0 = fit_mfgp_log_corrected(
+        X, Y, events=[None, events], max_refits=0, pseudocount=0.5, n_restarts=1
+    )
+    assert none == [None, None] and info0["refits"] == 0
+    np.random.seed(0)
+    reference = fit_mfgp(X, Y, output_transform="log", n_restarts=1)
+    np.testing.assert_allclose(plain.model.param_array, reference.model.param_array)
+    with pytest.raises(ValueError, match="one entry"):
+        fit_mfgp_log_corrected(X, Y, events=[events], max_refits=1, pseudocount=0.5)
+
+
+def test_log_bias_refits_config():
+    from core.mfgp_pipeline import resolve_log_bias_refits
+    from schemas.surrogates import MFGPStageConfig
+
+    levels = [
+        {"source": "model_mean", "partition": "train", "fidelity": "lf"},
+        {"source": "observed_fraction", "partition": "train", "fidelity": "hf"},
+    ]
+    assert MFGPStageConfig(levels=levels).log_bias_max_refits is None
+    MFGPStageConfig(levels=levels, output_transform="log", log_bias_max_refits=0)
+    MFGPStageConfig(levels=levels, log_bias_max_refits=0)
+    with pytest.raises(ValueError, match="log only"):
+        MFGPStageConfig(levels=levels, log_bias_max_refits=3)
+    assert resolve_log_bias_refits(None, "log") == 8
+    assert resolve_log_bias_refits(None, "identity") == 0
+    with pytest.raises(ValueError):
+        resolve_log_bias_refits(2, "identity")

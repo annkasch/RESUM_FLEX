@@ -9,9 +9,10 @@ evaluation partitions are scored afterwards.
 Output directory::
 
     training_arrays.npz      X_k, Y_k, events_k, index_k per level k (original units)
-    fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged)
-    transformed_training_arrays.npz   exact GP targets (log of fit_arrays in log mode)
-    levels.json              level settings, voxel counts and data provenance
+    fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged); log mode:
+                             log_offset_k of the bias correction per observed-fraction level
+    transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
+    levels.json              level settings, voxel counts, data provenance, log_offset_mean
     model.pkl, model.json    fitted GP and its metadata
     evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals, ...
     metrics.json             one row per evaluation set
@@ -151,7 +152,12 @@ def run_mfgp(
     ``compute`` (core.compute.ComputeLog, new by default) gets the stages data_loading, fit
     and evaluation and is written to compute.json.
     """
-    from core.mfgp_pipeline import fit_mfgp, observed_fraction
+    from core.mfgp_pipeline import (
+        fit_mfgp,
+        fit_mfgp_log_corrected,
+        observed_fraction,
+        resolve_log_bias_refits,
+    )
     from core.surrogate_mfgp import load_mfgp, save_mfgp
 
     compute = ComputeLog() if compute is None else compute
@@ -175,29 +181,52 @@ def run_mfgp(
             record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
         records.append(record)
     np.savez_compressed(directory / "training_arrays.npz", **arrays)
-    np.savez_compressed(directory / "fit_arrays.npz", **fit)
-    np.savez_compressed(
-        directory / "transformed_training_arrays.npz",
-        **{
-            key: np.log(value) if cfg.output_transform == "log" and key.startswith("Y_") else value
-            for key, value in fit.items()
-        },
-    )
-    (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
     compute.lap("data_loading")
     n = len(cfg.levels)
+    X_list, Y_list = [fit[f"X_{k}"] for k in range(n)], [fit[f"Y_{k}"] for k in range(n)]
+    max_refits = resolve_log_bias_refits(cfg.log_bias_max_refits, cfg.output_transform)
+    counted = [
+        arrays[f"events_{k}"].ravel() if level.source == "observed_fraction" else None
+        for k, level in enumerate(cfg.levels)
+    ]
+    correction, offsets = None, [None] * n
     state = np.random.get_state()  # GPy restarts draw from the global numpy stream
     try:
         np.random.seed(cfg.seed)
-        gp = fit_mfgp(
-            [fit[f"X_{k}"] for k in range(n)],
-            [fit[f"Y_{k}"] for k in range(n)],
-            kernel=cfg.kernel,
-            n_restarts=cfg.n_restarts,
-            output_transform=cfg.output_transform,
-        )
+        if max_refits and any(c is not None for c in counted):
+            gp, offsets, correction = fit_mfgp_log_corrected(
+                X_list,
+                Y_list,
+                events=counted,
+                max_refits=max_refits,
+                pseudocount=cfg.raw_pseudocount,
+                kernel=cfg.kernel,
+                n_restarts=cfg.n_restarts,
+            )
+        else:
+            gp = fit_mfgp(
+                X_list,
+                Y_list,
+                kernel=cfg.kernel,
+                n_restarts=cfg.n_restarts,
+                output_transform=cfg.output_transform,
+            )
     finally:
         np.random.set_state(state)
+    for k, offset in enumerate(offsets):
+        if offset is not None:
+            fit[f"log_offset_{k}"] = offset
+            records[k]["log_offset_mean"] = float(offset.mean())
+    np.savez_compressed(directory / "fit_arrays.npz", **fit)
+    transformed = {}
+    for key, value in fit.items():
+        if cfg.output_transform == "log" and key.startswith("Y_"):
+            offset = offsets[int(key[2:])]
+            value = np.log(value) - (0 if offset is None else offset[:, None])
+        if not key.startswith("log_offset_"):
+            transformed[key] = value
+    np.savez_compressed(directory / "transformed_training_arrays.npz", **transformed)
+    (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
     save_mfgp(directory / "model.pkl", gp)
     restored = load_mfgp(directory / "model.pkl")
     metadata = dict(
@@ -208,6 +237,7 @@ def run_mfgp(
         mean="Rate; log mode: exp(mu + latent variance / 2), observation noise excluded",
         variance="Original-scale predictive variance; log mode: lognormal, noise included",
         noise="Learned per-level constant noise",
+        log_bias_correction=correction,
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names_flat().tolist(),
         parameters=gp.model.param_array.tolist(),

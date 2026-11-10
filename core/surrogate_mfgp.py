@@ -89,12 +89,15 @@ class MultiFidelityGP:
         *,
         n_restarts: int = 5,
         verbose: bool = False,
+        initial_parameters: np.ndarray | None = None,
     ) -> MultiFidelityGP:
         """Fit the GP on per-fidelity ``(X, Y)`` arrays.
 
         ``X_list[i]`` has shape ``(n_i, dim_theta)`` and ``Y_list[i]``
         has shape ``(n_i, 1)``. ``i`` indexes fidelity from low (0) to
-        high (``n_fidelities - 1``).
+        high (``n_fidelities - 1``). ``initial_parameters``: GPy parameter array
+        (``model.param_array`` of a GP with the same layout) the first optimizer run
+        starts from; further restarts are random.
         """
         if len(X_list) != self.n_fidelities or len(Y_list) != self.n_fidelities:
             raise ValueError(
@@ -117,6 +120,12 @@ class MultiFidelityGP:
             self._build_kernel(),
             n_fidelities=self.n_fidelities,
         )
+        if initial_parameters is not None:
+            initial_parameters = np.asarray(initial_parameters, dtype=float)
+            if initial_parameters.shape != model.param_array.shape:
+                raise ValueError("initial_parameters does not match the GP's parameters")
+            model.param_array[:] = initial_parameters
+            model.parameters_changed()
         model.optimize_restarts(num_restarts=n_restarts, verbose=verbose)
         self._model = model
         return self

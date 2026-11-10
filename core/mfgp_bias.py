@@ -6,7 +6,9 @@ The low level is a model mean ``p(θ) · exp(small smooth distortion)`` at many 
 ``m ~ Binomial(N, p)`` at fewer points, ``N`` chosen for a given mean number of hits.
 The GP is fitted with the same target preparation as the MFGP stage
 (:func:`core.mfgp_pipeline.fit_targets`) and scored on held-out points against the true
-rate (bias) and against fresh observed fractions (coverage).
+rate (bias) and against fresh observed fractions (coverage). In log mode the top-level
+target gets the stage's bias correction (fit_mfgp_log_corrected) unless
+``log_bias_max_refits=0``.
 
 :func:`log_target_terms` gives the exact expectations behind the log-mode bias, per point:
 
@@ -21,9 +23,14 @@ output transforms.
 from __future__ import annotations
 
 import numpy as np
-from scipy.stats import binom
 
-from core.mfgp_pipeline import fit_mfgp, fit_targets
+from core.mfgp_pipeline import (
+    binomial_log_moments,
+    fit_mfgp,
+    fit_mfgp_log_corrected,
+    fit_targets,
+    resolve_log_bias_refits,
+)
 
 
 def log_target_terms(probability, events, pseudocount):
@@ -33,21 +40,8 @@ def log_target_terms(probability, events, pseudocount):
     """
     p = np.asarray(probability, dtype=float)
     n = np.asarray(events, dtype=float)
-    if p.shape != n.shape or p.ndim != 1:
-        raise ValueError("probability and events must be matching vectors")
-    if not ((p > 0) & (p < 1)).all() or not (n >= 1).all() or not pseudocount > 0:
-        raise ValueError("Need 0 < p < 1, N >= 1 and a positive pseudocount")
-    a = pseudocount
-    mean_log, var_log = np.empty_like(p), np.empty_like(p)
-    for i, (pi, ni) in enumerate(zip(p, n, strict=True)):
-        upper = int(min(ni, binom.ppf(1 - 1e-13, ni, pi) + 1))
-        m = np.arange(upper + 1)
-        weight = binom.pmf(m, ni, pi)
-        weight /= weight.sum()  # mass beyond `upper` is < 1e-13
-        log_y = np.log((m + a) / (ni + 2 * a))
-        mean_log[i] = weight @ log_y
-        var_log[i] = weight @ (log_y - mean_log[i]) ** 2
-    mean_y = (n * p + a) / (n + 2 * a)
+    mean_log, var_log = binomial_log_moments(p, n, pseudocount)
+    mean_y = (n * p + pseudocount) / (n + 2 * pseudocount)
     return dict(
         pseudocount_shift=mean_y / p - 1,
         jensen_shift=np.exp(mean_log - np.log(mean_y)) - 1,
@@ -77,13 +71,17 @@ def noise_study(
     pseudocount: float = 0.5,
     kernel: str = "rbf",
     n_restarts: int = 2,
+    log_bias_max_refits: int | None = None,
     seed: int = 0,
 ) -> dict:
     """Fit one two-level MFGP with ``hits`` mean hits per top-level point; return scores.
 
     Relative biases are ratios of means minus one over the held-out points (all, dim =
     below the median true rate, bright = above), as in metrics.json mean_bias/mean_observed.
+    ``log_bias_max_refits``: largest number of refits of the log-target bias correction as
+    in the MFGP stage (None: 8 in log mode, 0 in identity mode; identity allows only 0).
     """
+    max_refits = resolve_log_bias_refits(log_bias_max_refits, output_transform)
     if hits <= 0:
         raise ValueError("hits must be positive")
 
@@ -111,13 +109,26 @@ def noise_study(
     state = np.random.get_state()  # GPy restarts draw from the global numpy stream
     try:
         np.random.seed(seed)
-        gp = fit_mfgp(
-            [theta_low, theta_top],
-            [t[:, None] for t in targets],
-            kernel=kernel,
-            n_restarts=n_restarts,
-            output_transform=output_transform,
-        )
+        X_list, Y_list = [theta_low, theta_top], [t[:, None] for t in targets]
+        correction = None
+        if max_refits:
+            gp, _, correction = fit_mfgp_log_corrected(
+                X_list,
+                Y_list,
+                events=[None, n_top_events],
+                max_refits=max_refits,
+                pseudocount=pseudocount,
+                kernel=kernel,
+                n_restarts=n_restarts,
+            )
+        else:
+            gp = fit_mfgp(
+                X_list,
+                Y_list,
+                kernel=kernel,
+                n_restarts=n_restarts,
+                output_transform=output_transform,
+            )
     finally:
         np.random.set_state(state)
     mean, _ = gp.predict(theta_test, fidelity=1)
@@ -134,6 +145,7 @@ def noise_study(
         events=events,
         mean_hits_dim=float(events * p_test[dim].mean()),
         seed=seed,
+        log_bias_correction=correction,
         rate_bias=bias(np.ones(n_test, dtype=bool)),
         rate_bias_dim=bias(dim),
         rate_bias_bright=bias(~dim),

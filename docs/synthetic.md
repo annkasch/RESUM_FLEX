@@ -49,6 +49,9 @@ Constant learned noise, 5 seeds (2026-11-09): identity mode has no systematic bi
 1 / 5 / 50 hits, about pseudocount + Jensen + back-conversion (+16 − 12 + 18 % at 5 hits).
 With the rate mean exp(μ + v_f/2) (noise excluded, same day): log mode ≈ +30 % / +2.5 % /
 +1 % at 1 / 5 / 50 hits, the remaining pseudocount + Jensen terms; coverage unchanged.
+With the log-target bias correction as well (`log_bias_max_refits`, default): ≈ +5 % /
++0.1 % / +1 % (dim points +1.5 % / −1 % / +0.5 %); 1σ coverage at 1 hit stays ≈ 0.3, as
+positive lognormal bounds can't cover the many zero observed fractions there.
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 

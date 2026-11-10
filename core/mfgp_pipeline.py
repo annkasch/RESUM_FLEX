@@ -137,6 +137,118 @@ def fit_targets(
     return np.maximum(values, floor)
 
 
+def binomial_log_moments(
+    probability: np.ndarray, events: np.ndarray, pseudocount: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Exact mean and variance [n] of log((m + a)/(N + 2a)) for m ~ Binomial(N, p).
+
+    probability, events: [n], 0 < p < 1, N >= 1. Sums the pmf over the central range
+    holding all but < 1e-12 of the mass.
+    """
+    from scipy.stats import binom
+
+    p = np.asarray(probability, dtype=float)
+    n = np.asarray(events, dtype=float)
+    if p.shape != n.shape or p.ndim != 1:
+        raise ValueError("probability and events must be matching vectors")
+    if not ((p > 0) & (p < 1)).all() or not (n >= 1).all() or not pseudocount > 0:
+        raise ValueError("Need 0 < p < 1, N >= 1 and a positive pseudocount")
+    mean, variance = np.empty_like(p), np.empty_like(p)
+    for i, (pi, ni) in enumerate(zip(p, n, strict=True)):
+        low = int(max(0, binom.ppf(1e-13, ni, pi) - 1))
+        high = int(min(ni, binom.ppf(1 - 1e-13, ni, pi) + 1))
+        m = np.arange(low, high + 1)
+        weight = binom.pmf(m, ni, pi)
+        weight /= weight.sum()
+        log_y = np.log((m + pseudocount) / (ni + 2 * pseudocount))
+        mean[i] = weight @ log_y
+        variance[i] = weight @ (log_y - mean[i]) ** 2
+    return mean, variance
+
+
+def log_target_offset(
+    probability: np.ndarray, events: np.ndarray, pseudocount: float
+) -> np.ndarray:
+    """E[log((m + a)/(N + 2a))] − log p [n]: pseudocount shift plus Jensen shift."""
+    mean, _ = binomial_log_moments(probability, events, pseudocount)
+    return mean - np.log(np.asarray(probability, dtype=float))
+
+
+LOG_BIAS_TOLERANCE = 0.01  # largest change of an offset (log units) at convergence
+
+
+def resolve_log_bias_refits(max_refits, output_transform):
+    """Largest number of bias-correction refits: None -> 8 (log) or 0 (identity)."""
+    if max_refits is None:
+        return 8 if output_transform == "log" else 0
+    if max_refits < 0:
+        raise ValueError("log_bias_max_refits must be nonnegative")
+    if max_refits and output_transform != "log":
+        raise ValueError("log_bias_max_refits applies to log mode only")
+    return max_refits
+
+
+def fit_mfgp_log_corrected(
+    X_list: list[np.ndarray],
+    Y_list: list[np.ndarray],
+    *,
+    events: list[np.ndarray | None],
+    max_refits: int,
+    pseudocount: float,
+    n_restarts: int = 5,
+    **fit_kwargs,
+) -> tuple[MultiFidelityGP, list[np.ndarray | None], dict]:
+    """Log-mode fit whose observed-fraction targets average to log p (bias correction).
+
+    Y_list[k]: [n_k, 1] smoothed targets in original units (fit_targets); events[k]: [n_k]
+    event counts of an observed-fraction level, None for other levels. After a first fit
+    (``n_restarts``), each refit divides an observed-fraction target by exp(offset), with
+    the offset E[log y] − log p (log_target_offset) at the rate p the previous fit predicts
+    for that level, and starts from the previous hyperparameters (one optimizer run).
+    Refits stop when no offset changes by more than LOG_BIAS_TOLERANCE, or after
+    ``max_refits``. Returns the GP, the last offsets [n_k] per level (None: uncorrected)
+    and dict(refits, converged, max_change). A predicted rate outside (0, 1) raises: it
+    is never clipped.
+    """
+    if len(events) != len(Y_list):
+        raise ValueError("events needs one entry (or None) per level")
+    if max_refits < 0:
+        raise ValueError("max_refits must be nonnegative")
+    gp = fit_mfgp(X_list, Y_list, output_transform="log", n_restarts=n_restarts, **fit_kwargs)
+    offsets: list[np.ndarray | None] = [None] * len(Y_list)
+    previous = [
+        np.zeros(len(y)) if n is not None else None for y, n in zip(Y_list, events, strict=True)
+    ]
+    refits, change = 0, float("inf")
+    while refits < max_refits and change > LOG_BIAS_TOLERANCE:
+        targets, change = list(Y_list), 0.0
+        for k, n in enumerate(events):
+            if n is None:
+                continue
+            rate, _ = gp.predict(X_list[k], fidelity=k)
+            invalid = int(((rate <= 0) | (rate >= 1)).sum())
+            if invalid:
+                raise ValueError(
+                    f"Level {k}: {invalid} predicted rates outside (0, 1); "
+                    "can't correct the log target"
+                )
+            offsets[k] = log_target_offset(rate, np.asarray(n, dtype=float), pseudocount)
+            change = max(change, float(np.abs(offsets[k] - previous[k]).max()))
+            previous[k] = offsets[k]
+            targets[k] = Y_list[k] * np.exp(-offsets[k])[:, None]
+        gp = fit_mfgp(
+            X_list,
+            targets,
+            output_transform="log",
+            n_restarts=1,
+            initial_parameters=gp.model.param_array.copy(),
+            **fit_kwargs,
+        )
+        refits += 1
+    info = dict(refits=refits, converged=change <= LOG_BIAS_TOLERANCE, max_change=change)
+    return gp, offsets, info
+
+
 def fit_mfgp(
     X_list: list[np.ndarray],
     Y_list: list[np.ndarray],
@@ -145,6 +257,7 @@ def fit_mfgp(
     n_restarts: int = 5,
     verbose: bool = False,
     output_transform: str = "identity",
+    initial_parameters: np.ndarray | None = None,
 ) -> MultiFidelityGP:
     """Fit a linear multi-fidelity GP with one level per (X, Y) pair, lowest fidelity first.
 
@@ -158,7 +271,13 @@ def fit_mfgp(
         dim_theta=X_list[0].shape[1],
         kernel=kernel,
         output_transform=output_transform,
-    ).fit(X_list, Y_list, n_restarts=n_restarts, verbose=verbose)
+    ).fit(
+        X_list,
+        Y_list,
+        n_restarts=n_restarts,
+        verbose=verbose,
+        initial_parameters=initial_parameters,
+    )
 
 
 def evaluate_mfgp_coverage_from_batch(

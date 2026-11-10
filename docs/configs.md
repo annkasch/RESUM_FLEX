@@ -138,6 +138,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `raw_pseudocount` | Log mode: observed fractions become (m + a)/(N + 2a) (0.5). |
 | `coverage_ylim` | Fixed y range `[low, high]` of the coverage plots (observed fraction); unset = from the data. |
 | `cnp_log_floor` | Log mode: floor for model means (1e-12). |
+| `log_bias_max_refits` | Log mode: largest number of refits of the log-target bias correction, stopping once the offsets change by < 0.01 (None = 8; 0 = off; identity mode: only 0). |
 | `kernel` | `rbf` or `matern52` (`rbf`). |
 | `n_restarts` | Hyperparameter optimizer restarts (5). |
 | `seed` | Seed of fits, voxel subsets and context splits (0). |

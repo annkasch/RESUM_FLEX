@@ -507,6 +507,10 @@ class MFGPStageConfig(StrictConfigModel):
     # Log mode: observed fractions become (m + a) / (N + 2a); model means are floored.
     raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)
+    # Log mode: refit with observed-fraction targets corrected so they average to log p
+    # (pseudocount + Jensen offset at the predicted rate) until the offsets change by
+    # < 0.01, at most this often. None: 8 in log mode; 0 turns it off. Identity: only 0.
+    log_bias_max_refits: int | None = Field(default=None, ge=0)
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
@@ -527,6 +531,8 @@ class MFGPStageConfig(StrictConfigModel):
 
     @model_validator(mode="after")
     def consistent_levels(self):
+        if self.log_bias_max_refits and self.output_transform != "log":
+            raise ValueError("log_bias_max_refits applies to output_transform: log only")
         limits = {}
         for level in self.levels:
             if level.partition in TEST_PARTITIONS:

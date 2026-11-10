@@ -3,7 +3,8 @@
 Runs :func:`core.mfgp_bias.noise_study` for every (output transform, hits, seed) and
 prints one row each: relative bias of the predicted rate (all / dim / bright held-out
 points), 1σ/2σ/3σ coverage of fresh observed fractions and, in log mode, the bias terms
-(pseudocount, Jensen, back-conversion with the learned top-level noise). Writes the rows
+(pseudocount, Jensen, back-conversion with the learned top-level noise; the
+fit corrects the first two unless --log-bias-max-refits 0). Writes the rows
 to ``--out`` (JSON).
 
     python scripts/mfgp_noise_sweep.py --hits 1,5,50 --transforms identity,log --seeds 0,1
@@ -28,6 +29,9 @@ def main(argv=None):
     parser.add_argument("--transforms", default="identity,log")
     parser.add_argument("--seeds", default="0")
     parser.add_argument("--n-restarts", type=int, default=2)
+    parser.add_argument(
+        "--log-bias-max-refits", type=int, default=None, help="log mode; default 8, 0 = off"
+    )
     parser.add_argument("--out", type=Path, default=Path("viz_output/mfgp_noise_sweep.json"))
     args = parser.parse_args(argv)
     warnings.filterwarnings("ignore", module=r"GPy.*|paramz.*")
@@ -42,7 +46,11 @@ def main(argv=None):
         for hits in map(float, args.hits.split(",")):
             for seed in map(int, args.seeds.split(",")):
                 row = noise_study(
-                    hits, output_transform=transform, n_restarts=args.n_restarts, seed=seed
+                    hits,
+                    output_transform=transform,
+                    n_restarts=args.n_restarts,
+                    log_bias_max_refits=args.log_bias_max_refits if transform == "log" else None,
+                    seed=seed,
                 )
                 rows.append(row)
                 terms = "".join(

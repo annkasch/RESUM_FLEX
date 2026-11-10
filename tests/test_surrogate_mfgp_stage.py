@@ -135,6 +135,8 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         # Observed fractions use every event of the voxel.
         np.testing.assert_allclose(data["events_2"], 24)
 
+    if transform == "identity":
+        assert meta["log_bias_correction"] is None
     if transform == "log":
         with (
             np.load(out / "mfgp/training_arrays.npz") as raw,
@@ -143,6 +145,15 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             assert raw["Y_2"][0, 0] == 0
             assert fit["Y_2"][0, 0] > 0
             np.testing.assert_allclose(fit["Y_2"], (raw["Y_2"] * 24 + 0.5) / 25)
+            # Bias correction on the observed-fraction level only; GP targets include it.
+            assert "log_offset_2" in fit and "log_offset_0" not in fit
+            with np.load(out / "mfgp/transformed_training_arrays.npz") as exact:
+                np.testing.assert_allclose(
+                    exact["Y_2"], np.log(fit["Y_2"]) - fit["log_offset_2"][:, None]
+                )
+                np.testing.assert_allclose(exact["Y_0"], np.log(fit["Y_0"]))
+        assert meta["log_bias_correction"]["refits"] >= 1
+        assert levels[2]["log_offset_mean"] > 0  # pseudocount dominates at ~1 hit
         with np.load(out / f"mfgp/evaluation_{hf}.npz") as arrays:
             assert (arrays["lower_3"] > 0).all()
             assert (arrays["upper_3"] >= arrays["lower_3"]).all()

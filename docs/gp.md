@@ -101,9 +101,20 @@ event count. This Beta(1/2,1/2) posterior-mean
 smoothing applies to all HF raw training fractions, including zeros. CNP means
 are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
 
+The log of a smoothed fraction does not average to log p: the pseudocount pushes it up
+(≈ a/(Np)), the log of a noisy value pulls it down (Jensen), ≈ +16 % and −12 % at 5 hits,
++78 % and −18 % at 1 hit. Log mode therefore corrects every observed-fraction target by the
+exact binomial offset E[log((m+a)/(N+2a))] − log p (`core.mfgp_pipeline.log_target_offset`)
+at the rate p of the previous fit: first fit with uncorrected targets, then refits from the
+previous hyperparameters (one optimizer run each) until no offset changes by more than 0.01,
+at most `log_bias_max_refits` (default 8; 0 = off). `fit_arrays.npz` holds the offsets
+(`log_offset_k`), `levels.json` their mean, `model.json` `log_bias_correction` (refits,
+converged, max_change). The synthetic sweep (`scripts/mfgp_noise_sweep.py`) converges in
+2–3 refits at 5 hits per point and in 7–8 at 1 hit.
+
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
-adjusted original-scale targets, `transformed_training_arrays.npz` records
-exact logged targets, and `levels.json` records per model-mean level how many values hit
+adjusted original-scale targets and offsets, `transformed_training_arrays.npz` records
+the exact GP targets (log of the smoothed value minus the offset), and `levels.json` records per model-mean level how many values hit
 the floor (`log_floored`).
 `MultiFidelityGP.predict` returns the rate mean exp(μ + v_f/2), with v_f the latent GP
 variance only, and the lognormal variance of an observation (noise included). The learned
