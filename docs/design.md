@@ -38,7 +38,8 @@ core/           event models (bernoulli_*.py, surrogate_bdt.py), encoder (networ
                 GPs (surrogate_mfgp.py, binomial_gp.py), optimizer.py, legacy training.py
 data/           synthetic data (pseudo_generator.py) and batch sources
 viz/            plotting: coverage, z-scores, run summaries, projections
-scripts/        smoke.py (CLI pipeline check), phase{1..5}_*.py (synthetic demonstrations)
+scripts/        smoke.py (CLI pipeline check), phase{1..5}_*.py (synthetic demonstrations),
+                mfgp_noise_sweep.py (MFGP rate bias vs. hits per point, core/mfgp_bias.py)
 notebooks/      minimal example, paper reproduction
 tests/          pytest, synthetic data only
 pyproject.toml + uv.lock   Python deps;  pixi.toml + pixi.lock   uv and tasks only
@@ -57,7 +58,8 @@ Module docstrings describe each file.
 | Metrics (count NLL, coverage, CRPS) | `core/surrogates/evaluation.py`, `core/gp_metrics.py` |
 | Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py`, `residual_stage.py`, `within_point_stage.py`, `finished_run.py` (finished runs) |
 | Bayesian last layer | `core/last_layer.py` (numpy math), `core/surrogates/last_layer.py` (torch side) |
-| GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` |
+| GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` (`fit_targets`: GP targets per level) |
+| MFGP rate bias on synthetic counts | `core/mfgp_bias.py`, `scripts/mfgp_noise_sweep.py` |
 | Binomial GP | `core/surrogates/binomial_stage.py`, `core/binomial_gp.py` |
 | Stream training | `core/event_stream.py`, `core/surrogates/stream_training.py` |
 | Data access for applications | `core/surrogates/datasets.py` (DatasetProvider protocol) |

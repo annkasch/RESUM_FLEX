@@ -62,6 +62,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/python -m core.surrogates mfgp|binomial|stream|residual|within_point CONFIG.yaml
 .venv/bin/python scripts/smoke.py    # every CLI stage on tiny synthetic data, ~30 s
 .venv/bin/python scripts/phase1_plot_ground_truth.py   # cheap synthetic sanity check
+.venv/bin/python scripts/mfgp_noise_sweep.py           # MFGP rate bias vs. hits per point, ~1 min
 ```
 After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smoke`, skip with
 `-m 'not smoke'`).
@@ -72,7 +73,8 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
   entry point `experiment.run_experiment`, data access via `datasets.py` (DatasetProvider).
 - `core/`: models and math; `data/`: synthetic data; `viz/`: plotting
   (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
-- `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`, `notebooks/`,
+- `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`,
+  `scripts/mfgp_noise_sweep.py` (MFGP bias on synthetic counts, `core/mfgp_bias.py`), `notebooks/`,
   `tests/` (synthetic data only).
   Module docstrings and `docs/design.md` describe the files.
 

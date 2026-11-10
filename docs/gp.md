@@ -101,14 +101,50 @@ event count. This Beta(1/2,1/2) posterior-mean
 smoothing applies to all HF raw training fractions, including zeros. CNP means
 are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
 
+The log of a smoothed fraction does not average to log p: the pseudocount pushes it up
+(≈ a/(Np)), the log of a noisy value pulls it down (Jensen), ≈ +16 % and −12 % at 5 hits,
++78 % and −18 % at 1 hit. Log mode therefore corrects every observed-fraction target by the
+exact binomial offset E[log((m+a)/(N+2a))] − log p (`core.mfgp_pipeline.log_target_offset`)
+at the rate p of the previous fit: first fit with uncorrected targets, then refits from the
+previous hyperparameters (one optimizer run each) until no offset changes by more than 0.01,
+at most `max_refits` (default 8; 0 = off). `fit_arrays.npz` holds the offsets
+(`log_offset_k`), `levels.json` their mean, `model.json` `refits` (refits, converged,
+max_change, bias_correction, point_noise). The synthetic sweep (`scripts/mfgp_noise_sweep.py`) converges in
+2–3 refits at 5 hits per point and in 7–8 at 1 hit.
+
+Observation noise: `observation_noise: learned` (default) gives each level one constant
+noise variance. With `binomial`, every observed-fraction point also gets its count noise at
+the rate of the previous fit, as a fixed variance on top of the learned noise of its level
+(`LevelPlusPointNoise`): Var[log((m+a)/(N+2a))] in log mode, p(1 − p)/N in identity mode
+(`core.mfgp_pipeline.count_noise`). It is updated in the same refits (`max_refits`; identity
+mode refits only for it, stopping once no noise standard deviation changes by more than 1 %);
+the first fit has the learned noise only, so a point's noise never depends on its own
+observation. Held-out points scored against an observed-fraction level get the same count
+noise from their N and the predicted rate in the intervals and scores, never in the mean;
+`development_map.npz` has the learned noise only (no N). Per-point noise is stored as
+`point_noise_k` in `fit_arrays.npz`. A point whose predicted rate is ≤ 0 or ≥ 1 (possible in
+identity mode for dim points) gets no binomial noise and, in log mode, no offset: only the
+learned level noise, never a clipped rate. The count is recorded per level in `levels.json`
+and `model.json` `refits` (`rates_outside_unit_interval`, last refit) and per evaluation set
+in `metrics.json`. Constant noise covers dim and
+bright points unequally (log mode: dim too narrow; identity: bright too narrow); on the
+synthetic sweep at 50 hits, 1σ/2σ coverage of dim/bright points is 0.59/0.87 and 0.86/0.99
+(log) and 0.86/0.99 and 0.56/0.89 (identity) with `learned`, 0.69/0.94 and 0.69/0.95 (log)
+and 0.70/0.96 and 0.64/0.94 (identity) with `binomial`, with unchanged bias.
+
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
-adjusted original-scale targets, `transformed_training_arrays.npz` records
-exact logged targets, and `levels.json` records per model-mean level how many values hit
+adjusted original-scale targets and offsets, `transformed_training_arrays.npz` records
+the exact GP targets (log of the smoothed value minus the offset), and `levels.json` records per model-mean level how many values hit
 the floor (`log_floored`).
-`MultiFidelityGP.predict` returns original-scale lognormal mean and variance;
-`predict_transformed` returns Gaussian log-space moments. `predict_interval`
-returns asymmetric equal-tail bounds. Save/load preserves these semantics;
-older checkpoints default to identity mode.
+`MultiFidelityGP.predict` returns the rate mean exp(μ + v_f/2), with v_f the latent GP
+variance only, and the lognormal variance of an observation (noise included). The learned
+noise stands for the count scatter of m/N, which averages to the rate (E[m/N] = p), so it
+widens the variance and intervals but does not raise the mean; before 2026-11-09 the mean
+was exp(μ + v/2) with the noise in v, ≈ +9 % per 0.18 log-units² of noise, so log-mode
+means of older runs are not comparable. `predict_transformed` returns Gaussian log-space
+moments (`include_noise=False`: latent only). `predict_interval` returns asymmetric
+equal-tail bounds of the noisy predictive. Save/load preserves these semantics; older
+checkpoints default to identity mode.
 
 Validation errors use unchanged raw fractions. Coverage plots use transformed
 interval bounds, not mean ± original-scale standard deviation. Positive bounds
@@ -124,7 +160,10 @@ MFGP runs write original-scale, equally weighted per-voxel scores to `metrics.js
 observed), MAE, RMSE, Pearson/Spearman correlations, descriptive calibration
 intercept/slope, CRPS, and weighted interval score. `interval_metrics` contains
 nominal probability, inside/total counts, measured coverage, mean width and
-interval score at each 1/2/3-sigma-equivalent level. WIS uses the predictive
+interval score at each 1/2/3-sigma-equivalent level. `coverage_by_brightness` splits the
+1/2/3σ coverage at the median predicted rate into dim and bright points
+(`core.gp_metrics.coverage_by_brightness`): constant noise can't cover both when their count
+noise differs, and overall coverage averages that away. WIS uses the predictive
 median, not the mean. Undefined correlations are JSON null. Existing coverage
 keys remain compatible. The low-level MFGP coverage evaluator returns these
 scores under `metrics` as well.

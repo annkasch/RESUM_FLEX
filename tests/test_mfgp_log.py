@@ -10,11 +10,15 @@ from viz.dispatch import plot_coverage_test
 
 def test_log_moments_and_intervals(monkeypatch):
     gp = MultiFidelityGP(2, 1, output_transform="log")
-    mu, var = np.array([-6.0, -4.0]), np.array([0.1, 0.4])
-    monkeypatch.setattr(gp, "predict_transformed", lambda *a: (mu, var))
+    mu, var, latent = np.array([-6.0, -4.0]), np.array([0.1, 0.4]), np.array([0.02, 0.05])
+    monkeypatch.setattr(
+        gp,
+        "predict_transformed",
+        lambda *a, include_noise=True, noise=None: (mu, var if include_noise else latent),
+    )
     x = np.zeros((2, 1))
     mean, variance = gp.predict(x)
-    np.testing.assert_allclose(mean, np.exp(mu + var / 2))
+    np.testing.assert_allclose(mean, np.exp(mu + latent / 2))  # count noise excluded
     np.testing.assert_allclose(variance, np.expm1(var) * np.exp(2 * mu + var))
     lo, hi = gp.predict_interval(x, n_sigma=2)
     np.testing.assert_allclose(lo, np.exp(mu - 2 * np.sqrt(var)))
@@ -61,5 +65,19 @@ def test_log_active_learning_rejected():
 def test_old_checkpoint_identity_default():
     gp = MultiFidelityGP(2, 1)
     del gp.output_transform
-    gp.predict_transformed = lambda *a: (np.array([0.2]), np.array([0.01]))
+    gp.predict_transformed = lambda *a, **k: (np.array([0.2]), np.array([0.01]))
     np.testing.assert_array_equal(gp.predict(np.zeros((1, 1)))[0], [0.2])
+
+
+def test_log_mean_excludes_noise_on_fitted_gp():
+    x = np.linspace(0, 1, 8)[:, None]
+    rng = np.random.default_rng(np.random.SeedSequence([0, 1]))
+    ys = [np.exp(-6 + x), np.exp(-5 + x + 0.3 * rng.normal(size=x.shape))]
+    np.random.seed(0)
+    gp = MultiFidelityGP(2, 1, output_transform="log").fit([x, x], ys, n_restarts=1)
+    mu, total = gp.predict_transformed(x)
+    _, latent = gp.predict_transformed(x, include_noise=False)
+    assert (latent < total).all()
+    mean, variance = gp.predict(x)
+    np.testing.assert_allclose(mean, np.exp(mu + latent / 2))
+    np.testing.assert_allclose(variance, np.expm1(total) * np.exp(2 * mu + total))

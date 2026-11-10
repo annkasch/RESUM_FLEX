@@ -9,9 +9,11 @@ evaluation partitions are scored afterwards.
 Output directory::
 
     training_arrays.npz      X_k, Y_k, events_k, index_k per level k (original units)
-    fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged)
-    transformed_training_arrays.npz   exact GP targets (log of fit_arrays in log mode)
-    levels.json              level settings, voxel counts and data provenance
+    fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged); log mode:
+                             log_offset_k of the bias correction per observed-fraction level;
+                             point_noise_k with observation_noise: binomial
+    transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
+    levels.json              level settings, voxel counts, data provenance, log_offset_mean
     model.pkl, model.json    fitted GP and its metadata
     evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals, ...
     metrics.json             one row per evaluation set
@@ -25,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from core.compute import ComputeLog
-from core.gp_metrics import mfgp_metrics
+from core.gp_metrics import coverage_by_brightness, mfgp_metrics
 
 
 def _model_mean(model, batch, *, n_context, seed):
@@ -124,14 +126,16 @@ def _inference_arrays(level, stream, data, cfg):
 
 def _fit_targets(level, values, events, cfg):
     """GP target in original units; log mode smooths fractions and floors model means."""
-    if cfg.output_transform != "log":
-        return values
-    if level.source == "observed_fraction":
-        a = cfg.raw_pseudocount
-        return (values * events + a) / (events + 2 * a)
-    if not np.isfinite(values).all() or np.any(values < 0):
-        raise ValueError("Log-space MFGP requires nonnegative finite model means")
-    return np.maximum(values, cfg.cnp_log_floor)
+    from core.mfgp_pipeline import fit_targets
+
+    return fit_targets(
+        values,
+        events,
+        source=level.source,
+        output_transform=cfg.output_transform,
+        pseudocount=cfg.raw_pseudocount,
+        floor=cfg.cnp_log_floor,
+    )
 
 
 def run_mfgp(
@@ -149,7 +153,13 @@ def run_mfgp(
     ``compute`` (core.compute.ComputeLog, new by default) gets the stages data_loading, fit
     and evaluation and is written to compute.json.
     """
-    from core.mfgp_pipeline import fit_mfgp, observed_fraction
+    from core.mfgp_pipeline import (
+        count_noise,
+        fit_mfgp,
+        fit_mfgp_corrected,
+        observed_fraction,
+        resolve_max_refits,
+    )
     from core.surrogate_mfgp import load_mfgp, save_mfgp
 
     compute = ComputeLog() if compute is None else compute
@@ -173,29 +183,62 @@ def run_mfgp(
             record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
         records.append(record)
     np.savez_compressed(directory / "training_arrays.npz", **arrays)
-    np.savez_compressed(directory / "fit_arrays.npz", **fit)
-    np.savez_compressed(
-        directory / "transformed_training_arrays.npz",
-        **{
-            key: np.log(value) if cfg.output_transform == "log" and key.startswith("Y_") else value
-            for key, value in fit.items()
-        },
-    )
-    (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
     compute.lap("data_loading")
     n = len(cfg.levels)
+    X_list, Y_list = [fit[f"X_{k}"] for k in range(n)], [fit[f"Y_{k}"] for k in range(n)]
+    max_refits = resolve_max_refits(cfg.max_refits, cfg.output_transform, cfg.observation_noise)
+    counted = [
+        arrays[f"events_{k}"].ravel() if level.source == "observed_fraction" else None
+        for k, level in enumerate(cfg.levels)
+    ]
+    correction, offsets, point_noise = None, [None] * n, [None] * n
     state = np.random.get_state()  # GPy restarts draw from the global numpy stream
     try:
         np.random.seed(cfg.seed)
-        gp = fit_mfgp(
-            [fit[f"X_{k}"] for k in range(n)],
-            [fit[f"Y_{k}"] for k in range(n)],
-            kernel=cfg.kernel,
-            n_restarts=cfg.n_restarts,
-            output_transform=cfg.output_transform,
-        )
+        if max_refits and any(c is not None for c in counted):
+            result = fit_mfgp_corrected(
+                X_list,
+                Y_list,
+                events=counted,
+                output_transform=cfg.output_transform,
+                max_refits=max_refits,
+                pseudocount=cfg.raw_pseudocount,
+                point_noise=cfg.observation_noise == "binomial",
+                kernel=cfg.kernel,
+                n_restarts=cfg.n_restarts,
+            )
+            gp, offsets, point_noise = result.gp, result.offsets, result.point_noise
+            correction = result.summary()
+            for k, outside in enumerate(result.outside):
+                if outside is not None:
+                    records[k]["rates_outside_unit_interval"] = outside
+        else:
+            gp = fit_mfgp(
+                X_list,
+                Y_list,
+                kernel=cfg.kernel,
+                n_restarts=cfg.n_restarts,
+                output_transform=cfg.output_transform,
+            )
     finally:
         np.random.set_state(state)
+    for k, offset in enumerate(offsets):
+        if offset is not None:
+            fit[f"log_offset_{k}"] = offset
+            records[k]["log_offset_mean"] = float(offset.mean())
+        if point_noise[k] is not None:
+            fit[f"point_noise_{k}"] = point_noise[k]
+            records[k]["point_noise_mean"] = float(point_noise[k].mean())
+    np.savez_compressed(directory / "fit_arrays.npz", **fit)
+    transformed = {}
+    for key, value in fit.items():
+        if cfg.output_transform == "log" and key.startswith("Y_"):
+            offset = offsets[int(key[2:])]
+            value = np.log(value) - (0 if offset is None else offset[:, None])
+        if not key.startswith(("log_offset_", "point_noise_")):
+            transformed[key] = value
+    np.savez_compressed(directory / "transformed_training_arrays.npz", **transformed)
+    (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
     save_mfgp(directory / "model.pkl", gp)
     restored = load_mfgp(directory / "model.pkl")
     metadata = dict(
@@ -203,8 +246,15 @@ def run_mfgp(
         levels=[f"{r['source']} {r['partition']}/{r['fidelity']}" for r in records],
         target_level=n - 1,
         coordinates="Prepared theta; use saved normalization for physical queries",
-        variance="Original-scale predictive variance; log mode uses lognormal moments",
-        noise="Learned per-level constant noise",
+        mean="Rate; log mode: exp(mu + latent variance / 2), observation noise excluded",
+        variance="Original-scale predictive variance; log mode: lognormal, noise included",
+        noise=(
+            "Learned per-level constant noise"
+            if cfg.observation_noise == "learned"
+            else "Learned per-level constant noise plus binomial count noise at the "
+            "predicted rate per observed-fraction point (fit_arrays point_noise_k)"
+        ),
+        refits=correction,
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names_flat().tolist(),
         parameters=gp.model.param_array.tolist(),
@@ -221,17 +271,33 @@ def run_mfgp(
         level = n - 1 if evaluation.level is None else evaluation.level
         batch, provenance = data.labeled(evaluation.partition, evaluation.fidelity)
         observed, events = observed_fraction(batch)
-        mean, variance = gp.predict(batch.theta, fidelity=level)
-        loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level)
+        noise = None
+        if cfg.observation_noise == "binomial" and cfg.levels[level].source == "observed_fraction":
+            rate, _ = gp.predict(batch.theta, fidelity=level)
+            noise, outside = count_noise(
+                rate,
+                events,
+                output_transform=cfg.output_transform,
+                pseudocount=cfg.raw_pseudocount,
+            )
+        extra_noise = {} if noise is None else dict(noise=noise)
+        mean, variance = gp.predict(batch.theta, fidelity=level, **extra_noise)
+        loaded_mean, loaded_var = restored.predict(batch.theta, fidelity=level, **extra_noise)
         np.testing.assert_array_equal(mean, loaded_mean)
         np.testing.assert_array_equal(variance, loaded_var)
         sigma = np.sqrt(variance)
         if not np.isfinite(mean).all() or not np.isfinite(sigma).all():
             raise ValueError("Nonfinite MFGP predictions")
         intervals = {
-            k: gp.predict_interval(batch.theta, fidelity=level, n_sigma=k) for k in (1, 2, 3)
+            k: gp.predict_interval(batch.theta, fidelity=level, n_sigma=k, **extra_noise)
+            for k in (1, 2, 3)
         }
-        scores = mfgp_metrics(gp, batch.theta, observed, fidelity=level, seed=metrics_seed)
+        scores = mfgp_metrics(
+            gp, batch.theta, observed, fidelity=level, seed=metrics_seed, **extra_noise
+        )
+        if noise is not None:
+            scores["observation_noise"] = "learned + binomial count noise at the predicted rate"
+            scores["rates_outside_unit_interval"] = outside  # learned noise only there
         scores.update(
             evaluation=e,
             partition=evaluation.partition,
@@ -245,6 +311,7 @@ def run_mfgp(
                 )
                 for k in (1, 2, 3)
             },
+            coverage_by_brightness=coverage_by_brightness(observed, intervals, mean),
         )
         metrics.append(scores)
         extra = {}

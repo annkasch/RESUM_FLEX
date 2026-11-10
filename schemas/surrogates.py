@@ -507,6 +507,16 @@ class MFGPStageConfig(StrictConfigModel):
     # Log mode: observed fractions become (m + a) / (N + 2a); model means are floored.
     raw_pseudocount: float = Field(default=0.5, gt=0, allow_inf_nan=False)
     cnp_log_floor: float = Field(default=1e-12, gt=0, lt=1, allow_inf_nan=False)
+    # Refits at the rate the previous fit predicts: log mode corrects observed-fraction
+    # targets so they average to log p (pseudocount + Jensen offset); binomial noise is
+    # updated. Stop when nothing changes by > 0.01, at most this often. None: 8 when there
+    # is something to refit (log mode or binomial noise), else 0; 0 turns the log
+    # correction off. Identity mode with learned noise: only 0.
+    max_refits: int | None = Field(default=None, ge=0)
+    # learned: one constant noise variance per level. binomial: observed-fraction points
+    # also get their count noise at the predicted rate (log: Var[log y], identity:
+    # p(1 - p)/N), held-out points at their own N, on top of the learned level noise.
+    observation_noise: Literal["learned", "binomial"] = "learned"
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
@@ -527,6 +537,15 @@ class MFGPStageConfig(StrictConfigModel):
 
     @model_validator(mode="after")
     def consistent_levels(self):
+        binomial = self.observation_noise == "binomial"
+        if self.max_refits and self.output_transform != "log" and not binomial:
+            raise ValueError(
+                "max_refits needs output_transform: log or observation_noise: binomial"
+            )
+        if binomial and self.max_refits == 0:
+            raise ValueError("observation_noise: binomial needs max_refits > 0")
+        if binomial and not any(level.source == "observed_fraction" for level in self.levels):
+            raise ValueError("observation_noise: binomial needs an observed_fraction level")
         limits = {}
         for level in self.levels:
             if level.partition in TEST_PARTITIONS:

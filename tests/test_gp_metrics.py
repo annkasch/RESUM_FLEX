@@ -54,7 +54,7 @@ def test_invalid_metrics_fail():
 class LogGP:
     output_transform = "log"
 
-    def predict_transformed(self, theta, fidelity=None):
+    def predict_transformed(self, theta, fidelity=None, include_noise=True):
         return np.zeros(len(theta)), np.ones(len(theta))
 
     def predict(self, theta, fidelity=None):
@@ -72,3 +72,18 @@ def test_log_density_support_and_original_units():
     assert "outside support" in result["predictive_nll_status"]
     assert result["interval_metrics"]["3"]["inside"] == 1
     json.dumps(result, allow_nan=False)
+
+
+def test_coverage_by_brightness_splits_at_median_prediction():
+    from core.gp_metrics import coverage_by_brightness
+
+    observed = np.array([0.1, 0.2, 0.9, 1.1])
+    rate = np.array([0.1, 0.2, 1.0, 1.0])
+    intervals = {1: (np.array([0.0, 0.3, 0.8, 0.8]), np.array([0.2, 0.4, 1.0, 1.2]))}
+    result = coverage_by_brightness(observed, intervals, rate)
+    assert result["threshold"] == pytest.approx(0.6)
+    assert result["dim_voxels"] == 2 and result["bright_voxels"] == 2
+    assert result["dim"] == {"1": 0.5} and result["bright"] == {"1": 1.0}
+    json.dumps(result, allow_nan=False)
+    with pytest.raises(ValueError):
+        coverage_by_brightness(observed, intervals, rate[:2])

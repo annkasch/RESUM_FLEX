@@ -99,12 +99,19 @@ def gp_metrics(observed, predicted, *, intervals=None, samples=None, median=None
     return result
 
 
-def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096):
-    """Score the actual Gaussian/lognormal observation distribution of an MFGP."""
-    mean, _ = gp.predict(theta, fidelity=fidelity)
-    mu, variance = gp.predict_transformed(theta, fidelity=fidelity)
+def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096, noise=None):
+    """Score the actual Gaussian/lognormal observation distribution of an MFGP.
+
+    noise [n]: fixed observation variance per scored point in fitted units (e.g. count
+    noise), added to the GP's learned noise; None: learned noise only.
+    """
+    extra = {} if noise is None else dict(noise=noise)
+    mean, _ = gp.predict(theta, fidelity=fidelity, **extra)
+    mu, variance = gp.predict_transformed(theta, fidelity=fidelity, **extra)
     sigma = np.sqrt(variance)
-    intervals = {k: gp.predict_interval(theta, fidelity=fidelity, n_sigma=k) for k in (1, 2, 3)}
+    intervals = {
+        k: gp.predict_interval(theta, fidelity=fidelity, n_sigma=k, **extra) for k in (1, 2, 3)
+    }
     draws = np.random.default_rng(seed).normal(mu, sigma, size=(n_draws, len(mu)))
     log_space = getattr(gp, "output_transform", "identity") == "log"
     samples = np.exp(draws) if log_space else draws
@@ -128,6 +135,30 @@ def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096):
         "density in original response units; not comparable to count probability mass"
     )
     result["crps_method"] = f"empirical marginal predictive draws; n={n_draws}, seed={seed}"
+    return result
+
+
+def coverage_by_brightness(observed, intervals, rate):
+    """Interval coverage of dim and bright points, split at the median predicted rate.
+
+    observed, rate: [n]; intervals: {sigma level: (lower [n], upper [n])}. A single
+    constant noise can't cover both groups when their count noise differs (log mode: dim
+    points too narrow; identity: bright points too narrow), which overall coverage hides.
+    The split uses the prediction, not the observation, so it does not select on noise.
+    """
+    y, rate = np.asarray(observed, float), np.asarray(rate, float)
+    if y.ndim != 1 or rate.shape != y.shape or not len(y):
+        raise ValueError("observed and rate must be matching nonempty vectors")
+    threshold = float(np.median(rate))
+    dim = rate < threshold
+    groups = dict(dim=dim, bright=~dim)
+    result = dict(split="median predicted rate", threshold=threshold)
+    for name, mask in groups.items():
+        result[f"{name}_voxels"] = int(mask.sum())
+        result[name] = {
+            str(k): None if not mask.any() else float(((y >= lo) & (y <= hi))[mask].mean())
+            for k, (lo, hi) in intervals.items()
+        }
     return result
 
 

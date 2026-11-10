@@ -10,10 +10,11 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-@pytest.mark.parametrize("transform", ["identity", "log"])
+@pytest.mark.parametrize("transform", ["identity", "identity-binomial", "log", "log-binomial"])
 @pytest.mark.parametrize("lf_validation", [True, False])
 def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     pytest.importorskip("GPy")
+    transform, _, noise = transform.partition("-")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
     for split in ("train", "validation"):
@@ -49,6 +50,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             "n_restarts": 1,
             "n_context": 4,
             "output_transform": transform,
+            "observation_noise": noise or "learned",
             "levels": [
                 {"source": "model_mean", "partition": "train", "fidelity": "lf"},
                 {"source": "model_mean", "partition": "train", "fidelity": "hf"},
@@ -122,6 +124,9 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert row["crps"] >= 0
         assert "weighted_interval_score" in row
         assert "mean_width" in row["interval_metrics"]["2"]
+        split = row["coverage_by_brightness"]
+        assert split["dim_voxels"] + split["bright_voxels"] == row["voxels"]
+        assert set(split["bright"]) == {"1", "2", "3"}
     hf = len(scores) - 1
     assert (out / f"mfgp/evaluation_{hf}_coverage.png").exists()
     assert (out / "mfgp/training_inputs.png").exists()
@@ -135,6 +140,14 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         # Observed fractions use every event of the voxel.
         np.testing.assert_allclose(data["events_2"], 24)
 
+    if transform == "identity":
+        if noise == "binomial":
+            assert meta["refits"]["point_noise"] and not meta["refits"]["bias_correction"]
+            assert scores[-1]["observation_noise"].startswith("learned + binomial")
+            with np.load(out / "mfgp/fit_arrays.npz") as fit:
+                assert "point_noise_2" in fit and "log_offset_2" not in fit
+        else:
+            assert meta["refits"] is None
     if transform == "log":
         with (
             np.load(out / "mfgp/training_arrays.npz") as raw,
@@ -143,6 +156,19 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             assert raw["Y_2"][0, 0] == 0
             assert fit["Y_2"][0, 0] > 0
             np.testing.assert_allclose(fit["Y_2"], (raw["Y_2"] * 24 + 0.5) / 25)
+            # Bias correction on the observed-fraction level only; GP targets include it.
+            assert "log_offset_2" in fit and "log_offset_0" not in fit
+            with np.load(out / "mfgp/transformed_training_arrays.npz") as exact:
+                np.testing.assert_allclose(
+                    exact["Y_2"], np.log(fit["Y_2"]) - fit["log_offset_2"][:, None]
+                )
+                np.testing.assert_allclose(exact["Y_0"], np.log(fit["Y_0"]))
+        assert meta["refits"]["refits"] >= 1
+        assert meta["refits"]["point_noise"] == (noise == "binomial")
+        with np.load(out / "mfgp/fit_arrays.npz") as fit:
+            assert ("point_noise_2" in fit) == (noise == "binomial")
+        assert ("observation_noise" in scores[-1]) == (noise == "binomial")
+        assert levels[2]["log_offset_mean"] > 0  # pseudocount dominates at ~1 hit
         with np.load(out / f"mfgp/evaluation_{hf}.npz") as arrays:
             assert (arrays["lower_3"] > 0).all()
             assert (arrays["upper_3"] >= arrays["lower_3"]).all()
