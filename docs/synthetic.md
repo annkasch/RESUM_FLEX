@@ -47,6 +47,8 @@ noise. Rows go to `--out` (default `viz_output/mfgp_noise_sweep.json`).
 Constant learned noise, 5 seeds (2026-11-09): identity mode has no systematic bias at 1, 5 or
 50 hits (seed-to-seed scatter ±5–10 %); log mode overpredicts by ≈ +57 % / +21 % / +3 % at
 1 / 5 / 50 hits, about pseudocount + Jensen + back-conversion (+16 − 12 + 18 % at 5 hits).
+With the rate mean exp(μ + v_f/2) (noise excluded, same day): log mode ≈ +30 % / +2.5 % /
++1 % at 1 / 5 / 50 hits, the remaining pseudocount + Jensen terms; coverage unchanged.
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 

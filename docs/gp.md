@@ -105,10 +105,15 @@ are not counts: they only receive the numerical `cnp_log_floor: 1e-12`.
 adjusted original-scale targets, `transformed_training_arrays.npz` records
 exact logged targets, and `levels.json` records per model-mean level how many values hit
 the floor (`log_floored`).
-`MultiFidelityGP.predict` returns original-scale lognormal mean and variance;
-`predict_transformed` returns Gaussian log-space moments. `predict_interval`
-returns asymmetric equal-tail bounds. Save/load preserves these semantics;
-older checkpoints default to identity mode.
+`MultiFidelityGP.predict` returns the rate mean exp(μ + v_f/2), with v_f the latent GP
+variance only, and the lognormal variance of an observation (noise included). The learned
+noise stands for the count scatter of m/N, which averages to the rate (E[m/N] = p), so it
+widens the variance and intervals but does not raise the mean; before 2026-11-09 the mean
+was exp(μ + v/2) with the noise in v, ≈ +9 % per 0.18 log-units² of noise, so log-mode
+means of older runs are not comparable. `predict_transformed` returns Gaussian log-space
+moments (`include_noise=False`: latent only). `predict_interval` returns asymmetric
+equal-tail bounds of the noisy predictive. Save/load preserves these semantics; older
+checkpoints default to identity mode.
 
 Validation errors use unchanged raw fractions. Coverage plots use transformed
 interval bounds, not mean ± original-scale standard deviation. Positive bounds

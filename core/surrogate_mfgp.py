@@ -55,9 +55,7 @@ class MultiFidelityGP:
         if n_fidelities < 2:
             raise ValueError(f"n_fidelities must be ≥ 2, got {n_fidelities}")
         if kernel not in _KERNEL_FACTORIES:
-            raise ValueError(
-                f"unknown kernel {kernel!r}; supported: {sorted(_KERNEL_FACTORIES)}"
-            )
+            raise ValueError(f"unknown kernel {kernel!r}; supported: {sorted(_KERNEL_FACTORIES)}")
         if dim_theta <= 0:
             raise ValueError(f"dim_theta must be positive, got {dim_theta}")
         if output_transform not in ("identity", "log"):
@@ -100,18 +98,13 @@ class MultiFidelityGP:
         """
         if len(X_list) != self.n_fidelities or len(Y_list) != self.n_fidelities:
             raise ValueError(
-                f"expected {self.n_fidelities} X / Y arrays, "
-                f"got {len(X_list)} / {len(Y_list)}"
+                f"expected {self.n_fidelities} X / Y arrays, got {len(X_list)} / {len(Y_list)}"
             )
         for i, (X, Y) in enumerate(zip(X_list, Y_list, strict=True)):
             if X.ndim != 2 or X.shape[1] != self.dim_theta:
-                raise ValueError(
-                    f"X_list[{i}].shape={X.shape}; expected (n_i, {self.dim_theta})"
-                )
+                raise ValueError(f"X_list[{i}].shape={X.shape}; expected (n_i, {self.dim_theta})")
             if Y.ndim != 2 or Y.shape[1] != 1 or Y.shape[0] != X.shape[0]:
-                raise ValueError(
-                    f"Y_list[{i}].shape={Y.shape}; expected ({X.shape[0]}, 1)"
-                )
+                raise ValueError(f"Y_list[{i}].shape={Y.shape}; expected ({X.shape[0]}, 1)")
 
         if getattr(self, "output_transform", "identity") == "log":
             if any(not np.isfinite(y).all() or np.any(y <= 0) for y in Y_list):
@@ -119,7 +112,10 @@ class MultiFidelityGP:
             Y_list = [np.log(y) for y in Y_list]
         X_train, Y_train = convert_xy_lists_to_arrays(X_list, Y_list)
         model = GPyLinearMultiFidelityModel(
-            X_train, Y_train, self._build_kernel(), n_fidelities=self.n_fidelities,
+            X_train,
+            Y_train,
+            self._build_kernel(),
+            n_fidelities=self.n_fidelities,
         )
         model.optimize_restarts(num_restarts=n_restarts, verbose=verbose)
         self._model = model
@@ -128,24 +124,29 @@ class MultiFidelityGP:
     # ---- prediction --------------------------------------------------------
 
     def predict_transformed(
-        self, X_new: np.ndarray, fidelity: int | None = None,
+        self,
+        X_new: np.ndarray,
+        fidelity: int | None = None,
+        *,
+        include_noise: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Gaussian moments in fitted units (log units in log mode).
 
-        Returns 1-D arrays of length ``n``. Variance is the GP's posterior
-        variance at the fidelity level — non-negative by construction.
+        Returns 1-D arrays of length ``n``. Variance is the GP's posterior variance at the
+        fidelity level plus its learned observation noise, or the latent variance only with
+        ``include_noise=False``; non-negative by construction.
         """
         if X_new.ndim != 2 or X_new.shape[1] != self.dim_theta:
-            raise ValueError(
-                f"X_new.shape={X_new.shape}; expected (n, {self.dim_theta})"
-            )
+            raise ValueError(f"X_new.shape={X_new.shape}; expected (n, {self.dim_theta})")
         f = self._resolve_fidelity(fidelity)
         fid_col = np.full((X_new.shape[0], 1), f, dtype=float)
         X_aug = np.concatenate([X_new, fid_col], axis=1)
         # GPy's mixed-noise likelihood needs the per-row fidelity index in
         # Y_metadata or it raises NoneType errors during predict.
         mean, var = self.model.predict(
-            X_aug, Y_metadata={"output_index": fid_col.astype(int)},
+            X_aug,
+            include_likelihood=include_noise,
+            Y_metadata={"output_index": fid_col.astype(int)},
         )
         return mean.flatten(), np.clip(var.flatten(), 0.0, None)
 
@@ -163,22 +164,29 @@ class MultiFidelityGP:
         f = self._resolve_fidelity(fidelity)
         fid = np.full((len(X_new), 1), f, dtype=float)
         mean, covariance = self.model.predict(
-            np.column_stack((X_new, fid)), full_cov=True, include_likelihood=False,
+            np.column_stack((X_new, fid)),
+            full_cov=True,
+            include_likelihood=False,
             Y_metadata={"output_index": fid.astype(int)},
         )
         covariance = np.asarray(covariance).reshape(len(X_new), len(X_new))
         return mean.ravel(), (covariance + covariance.T) / 2
 
     def predict(self, X_new, fidelity=None):
-        """Mean and variance in original units, including observation noise.
+        """Rate mean and observation variance in original units.
 
-        Log mode returns lognormal moments, not exponentiated Gaussian means.
+        Identity mode: GP mean and variance including the learned observation noise.
+        Log mode: mean = exp(μ + v_f/2), the posterior mean of the rate with v_f the latent
+        variance only. The count noise of an observed fraction averages to zero around the
+        rate (E[m/N] = p), so it widens the variance and intervals but must not raise the
+        mean. Variance: lognormal variance of an observation, noise included.
         Old checkpoints without output_transform retain identity behavior.
         """
         mean, variance = self.predict_transformed(X_new, fidelity)
         if getattr(self, "output_transform", "identity") == "log":
+            _, latent = self.predict_transformed(X_new, fidelity, include_noise=False)
             with np.errstate(over="raise", invalid="raise"):
-                original_mean = np.exp(mean + variance / 2)
+                original_mean = np.exp(mean + latent / 2)
                 original_variance = np.expm1(variance) * np.exp(2 * mean + variance)
             return original_mean, original_variance
         return mean, variance
@@ -196,7 +204,9 @@ class MultiFidelityGP:
         return lower, upper
 
     def predict_as_model_prediction(
-        self, X_new: np.ndarray, fidelity: int | None = None,
+        self,
+        X_new: np.ndarray,
+        fidelity: int | None = None,
     ) -> ModelPrediction:
         """Convenience wrapper returning the project's typed prediction schema."""
         mean, var = self.predict(X_new, fidelity)
@@ -208,9 +218,7 @@ class MultiFidelityGP:
         if fidelity is None:
             return self.n_fidelities - 1
         if not 0 <= fidelity < self.n_fidelities:
-            raise ValueError(
-                f"fidelity must be in [0, {self.n_fidelities - 1}], got {fidelity}"
-            )
+            raise ValueError(f"fidelity must be in [0, {self.n_fidelities - 1}], got {fidelity}")
         return fidelity
 
 
@@ -252,10 +260,7 @@ def load_mfgp(path: str | Path) -> MultiFidelityGP:
     with open(path, "rb") as f:
         obj = pickle.load(f)
     if not isinstance(obj, MultiFidelityGP):
-        raise TypeError(
-            f"file {path} did not contain a MultiFidelityGP "
-            f"(got {type(obj).__name__})"
-        )
+        raise TypeError(f"file {path} did not contain a MultiFidelityGP (got {type(obj).__name__})")
     if not obj.is_fitted:
         raise RuntimeError(f"loaded MFGP from {path} is not fitted")
     return obj

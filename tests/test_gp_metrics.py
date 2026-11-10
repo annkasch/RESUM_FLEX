@@ -54,7 +54,7 @@ def test_invalid_metrics_fail():
 class LogGP:
     output_transform = "log"
 
-    def predict_transformed(self, theta, fidelity=None):
+    def predict_transformed(self, theta, fidelity=None, include_noise=True):
         return np.zeros(len(theta)), np.ones(len(theta))
 
     def predict(self, theta, fidelity=None):
