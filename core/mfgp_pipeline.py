@@ -96,13 +96,45 @@ def levels_from_batches(
         if level.source == "model_mean":
             if model is None:
                 raise ValueError("model_mean levels need an event model")
-            y = model_mean(model, level.batch, n_context=level.n_context, seed=level.seed,
-                           n_mc_samples=n_mc_samples)
+            y = model_mean(
+                model,
+                level.batch,
+                n_context=level.n_context,
+                seed=level.seed,
+                n_mc_samples=n_mc_samples,
+            )
         else:
             y = observed_fraction(level.batch, n_context=level.n_context, seed=level.seed)[0]
         X_list.append(level.batch.theta)
         Y_list.append(np.asarray(y, dtype=float).reshape(-1, 1))
     return X_list, Y_list
+
+
+def fit_targets(
+    values: np.ndarray,
+    events: np.ndarray,
+    *,
+    source: str,
+    output_transform: str,
+    pseudocount: float = 0.5,
+    floor: float = 1e-12,
+) -> np.ndarray:
+    """GP target [n] of one level in original units, from values [n] and events [n].
+
+    Identity mode: unchanged. Log mode: observed fractions become (m + a)/(N + 2a)
+    with a = pseudocount; model means must be finite and nonnegative and are floored.
+    """
+    if source not in SOURCES:
+        raise ValueError(f"source must be one of {SOURCES}, got {source!r}")
+    values = np.asarray(values, dtype=float)
+    if output_transform != "log":
+        return values
+    if source == "observed_fraction":
+        events = np.asarray(events, dtype=float)
+        return (values * events + pseudocount) / (events + 2 * pseudocount)
+    if not np.isfinite(values).all() or np.any(values < 0):
+        raise ValueError("Log-space MFGP requires nonnegative finite model means")
+    return np.maximum(values, floor)
 
 
 def fit_mfgp(

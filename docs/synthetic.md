@@ -31,6 +31,23 @@ and prints the time per stage (~30 s, one thread per process, login-node safe). 
 check only: no model conclusions. `--keep` keeps the directory, `--workdir DIR` runs in DIR.
 `tests/test_smoke.py` runs it under the `smoke` marker (skip with `-m 'not smoke'`).
 
+## MFGP rate bias vs. hits per point
+
+`python scripts/mfgp_noise_sweep.py --hits 1,5,50 --transforms identity,log --seeds 0,1,2,3,4`
+(~3 min, login-node safe) fits a two-level MFGP on synthetic counts with a known rate
+(`core/mfgp_bias.py`): a smooth 2-D rate surface, ~20× between dim and bright points; the low
+level is a slightly distorted model mean at 300 points, the top level the observed fraction
+m/N at 80 points with N set for the given mean hits. Per run it prints the relative bias of
+the predicted rate against the true rate (all / dim / bright held-out points), the 1σ/2σ/3σ
+coverage of fresh observed fractions and, in log mode, the exact bias terms of the smoothed
+log target (`log_target_terms`: pseudocount shift E[y]/p − 1, Jensen shift
+exp(E[log y])/E[y] − 1) plus the back-conversion shift exp(σ²/2) − 1 of the learned top-level
+noise. Rows go to `--out` (default `viz_output/mfgp_noise_sweep.json`).
+
+Constant learned noise, 5 seeds (2026-11-09): identity mode has no systematic bias at 1, 5 or
+50 hits (seed-to-seed scatter ±5–10 %); log mode overpredicts by ≈ +57 % / +21 % / +3 % at
+1 / 5 / 50 hits, about pseudocount + Jensen + back-conversion (+16 − 12 + 18 % at 5 hits).
+
 ## Run the synthetic-validation pipelines (Phase 1–5)
 
 For a sanity check on a fresh install, the `scripts/` directory drives

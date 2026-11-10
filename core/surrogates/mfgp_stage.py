@@ -124,14 +124,16 @@ def _inference_arrays(level, stream, data, cfg):
 
 def _fit_targets(level, values, events, cfg):
     """GP target in original units; log mode smooths fractions and floors model means."""
-    if cfg.output_transform != "log":
-        return values
-    if level.source == "observed_fraction":
-        a = cfg.raw_pseudocount
-        return (values * events + a) / (events + 2 * a)
-    if not np.isfinite(values).all() or np.any(values < 0):
-        raise ValueError("Log-space MFGP requires nonnegative finite model means")
-    return np.maximum(values, cfg.cnp_log_floor)
+    from core.mfgp_pipeline import fit_targets
+
+    return fit_targets(
+        values,
+        events,
+        source=level.source,
+        output_transform=cfg.output_transform,
+        pseudocount=cfg.raw_pseudocount,
+        floor=cfg.cnp_log_floor,
+    )
 
 
 def run_mfgp(
