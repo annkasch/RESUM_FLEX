@@ -138,6 +138,30 @@ def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096, n
     return result
 
 
+def coverage_by_brightness(observed, intervals, rate):
+    """Interval coverage of dim and bright points, split at the median predicted rate.
+
+    observed, rate: [n]; intervals: {sigma level: (lower [n], upper [n])}. A single
+    constant noise can't cover both groups when their count noise differs (log mode: dim
+    points too narrow; identity: bright points too narrow), which overall coverage hides.
+    The split uses the prediction, not the observation, so it does not select on noise.
+    """
+    y, rate = np.asarray(observed, float), np.asarray(rate, float)
+    if y.ndim != 1 or rate.shape != y.shape or not len(y):
+        raise ValueError("observed and rate must be matching nonempty vectors")
+    threshold = float(np.median(rate))
+    dim = rate < threshold
+    groups = dict(dim=dim, bright=~dim)
+    result = dict(split="median predicted rate", threshold=threshold)
+    for name, mask in groups.items():
+        result[f"{name}_voxels"] = int(mask.sum())
+        result[name] = {
+            str(k): None if not mask.any() else float(((y >= lo) & (y <= hi))[mask].mean())
+            for k, (lo, hi) in intervals.items()
+        }
+    return result
+
+
 # Central predictive intervals keyed by Gaussian-equivalent sigma level.
 SIGMA_LEVELS = {1: erf(1 / sqrt(2)), 2: erf(2 / sqrt(2)), 3: erf(3 / sqrt(2))}
 

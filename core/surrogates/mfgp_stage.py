@@ -27,7 +27,7 @@ from pathlib import Path
 import numpy as np
 
 from core.compute import ComputeLog
-from core.gp_metrics import mfgp_metrics
+from core.gp_metrics import coverage_by_brightness, mfgp_metrics
 
 
 def _model_mean(model, batch, *, n_context, seed):
@@ -311,6 +311,7 @@ def run_mfgp(
                 )
                 for k in (1, 2, 3)
             },
+            coverage_by_brightness=coverage_by_brightness(observed, intervals, mean),
         )
         metrics.append(scores)
         extra = {}

@@ -124,6 +124,9 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert row["crps"] >= 0
         assert "weighted_interval_score" in row
         assert "mean_width" in row["interval_metrics"]["2"]
+        split = row["coverage_by_brightness"]
+        assert split["dim_voxels"] + split["bright_voxels"] == row["voxels"]
+        assert set(split["bright"]) == {"1", "2", "3"}
     hf = len(scores) - 1
     assert (out / f"mfgp/evaluation_{hf}_coverage.png").exists()
     assert (out / "mfgp/training_inputs.png").exists()

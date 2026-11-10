@@ -160,7 +160,10 @@ MFGP runs write original-scale, equally weighted per-voxel scores to `metrics.js
 observed), MAE, RMSE, Pearson/Spearman correlations, descriptive calibration
 intercept/slope, CRPS, and weighted interval score. `interval_metrics` contains
 nominal probability, inside/total counts, measured coverage, mean width and
-interval score at each 1/2/3-sigma-equivalent level. WIS uses the predictive
+interval score at each 1/2/3-sigma-equivalent level. `coverage_by_brightness` splits the
+1/2/3σ coverage at the median predicted rate into dim and bright points
+(`core.gp_metrics.coverage_by_brightness`): constant noise can't cover both when their count
+noise differs, and overall coverage averages that away. WIS uses the predictive
 median, not the mean. Undefined correlations are JSON null. Existing coverage
 keys remain compatible. The low-level MFGP coverage evaluator returns these
 scores under `metrics` as well.
