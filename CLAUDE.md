@@ -58,7 +58,7 @@ export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 .venv/bin/ruff check .                       # repo-wide; must stay clean (notebooks excluded)
 .venv/bin/ruff format <files>                # format only files you touched
 .venv/bin/python -m core.surrogates train TRAINING.yaml
-.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf]
+.venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION [--fidelity hf] [--event-logits]
 .venv/bin/python -m core.surrogates mfgp|binomial|stream|residual|within_point CONFIG.yaml
 .venv/bin/python scripts/smoke.py    # every CLI stage on tiny synthetic data, ~30 s
 .venv/bin/python scripts/phase1_plot_ground_truth.py   # cheap synthetic sanity check

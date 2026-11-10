@@ -236,14 +236,18 @@ def stages(root: Path, configs: dict[str, Path]):
         ("stream", ["stream", configs["stream"]], lambda: _check_json(runs / "stream")),
     ]
     predicts = []
-    for partition, fidelity in PREDICTED:
+    for k, (partition, fidelity) in enumerate(PREDICTED):
         output = runs / "train" / "inference" / "best" / f"{partition}_{fidelity}.npz"
+        # The first prediction also writes per-event logits (off by default).
+        events = output.parent / f"{partition}_{fidelity}_events" / "index.json" if k == 0 else None
 
-        def exists(output=output):
-            if not output.is_file():
-                raise RuntimeError(f"{output} missing")
+        def exists(output=output, events=events):
+            for path in (output, events):
+                if path is not None and not path.is_file():
+                    raise RuntimeError(f"{path} missing")
 
         args = ["predict", checkpoint, root / "data", partition, "--fidelity", fidelity]
+        args += ["--event-logits"] if k == 0 else []
         predicts.append((f"predict {partition}/{fidelity}", args, exists))
     output = runs / "train"
     check = lambda output=output: _check_json(output, ("within_point.json",))  # noqa: E731

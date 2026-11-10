@@ -163,8 +163,10 @@ class NormalizedNpz(NpzBatches):
 
 @pytest.mark.parametrize("kind", ["mlp", "cnp"])
 def test_experiment_writes_posterior_and_predictive_scores(kind, tmp_path):
+    from scipy.special import expit
+
     from core.surrogates.experiment import run_experiment
-    from core.surrogates.inference import predict_partition
+    from core.surrogates.inference import predict_partition, read_event_logits
     from schemas.surrogates import SurrogateRunConfig
 
     root = tmp_path / "data"
@@ -216,3 +218,19 @@ def test_experiment_writes_posterior_and_predictive_scores(kind, tmp_path):
         with np.load(path) as arrays:
             assert arrays["probability_draws"].shape == (200, 4)
             assert (arrays["probability_sd"] > 0).all()
+        assert not (path.parent / "validation_hf_events").exists()  # off by default
+        path = predict_partition(
+            output / "checkpoints/best",
+            root,
+            "validation",
+            "lf",
+            event_logits=True,
+            shard_events=40,
+        )
+        _, counts, logits = read_event_logits(path.parent / "validation_lf_events")
+        with np.load(path) as arrays:
+            np.testing.assert_array_equal(counts, arrays["event_counts"])
+            means = [p.mean() for p in np.split(expit(logits), np.cumsum(counts)[:-1])]
+            np.testing.assert_allclose(means, arrays["mean_probability"], rtol=1e-5)
+        provenance = json.loads(path.with_suffix(".json").read_text())
+        assert provenance["event_logits"] == "validation_lf_events"

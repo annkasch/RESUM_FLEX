@@ -85,3 +85,12 @@ are accepted, and the provider normalization must equal the checkpoint's. Result
 overwritten. Use voxels the model was not trained on, so no labels can be memorized.
 With a Bayesian last layer the file also holds `probability_draws` [S, B] and their
 `probability_mean` / `probability_sd` per voxel.
+
+`--event-logits` (off by default) also writes every event's logit to
+`RUN/inference/best/<partition>_<fidelity>_events/`: float32, padding dropped, in the
+provider's event order (voxel by voxel, each voxel's events in load order). Shards
+`shard_NNNNN.npz` (`logits` [E], `event_counts` [b], `voxel_ids` [b]) hold whole voxels, up to
+2²² events each unless one voxel alone has more; `index.json` lists each shard's voxel range
+and event count. `core.surrogates.inference.read_event_logits(directory, voxels=(start, stop))`
+reads them back, opening only the shards it needs. With a Bayesian last layer these are the
+MAP logits. Not combinable with `--events-from`.

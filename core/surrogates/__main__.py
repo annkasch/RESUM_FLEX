@@ -38,6 +38,11 @@ def main():
         "emission sample) instead of each voxel's own",
     )
     predict.add_argument("--seed", type=int, default=0, help="donor draw seed")
+    predict.add_argument(
+        "--event-logits",
+        action="store_true",
+        help="also write every event's logit (float32 shards + index) next to the result",
+    )
     mfgp = commands.add_parser("mfgp", help="Fit a standalone multi-fidelity GP")
     mfgp.add_argument("config")
     binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
@@ -108,6 +113,7 @@ def main():
                 data_provider=args.data_provider,
                 events_from=tuple(args.events_from.split("/")) if args.events_from else None,
                 seed=args.seed,
+                event_logits=args.event_logits,
             ),
             flush=True,
         )
