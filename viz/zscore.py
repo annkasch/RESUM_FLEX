@@ -1,7 +1,11 @@
 """Per-voxel z-scores of observations against predictions, for event models and GPs.
 
-z = (observed - predicted) / expected spread, so every voxel is on the same scale. A model
-that is right has mean 0 and spread 1 everywhere, also within bins of the predicted rate.
+Plots show randomized quantile residuals (core/quantile_residuals.py) when the run saved
+them: z = Φ⁻¹(u) with u drawn within the predictive CDF step of the observed count, exactly
+N(0, 1) for a right model at any expected count. Older runs fall back to
+z = (observed - predicted) / expected spread, which is discrete and skewed when the
+expected hits per voxel are ~1. A model that is right has mean 0 and spread 1 everywhere,
+also within bins of the predicted rate.
 """
 
 from pathlib import Path
@@ -37,20 +41,23 @@ Z_LIMIT = 6.0  # fixed z axis range ±6 so plots of different runs compare direc
 def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", limit=Z_LIMIT):
     """Histogram of z against N(0, 1), and z against the predicted rate with ±1/2/3σ bands.
 
-    z, predicted: [B] per voxel. The z axis is fixed to ±limit; values beyond are drawn at
-    the edge and counted in the legend (summary statistics use the unclipped z). Writes a PNG
-    next to ``out_path`` (no suffix). Returns the summary (mean, std, fraction
-    |z| > 2, number beyond ±limit).
+    z, predicted: [B] per voxel. z may be ±inf (a count with zero predicted probability in
+    a quantile residual). The z axis is fixed to ±limit; values beyond are drawn at the edge
+    and counted in the legend. Mean and std use the finite, unclipped z; ``infinite``
+    counts the rest. Writes a PNG next to ``out_path`` (no suffix). Returns the summary
+    (mean, std, fraction |z| > 2, number beyond ±limit, number infinite).
     """
     z, predicted = np.asarray(z, dtype=float), np.asarray(predicted, dtype=float)
-    if z.shape != predicted.shape or not np.isfinite(z).all():
-        raise ValueError("Need finite z and predicted rates of equal shape")
+    if z.shape != predicted.shape or np.isnan(z).any() or not np.isfinite(predicted).all():
+        raise ValueError("Need z without NaN and finite predicted rates of equal shape")
+    finite = z[np.isfinite(z)]
     summary = dict(
-        mean=float(z.mean()),
-        std=float(z.std(ddof=1)) if len(z) > 1 else 0.0,
+        mean=float(finite.mean()) if len(finite) else float("nan"),
+        std=float(finite.std(ddof=1)) if len(finite) > 1 else 0.0,
         outside_2=float(np.mean(np.abs(z) > 2)),
         voxels=len(z),
         beyond_limit=int(np.sum(np.abs(z) > limit)),
+        infinite=int(len(z) - len(finite)),
     )
     fig, (ax_hist, ax_rate) = plt.subplots(1, 2, figsize=(12, 4.5), layout="constrained")
     shown = np.clip(z, -limit, limit)
@@ -61,12 +68,14 @@ def plot_zscores(z, predicted, out_path, *, title, rate_label="Predicted rate", 
         density=True,
         color="C0",
         alpha=0.6,
-        label=f"{len(z)} voxels" + (f" ({beyond} beyond ±{limit:g}, at edge)" if beyond else ""),
+        label=f"{len(z)} voxels"
+        + (f" ({beyond} beyond ±{limit:g}, at edge)" if beyond else "")
+        + (f", {summary['infinite']} infinite" if summary["infinite"] else ""),
     )
     grid = np.linspace(-limit, limit, 400)
     ax_hist.plot(grid, norm.pdf(grid), "k--", label="N(0, 1)")
     ax_hist.set(
-        xlabel="z = (observed − predicted) / σ",
+        xlabel="z [σ]",
         ylabel="Density",
         title=f"mean {summary['mean']:+.2f}, std {summary['std']:.2f}, "
         f"|z|>2: {summary['outside_2']:.0%} (4.6% expected)",

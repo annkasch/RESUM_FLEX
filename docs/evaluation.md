@@ -138,6 +138,15 @@ Read-out after training (held-out splits only, not used for selection):
   1000. Arrays `within_point_gain_null`
   [3, 2, B]; plot `{fidelity}_{split}_within_point_gain.png` (best checkpoint).
 - `feature_calibration` (above); plot `{fidelity}_{split}_feature_calibration.png`.
+- `voxel_quantile_z` (array, no metric): randomized quantile residual of each design
+  point's hits (`core/quantile_residuals.py`). With F the predictive CDF of the hits,
+  u ~ U(F(k−1), F(k)) and z = Φ⁻¹(u); exactly N(0, 1) for a right model at any expected
+  count. The Pearson z of `voxel_z_mean` is discrete and skewed when Σp per point is ~1
+  (its mean and z² stay unbiased), so the z-score plot `{fidelity}_{split}_zscore.png`
+  uses the quantile residual. F: Poisson-binomial of the event p, exact for k ≤ 200, normal
+  with continuity correction above. Seeded by `validation_seed` (key 4); a count with zero
+  predicted mass gives ±inf, counted in the plot. The GP stages save the same residual as
+  `quantile_z` in `evaluation_<e>.npz` ([gp.md](gp.md)).
 - `residual_test` (above), only with `residual_test:` in the config.
 - `context_sweep.json` / `context_sweep.png` (context models only): the metrics at
   every size in `validation_context_events` + `validation_context_sweep`, plus the

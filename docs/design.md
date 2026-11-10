@@ -56,6 +56,7 @@ Module docstrings describe each file.
 | Losses, mixup, target sampling | `core/binary_losses.py`, `core/mixup.py`, `core/target_sampling.py` |
 | Training stages, checkpoint choice | `core/surrogates/stages.py`, `training.py`, `experiment.py` |
 | Metrics (count NLL, coverage, CRPS) | `core/surrogates/evaluation.py`, `core/gp_metrics.py` |
+| Z-score plots (quantile residuals) | `core/quantile_residuals.py`, `viz/zscore.py` |
 | Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py`, `residual_stage.py`, `within_point_stage.py`, `finished_run.py` (finished runs) |
 | Bayesian last layer | `core/last_layer.py` (numpy math), `core/surrogates/last_layer.py` (torch side) |
 | GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` (`fit_targets`: GP targets per level) |

@@ -15,7 +15,8 @@ Output directory::
     transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
     levels.json              level settings, voxel counts, data provenance, log_offset_mean
     model.pkl, model.json    fitted GP and its metadata
-    evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals, ...
+    evaluation_<k>.npz       per evaluation set: observed, GP mean/sigma/intervals,
+                             quantile_z (randomized quantile residuals of the hits), ...
     metrics.json             one row per evaluation set
     development_map.npz      top-level prediction at every loaded voxel
     compute.json             wall/CPU time and allocated cores per stage (core.compute)
@@ -35,6 +36,48 @@ def _model_mean(model, batch, *, n_context, seed):
     from core.mfgp_pipeline import model_mean
 
     return model_mean(model, batch, n_context=n_context if model.uses_context else None, seed=seed)
+
+
+# SeedSequence key under (metrics_seed, evaluation index) for the quantile residuals.
+QUANTILE_KEY = 1
+
+
+def _quantile_z(gp, theta, level, observed, events, noise, cfg, bias_corrected, rng):
+    """Randomized quantile residuals [B] of the hits under the GP's observation predictive.
+
+    The GP models the observation in its fitted space as N(μ, σ²), noise included (learned,
+    plus binomial point noise if configured): the fraction m/N (identity) or
+    log((m + a)/(N + 2a)) − offset (log; offset = log_target_offset at the predicted rate
+    when the fit was bias-corrected, 0 for rates outside (0, 1)). That Gaussian is
+    discretized at half-integer counts. Returns z and the number of points without offset.
+    """
+    from core.mfgp_pipeline import log_target_offset
+    from core.quantile_residuals import discretized_gaussian_log_tails, quantile_residuals
+
+    hits = np.rint(observed * events)
+    if not np.allclose(hits, observed * events):
+        raise ValueError("Observed fractions are not counts over the event totals")
+    extra_noise = {} if noise is None else dict(noise=noise)
+    mu, variance = gp.predict_transformed(theta, fidelity=level, **extra_noise)
+    a = cfg.raw_pseudocount
+    offset, outside = np.zeros_like(mu), 0
+    if cfg.output_transform == "log" and bias_corrected:
+        rate, _ = gp.predict(theta, fidelity=level)
+        inside = (rate > 0) & (rate < 1)
+        offset[inside] = log_target_offset(rate[inside], events[inside], a)
+        outside = int((~inside).sum())
+    if cfg.output_transform == "log":
+
+        def transform(count, n):
+            return np.log((count + a) / (n + 2 * a)) - offset
+
+    else:
+
+        def transform(count, n):
+            return count / n
+
+    tails = discretized_gaussian_log_tails(hits, events, mu, np.sqrt(variance), transform)
+    return quantile_residuals(*tails, rng), outside
 
 
 class _Data:
@@ -295,6 +338,19 @@ def run_mfgp(
         scores = mfgp_metrics(
             gp, batch.theta, observed, fidelity=level, seed=metrics_seed, **extra_noise
         )
+        quantile_z, no_offset = _quantile_z(
+            gp,
+            batch.theta,
+            level,
+            observed,
+            events,
+            noise,
+            cfg,
+            bias_corrected=bool(correction and correction["bias_correction"]),
+            rng=np.random.default_rng(np.random.SeedSequence([metrics_seed, e, QUANTILE_KEY])),
+        )
+        if no_offset:
+            scores["quantile_z_rates_outside_unit_interval"] = no_offset
         if noise is not None:
             scores["observation_noise"] = "learned + binomial count noise at the predicted rate"
             scores["rates_outside_unit_interval"] = outside  # learned noise only there
@@ -327,6 +383,7 @@ def run_mfgp(
             mean=mean,
             sigma=sigma,
             residual=mean - observed,
+            quantile_z=quantile_z,
             output_transform=np.array(cfg.output_transform),
             label=np.array(f"{evaluation.partition}/{evaluation.fidelity}, level {level}"),
             **extra,

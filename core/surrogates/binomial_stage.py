@@ -5,7 +5,8 @@ Output directory::
     observations.json        observation sets, voxel counts and data provenance
     training_arrays.npz      theta, hits, events, set index and voxel index per training voxel
     model.pkl, model.json    fitted GP and its metadata
-    evaluation_<e>.npz       per evaluation set: observed fraction, predictive mean/sd/intervals
+    evaluation_<e>.npz       per evaluation set: observed fraction, predictive mean/sd/intervals,
+                             quantile_z (randomized quantile residuals of the hits)
     metrics.json             one row per evaluation set
     development_map.npz      probability mean and variance at every loaded voxel
     compute.json             wall/CPU time and allocated cores per stage (core.compute)
@@ -20,6 +21,10 @@ from scipy.stats import binom
 
 from core.compute import ComputeLog
 from core.gp_metrics import gp_metrics
+from core.quantile_residuals import binomial_mixture_log_tails, quantile_residuals
+
+# SeedSequence key under (seed, evaluation index) for the quantile residual draws.
+QUANTILE_KEY = 1
 
 # Gaussian-equivalent central probabilities of the ±1/2/3 sigma bands.
 LEVELS = {1: 0.682689492, 2: 0.954499736, 3: 0.997300204}
@@ -166,6 +171,11 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
         rng = np.random.default_rng(np.random.SeedSequence([rng_seed, e]))
         p = expit(rng.normal(mu, np.sqrt(variance), size=(cfg.prediction_draws, len(mu))))
         log_mass = logsumexp(binom.logpmf(k, total, p), axis=0) - np.log(len(p))
+        # Quantile residuals of the hits under the same mixture (marginal per voxel).
+        quantile_z = quantile_residuals(
+            *binomial_mixture_log_tails(k, total, p),
+            np.random.default_rng(np.random.SeedSequence([rng_seed, e, QUANTILE_KEY])),
+        )
         scores.update(
             evaluation=e,
             partition=item.partition,
@@ -190,6 +200,7 @@ def run_binomial_gp(cfg, *, provider, output_directory, extra_metadata=None, com
             mean=mean,
             sigma=sd,
             residual=mean - observed,
+            quantile_z=quantile_z,
             label=np.array(f"{item.partition}/{item.fidelity}"),
             **{
                 f"{bound}_{level}": intervals[level][i]
@@ -243,6 +254,7 @@ def _plot(directory, coverage_ylim=None):
             observed, mean, sigma = a["observed"], a["mean"], a["sigma"]
             intervals = {k: (a[f"lower_{k}"], a[f"upper_{k}"]) for k in LEVELS}
             label = str(a["label"])
+            quantile_z = a["quantile_z"] if "quantile_z" in a else None
         high = max(float(observed.max()), float(intervals[3][1].max()))
         plot_coverage_test(
             observed,
@@ -257,12 +269,17 @@ def _plot(directory, coverage_ylim=None):
             intervals=intervals,
             show_predicted=False,
         )
-        z = (observed - mean) / np.where(sigma > 0, sigma, np.nan)
+        # Quantile residuals of the hits if saved, else the Gaussian z of older runs.
+        if quantile_z is None:
+            z = np.nan_to_num((observed - mean) / np.where(sigma > 0, sigma, np.nan))
+            title = "z = (observed − predictive mean) / predictive sd"
+        else:
+            z, title = quantile_z, "randomized quantile residual of hits"
         plot_zscores(
-            np.nan_to_num(z),
+            z,
             mean,
             directory / f"{path.stem}_zscore",
-            title=f"{label}: z = (observed − predictive mean) / predictive sd",
+            title=f"{label}: {title}",
             rate_label="GP predicted rate",
         )
 

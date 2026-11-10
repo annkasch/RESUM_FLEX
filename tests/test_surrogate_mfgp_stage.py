@@ -135,6 +135,8 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
         assert np.isfinite(data["mean"]).all()
         assert (data["sigma"] >= 0).all()
         assert data["model_mean"].shape == data["mean"].shape
+        assert data["quantile_z"].shape == data["mean"].shape
+        assert not np.isnan(data["quantile_z"]).any()
     with np.load(out / "mfgp/training_arrays.npz") as data:
         assert data["X_2"].shape[0] == 4
         # Observed fractions use every event of the voxel.

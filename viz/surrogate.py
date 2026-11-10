@@ -46,17 +46,23 @@ def plot_surrogate_run(directory):
         for split in ("validation", "test"):
             if not (directory / f"{fidelity}_{split}_best.npz").exists():
                 continue
-            # z-scores of the selected checkpoint: binomial counting noise only.
+            # z-scores of the selected checkpoint: binomial counting noise only. Quantile
+            # residuals of the hits if saved, else the Pearson z of older runs.
             with np.load(directory / f"{fidelity}_{split}_best.npz") as arrays:
-                if "voxel_z" in arrays:
+                if "voxel_quantile_z" in arrays or "voxel_z" in arrays:
                     from viz.zscore import plot_zscores
 
+                    quantile = "voxel_quantile_z" in arrays
                     plot_zscores(
-                        arrays["voxel_z"],
+                        arrays["voxel_quantile_z" if quantile else "voxel_z"],
                         arrays["predicted"],
                         directory / f"{fidelity}_{split}_zscore",
                         title=f"{fidelity.upper()} {split}, best checkpoint: "
-                        "z = (hits − Σp) / √Σp(1−p)",
+                        + (
+                            "randomized quantile residual of hits under Poisson-binomial(p)"
+                            if quantile
+                            else "z = (hits − Σp) / √Σp(1−p)"
+                        ),
                     )
                 if "within_point_gain_null" in arrays:
                     plot_within_point_gain(
@@ -386,11 +392,18 @@ def plot_mfgp_run(directory, coverage_ylim=None):
     for path in sorted(directory.glob("evaluation_*.npz")):
         with np.load(path) as a:
             log_mode = str(a["output_transform"]) == "log"
+            # Quantile residuals of the hits if saved, else the Gaussian z of older runs.
+            quantile = "quantile_z" in a
             plot_zscores(
-                gp_zscores(a, pseudocount),
+                a["quantile_z"] if quantile else gp_zscores(a, pseudocount),
                 a["mean"],
                 directory / f"{path.stem}_zscore",
-                title=f"{a['label']}: z = (observed − GP mean) / GP σ"
+                title=f"{a['label']}: "
+                + (
+                    "randomized quantile residual of hits, GP predictive discretized"
+                    if quantile
+                    else "z = (observed − GP mean) / GP σ"
+                )
                 + (" in log space" if log_mode else ""),
                 rate_label="GP predicted rate",
             )

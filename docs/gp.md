@@ -190,3 +190,12 @@ probabilities and then binomial counts (observation-predictive); the NLL is a co
 mass and must not be ranked against the MFGP's density NLL. Outputs: `observations.json`,
 `training_arrays.npz`, `model.pkl`/`model.json`, `evaluation_<e>.npz`, `metrics.json`,
 `development_map.npz` and coverage / z-score plots. Settings: [docs/configs.md](configs.md).
+
+Z-score plots (`evaluation_<e>_zscore.png`, both GPs) show randomized quantile residuals of
+the hits, saved as `quantile_z` in `evaluation_<e>.npz` (see
+[evaluation.md](evaluation.md), read-out). Binomial GP: the CDF is the binomial mixed over
+the marginal latent draws of the count NLL. MFGP: the GP's own observation predictive
+N(μ, σ²) in fitted space, noise included, discretized at half-integer counts: m/N
+(identity) or log((m + a)/(N + 2a)) − offset (log; offset at the predicted rate if the fit
+was bias-corrected). Gaussian mass below 0 hits or above N goes to the end counts. Runs
+without `quantile_z` keep the old Gaussian z in the plot.

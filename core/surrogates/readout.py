@@ -1,5 +1,5 @@
 """Read-out after training: noise ceiling, bootstrap intervals, within-design-point null,
-feature calibration and context sweep.
+feature calibration, randomized quantile residuals and context sweep.
 
 None of these feed checkpoint selection; they run once per saved checkpoint.
 """
@@ -9,6 +9,7 @@ from scipy.special import expit
 from scipy.stats import spearmanr
 
 from core.precision_recall import precision_recall
+from core.quantile_residuals import poisson_binomial_log_tails, quantile_residuals
 from core.surrogate_cnp import split_context_target
 from core.surrogates.base import Episode
 from core.surrogates.evaluation import (
@@ -29,7 +30,7 @@ NULL_DRAWS = 1000
 # Two-sided Gaussian tail probabilities of the ±1/2/3σ null quantiles.
 NULL_TAILS = {1: 0.158655, 2: 0.0227501, 3: 0.0013499}
 # SeedSequence keys under validation_seed (0 is the selection design-point subset).
-CEILING_KEY, BOOTSTRAP_KEY, NULL_KEY = 1, 2, 3
+CEILING_KEY, BOOTSTRAP_KEY, NULL_KEY, QUANTILE_KEY = 1, 2, 3, 4
 SWEEP_METRICS = (
     "bernoulli_log_loss",
     "log_loss_skill",
@@ -176,9 +177,10 @@ def readout_metrics(
     null_draws=NULL_DRAWS,
 ):
     """Noise ceiling, bootstrap intervals, within-design-point null coverage, feature
-    calibration (``feature_bins`` equal-count bins per column) and, with ``residual``
-    (ResidualTestConfig), the residual learnability test for one evaluated episode.
-    Returns (metrics, arrays)."""
+    calibration (``feature_bins`` equal-count bins per column), randomized quantile
+    residuals of the hits per design point (array ``voxel_quantile_z``) and, with
+    ``residual`` (ResidualTestConfig), the residual learnability test for one evaluated
+    episode. Returns (metrics, arrays)."""
     probabilities = expit(arrays["logits"])
     metrics = dict(
         spearman_noise_ceiling=spearman_noise_ceiling(target, probabilities, seed=seed),
@@ -195,6 +197,10 @@ def readout_metrics(
     metrics["within_point_gain_coverage"] = coverage
     extra = {"within_point_gain_null": null}
     mask = target.event_mask  # [B, N]
+    hits = np.where(mask, arrays["labels"], 0).sum(axis=1)  # [B]
+    extra["voxel_quantile_z"] = quantile_residuals(
+        *poisson_binomial_log_tails(hits, probabilities, mask), _rng(seed, QUANTILE_KEY)
+    )
     names, values = feature_columns(target)
     if names:
         metrics["feature_calibration"], feature_arrays = feature_calibration(

@@ -16,7 +16,10 @@ def test_plot_zscores_summary_and_files(tmp_path):
     assert summary["beyond_limit"] == 0
     wide = plot_zscores(np.array([0.0, 7.0, -9.0]), np.ones(3), tmp_path / "w", title="t")
     assert wide["beyond_limit"] == 2 and wide["std"] > 6  # summary from unclipped z
-    with pytest.raises(ValueError, match="finite"):
+    infinite = plot_zscores(np.array([0.0, 1.0, np.inf]), np.ones(3), tmp_path / "i", title="t")
+    assert infinite["infinite"] == 1 and infinite["beyond_limit"] == 1
+    assert infinite["mean"] == pytest.approx(0.5)  # from the finite z only
+    with pytest.raises(ValueError, match="NaN"):
         plot_zscores(np.array([np.nan]), np.array([1.0]), tmp_path / "bad", title="t")
 
 

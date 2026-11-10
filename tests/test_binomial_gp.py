@@ -99,6 +99,7 @@ def test_runner_pools_fidelities_and_scores_evaluation(tmp_path):
     assert set(row["coverage"]) == {"1", "2", "3"}
     with np.load(out / "evaluation_0.npz") as arrays:
         assert (arrays["lower_1"] <= arrays["upper_1"]).all()
+        assert arrays["quantile_z"].shape == (6,) and np.isfinite(arrays["quantile_z"]).all()
     for name in ("evaluation_0_coverage.png", "evaluation_0_zscore.png", "model.pkl"):
         assert (out / name).exists()
     compute = json.loads((out / "compute.json").read_text())
