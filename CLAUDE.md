@@ -10,7 +10,7 @@ terms such as voxels.
 
 If `.claude/status.md` exists (local, open items only), read it first. On a Slurm cluster (e.g.
 NERSC Perlmutter), read `docs/nersc.md` first: login nodes take one single-threaded process of up
-to ~15 min.
+to ~20 min.
 
 Docs: `README.md` (usage); `docs/index.md` lists one file per topic and when to read it.
 Open only the file the task needs: `docs/design.md` before changing code (data flow, which

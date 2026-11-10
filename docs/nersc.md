@@ -6,7 +6,7 @@ their own `sbatch` files. This page lists what such scripts and interactive work
 ## Login nodes
 
 Login nodes are shared. Allowed there: single-threaded work (`OMP_NUM_THREADS=1
-OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`) of up to about 15 min, one such process at a time,
+OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`) of up to about 20 min, one such process at a time,
 a few GB of memory. That covers test files, the full suite (~12 min), `pytest -m 'not slow'`
 (~5 min), `scripts/smoke.py`, `ruff` and config validation.
 
