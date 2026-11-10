@@ -56,10 +56,17 @@ def test_noise_study_runs_and_is_seeded(transform):
     assert row["events"] > 0 and row["mean_hits_dim"] < 5
     for key in ("rate_bias", "rate_bias_dim", "rate_bias_bright", "top_noise_variance"):
         assert np.isfinite(row[key])
-    assert set(row["coverage"]) == {"1", "2", "3"}
-    assert all(0 <= c <= 1 for c in row["coverage"].values())
+    for key in ("coverage", "coverage_dim", "coverage_bright"):
+        assert set(row[key]) == {"1", "2", "3"}
+        assert all(0 <= c <= 1 for c in row[key].values())
     log_terms = {"pseudocount_shift", "jensen_shift", "count_log_variance", "back_conversion_shift"}
     assert log_terms <= set(row) if transform == "log" else not log_terms & set(row)
+    if transform == "log":
+        binomial = noise_study(5, seed=3, observation_noise="binomial", **kwargs)
+        assert binomial["log_bias_correction"]["point_noise"] is True
+    else:
+        with pytest.raises(ValueError, match="binomial"):
+            noise_study(5, seed=3, observation_noise="binomial", **kwargs)
 
 
 def test_sweep_script_writes_rows(tmp_path):
@@ -121,25 +128,89 @@ def test_log_corrected_fit_offsets_and_stopping():
 
     X, Y, events = _two_levels()
     np.random.seed(0)
-    gp, offsets, info = fit_mfgp_log_corrected(
+    result = fit_mfgp_log_corrected(
         X, Y, events=[None, events], max_refits=8, pseudocount=0.5, n_restarts=1
     )
+    gp, offsets = result.gp, result.offsets
     assert offsets[0] is None and offsets[1].shape == (12,)
-    assert 1 <= info["refits"] <= 8 and info["converged"] == (info["max_change"] <= 0.01)
+    assert result.point_noise == [None, None]
+    assert 1 <= result.refits <= 8 and result.converged == (result.max_change <= 0.01)
     np.testing.assert_allclose(gp.model.Y[30:, 0], np.log(Y[1][:, 0]) - offsets[1])
-    if info["converged"]:  # offsets are (to tolerance) those of the final rate
+    if result.converged:  # offsets are (to tolerance) those of the final rate
         rate, _ = gp.predict(X[1], fidelity=1)
         np.testing.assert_allclose(offsets[1], log_target_offset(rate, events, 0.5), atol=0.02)
     np.random.seed(0)
-    plain, none, info0 = fit_mfgp_log_corrected(
+    plain = fit_mfgp_log_corrected(
         X, Y, events=[None, events], max_refits=0, pseudocount=0.5, n_restarts=1
     )
-    assert none == [None, None] and info0["refits"] == 0
+    assert plain.offsets == [None, None] and plain.refits == 0
     np.random.seed(0)
     reference = fit_mfgp(X, Y, output_transform="log", n_restarts=1)
-    np.testing.assert_allclose(plain.model.param_array, reference.model.param_array)
+    np.testing.assert_allclose(plain.gp.model.param_array, reference.model.param_array)
     with pytest.raises(ValueError, match="one entry"):
         fit_mfgp_log_corrected(X, Y, events=[events], max_refits=1, pseudocount=0.5)
+    with pytest.raises(ValueError, match="refit"):
+        fit_mfgp_log_corrected(
+            X, Y, events=[None, events], max_refits=0, pseudocount=0.5, point_noise=True
+        )
+
+
+def test_log_corrected_fit_with_point_noise():
+    pytest.importorskip("GPy")
+    from core.mfgp_pipeline import binomial_log_moments, fit_mfgp_log_corrected, log_count_noise
+
+    X, Y, events = _two_levels()
+    np.random.seed(0)
+    result = fit_mfgp_log_corrected(
+        X,
+        Y,
+        events=[None, events],
+        max_refits=8,
+        pseudocount=0.5,
+        n_restarts=1,
+        point_noise=True,
+    )
+    gp, noise = result.gp, result.point_noise[1]
+    assert result.point_noise[0] is None and noise.shape == (12,) and (noise > 0).all()
+    assert result.summary()["point_noise"] is True
+    # The training rows carry the fixed noise; the learned level noise comes on top.
+    fixed = gp.model.Y_metadata["point_noise"]
+    np.testing.assert_array_equal(fixed[:30], 0)
+    np.testing.assert_allclose(fixed[30:], noise)
+    level = gp.model.likelihood.gaussian_variance(gp.model.Y_metadata)
+    learned = [float(lik.variance[0]) for lik in gp.model.likelihood.likelihoods_list]
+    np.testing.assert_allclose(level[30:], learned[1] + noise)
+    rate, _ = gp.predict(X[1], fidelity=1)
+    np.testing.assert_allclose(
+        log_count_noise(rate, events, 0.5), binomial_log_moments(rate, events, 0.5)[1]
+    )
+    with pytest.raises(ValueError, match="outside"):
+        log_count_noise(np.array([1.2]), np.array([10.0]), 0.5)
+
+
+def test_predict_adds_point_noise():
+    pytest.importorskip("GPy")
+    from core.mfgp_pipeline import fit_mfgp
+
+    X, Y, _ = _two_levels()
+    np.random.seed(0)
+    gp = fit_mfgp(X, Y, output_transform="log", n_restarts=1, point_noise=[None, np.full(12, 0.05)])
+    x = X[1][:4]
+    mu, total = gp.predict_transformed(x)
+    noise = np.full(4, 0.2)
+    mu2, total2 = gp.predict_transformed(x, noise=noise)
+    np.testing.assert_allclose(mu2, mu)
+    np.testing.assert_allclose(total2, total + noise)
+    mean, _ = gp.predict(x)
+    mean2, variance2 = gp.predict(x, noise=noise)
+    np.testing.assert_allclose(mean2, mean)  # noise widens, never shifts the rate
+    np.testing.assert_allclose(variance2, np.expm1(total2) * np.exp(2 * mu + total2))
+    lo, hi = gp.predict_interval(x, n_sigma=1, noise=noise)
+    np.testing.assert_allclose(hi / lo, np.exp(2 * np.sqrt(total2)))
+    with pytest.raises(ValueError, match="nonnegative"):
+        gp.predict(x, noise=-noise)
+    with pytest.raises(ValueError, match="point_noise"):
+        fit_mfgp(X, Y, output_transform="log", n_restarts=1, point_noise=[None])
 
 
 def test_log_bias_refits_config():
@@ -155,6 +226,10 @@ def test_log_bias_refits_config():
     MFGPStageConfig(levels=levels, log_bias_max_refits=0)
     with pytest.raises(ValueError, match="log only"):
         MFGPStageConfig(levels=levels, log_bias_max_refits=3)
+    MFGPStageConfig(levels=levels, output_transform="log", observation_noise="binomial")
+    for bad in ({}, {"output_transform": "log", "log_bias_max_refits": 0}):
+        with pytest.raises(ValueError, match="binomial needs"):
+            MFGPStageConfig(levels=levels, observation_noise="binomial", **bad)
     assert resolve_log_bias_refits(None, "log") == 8
     assert resolve_log_bias_refits(None, "identity") == 0
     with pytest.raises(ValueError):

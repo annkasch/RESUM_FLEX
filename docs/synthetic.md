@@ -52,6 +52,10 @@ With the rate mean exp(μ + v_f/2) (noise excluded, same day): log mode ≈ +30 
 With the log-target bias correction as well (`log_bias_max_refits`, default): ≈ +5 % /
 +0.1 % / +1 % (dim points +1.5 % / −1 % / +0.5 %); 1σ coverage at 1 hit stays ≈ 0.3, as
 positive lognormal bounds can't cover the many zero observed fractions there.
+`--noise learned,binomial` compares per-point binomial noise (log mode): bias unchanged
+(+6 / +0.4 / +0.5 %), coverage evened out between dim and bright points (50 hits: 1σ/2σ
+0.69/0.94 dim, 0.69/0.95 bright; `learned`: 0.59/0.87 dim, 0.86/0.99 bright). The table
+prints 1σ/2σ coverage of dim and bright points next to the overall coverage.
 
 ## Run the synthetic-validation pipelines (Phase 1–5)
 

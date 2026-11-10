@@ -6,7 +6,8 @@ The low level is a model mean ``p(θ) · exp(small smooth distortion)`` at many 
 ``m ~ Binomial(N, p)`` at fewer points, ``N`` chosen for a given mean number of hits.
 The GP is fitted with the same target preparation as the MFGP stage
 (:func:`core.mfgp_pipeline.fit_targets`) and scored on held-out points against the true
-rate (bias) and against fresh observed fractions (coverage). In log mode the top-level
+rate (bias) and against fresh observed fractions (coverage, also for dim and bright
+points separately). In log mode the top-level
 target gets the stage's bias correction (fit_mfgp_log_corrected) unless
 ``log_bias_max_refits=0``.
 
@@ -29,6 +30,7 @@ from core.mfgp_pipeline import (
     fit_mfgp,
     fit_mfgp_log_corrected,
     fit_targets,
+    log_count_noise,
     resolve_log_bias_refits,
 )
 
@@ -72,6 +74,7 @@ def noise_study(
     kernel: str = "rbf",
     n_restarts: int = 2,
     log_bias_max_refits: int | None = None,
+    observation_noise: str = "learned",
     seed: int = 0,
 ) -> dict:
     """Fit one two-level MFGP with ``hits`` mean hits per top-level point; return scores.
@@ -80,7 +83,10 @@ def noise_study(
     below the median true rate, bright = above), as in metrics.json mean_bias/mean_observed.
     ``log_bias_max_refits``: largest number of refits of the log-target bias correction as
     in the MFGP stage (None: 8 in log mode, 0 in identity mode; identity allows only 0).
+    ``observation_noise``: learned or binomial (log mode with refits), as in the stage.
     """
+    if observation_noise not in ("learned", "binomial"):
+        raise ValueError("observation_noise must be learned or binomial")
     max_refits = resolve_log_bias_refits(log_bias_max_refits, output_transform)
     if hits <= 0:
         raise ValueError("hits must be positive")
@@ -112,15 +118,19 @@ def noise_study(
         X_list, Y_list = [theta_low, theta_top], [t[:, None] for t in targets]
         correction = None
         if max_refits:
-            gp, _, correction = fit_mfgp_log_corrected(
+            result = fit_mfgp_log_corrected(
                 X_list,
                 Y_list,
                 events=[None, n_top_events],
                 max_refits=max_refits,
+                point_noise=observation_noise == "binomial",
                 pseudocount=pseudocount,
                 kernel=kernel,
                 n_restarts=n_restarts,
             )
+            gp, correction = result.gp, result.summary()
+        elif observation_noise == "binomial":
+            raise ValueError("observation_noise binomial needs log mode with refits")
         else:
             gp = fit_mfgp(
                 X_list,
@@ -131,7 +141,11 @@ def noise_study(
             )
     finally:
         np.random.set_state(state)
-    mean, _ = gp.predict(theta_test, fidelity=1)
+    extra = {}
+    if observation_noise == "binomial":
+        rate, _ = gp.predict(theta_test, fidelity=1)
+        extra["noise"] = log_count_noise(rate, np.full(n_test, float(events)), pseudocount)
+    mean, _ = gp.predict(theta_test, fidelity=1, **extra)
     observed = rng(4).binomial(events, p_test) / events
     dim = p_test < np.median(p_test)
 
@@ -145,16 +159,22 @@ def noise_study(
         events=events,
         mean_hits_dim=float(events * p_test[dim].mean()),
         seed=seed,
+        observation_noise=observation_noise,
         log_bias_correction=correction,
         rate_bias=bias(np.ones(n_test, dtype=bool)),
         rate_bias_dim=bias(dim),
         rate_bias_bright=bias(~dim),
         coverage={},
+        coverage_dim={},
+        coverage_bright={},
         top_noise_variance=noise[-1],
     )
     for k in (1, 2, 3):
-        lo, hi = gp.predict_interval(theta_test, fidelity=1, n_sigma=k)
-        row["coverage"][str(k)] = float(((observed >= lo) & (observed <= hi)).mean())
+        lo, hi = gp.predict_interval(theta_test, fidelity=1, n_sigma=k, **extra)
+        inside = (observed >= lo) & (observed <= hi)
+        row["coverage"][str(k)] = float(inside.mean())
+        row["coverage_dim"][str(k)] = float(inside[dim].mean())
+        row["coverage_bright"][str(k)] = float(inside[~dim].mean())
     if output_transform == "log":
         terms = log_target_terms(p_top, n_top_events, pseudocount)
         row.update(

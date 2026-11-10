@@ -14,7 +14,7 @@ def test_log_moments_and_intervals(monkeypatch):
     monkeypatch.setattr(
         gp,
         "predict_transformed",
-        lambda *a, include_noise=True: (mu, var if include_noise else latent),
+        lambda *a, include_noise=True, noise=None: (mu, var if include_noise else latent),
     )
     x = np.zeros((2, 1))
     mean, variance = gp.predict(x)

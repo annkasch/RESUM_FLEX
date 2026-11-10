@@ -511,6 +511,10 @@ class MFGPStageConfig(StrictConfigModel):
     # (pseudocount + Jensen offset at the predicted rate) until the offsets change by
     # < 0.01, at most this often. None: 8 in log mode; 0 turns it off. Identity: only 0.
     log_bias_max_refits: int | None = Field(default=None, ge=0)
+    # learned: one constant noise variance per level. binomial (log mode, with the bias
+    # correction): observed-fraction points also get their count noise Var[log y] at the
+    # predicted rate, held-out points at their own N, on top of the learned level noise.
+    observation_noise: Literal["learned", "binomial"] = "learned"
     kernel: Literal["rbf", "matern52"] = "rbf"
     n_restarts: int = Field(default=5, gt=0)
     seed: int = 0
@@ -533,6 +537,13 @@ class MFGPStageConfig(StrictConfigModel):
     def consistent_levels(self):
         if self.log_bias_max_refits and self.output_transform != "log":
             raise ValueError("log_bias_max_refits applies to output_transform: log only")
+        if self.observation_noise == "binomial" and (
+            self.output_transform != "log" or self.log_bias_max_refits == 0
+        ):
+            raise ValueError(
+                "observation_noise: binomial needs output_transform: log and "
+                "log_bias_max_refits > 0 (identity mode: not implemented)"
+            )
         limits = {}
         for level in self.levels:
             if level.partition in TEST_PARTITIONS:

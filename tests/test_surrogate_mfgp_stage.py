@@ -10,10 +10,11 @@ from data.pseudo_generator import for_scenario
 from schemas.surrogates import SurrogateRunConfig
 
 
-@pytest.mark.parametrize("transform", ["identity", "log"])
+@pytest.mark.parametrize("transform", ["identity", "log", "log-binomial"])
 @pytest.mark.parametrize("lf_validation", [True, False])
 def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
     pytest.importorskip("GPy")
+    transform, _, noise = transform.partition("-")
     source = for_scenario("S1", seed=1)
     root = tmp_path / "data"
     for split in ("train", "validation"):
@@ -49,6 +50,7 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
             "n_restarts": 1,
             "n_context": 4,
             "output_transform": transform,
+            "observation_noise": noise or "learned",
             "levels": [
                 {"source": "model_mean", "partition": "train", "fidelity": "lf"},
                 {"source": "model_mean", "partition": "train", "fidelity": "hf"},
@@ -153,6 +155,10 @@ def test_full_pipeline_and_mfgp_roundtrip(tmp_path, lf_validation, transform):
                 )
                 np.testing.assert_allclose(exact["Y_0"], np.log(fit["Y_0"]))
         assert meta["log_bias_correction"]["refits"] >= 1
+        assert meta["log_bias_correction"]["point_noise"] == (noise == "binomial")
+        with np.load(out / "mfgp/fit_arrays.npz") as fit:
+            assert ("point_noise_2" in fit) == (noise == "binomial")
+        assert ("observation_noise" in scores[-1]) == (noise == "binomial")
         assert levels[2]["log_offset_mean"] > 0  # pseudocount dominates at ~1 hit
         with np.load(out / f"mfgp/evaluation_{hf}.npz") as arrays:
             assert (arrays["lower_3"] > 0).all()

@@ -112,6 +112,17 @@ at most `log_bias_max_refits` (default 8; 0 = off). `fit_arrays.npz` holds the o
 converged, max_change). The synthetic sweep (`scripts/mfgp_noise_sweep.py`) converges in
 2–3 refits at 5 hits per point and in 7–8 at 1 hit.
 
+`observation_noise: binomial` (log mode, needs the correction) gives every observed-fraction
+point its count noise Var[log((m+a)/(N+2a))] at the rate of the previous fit, as a fixed
+variance on top of the learned noise of its level (`LevelPlusPointNoise`), updated in the
+same refits; the first fit has the learned noise only, so the noise never depends on the
+point's own observation. Held-out points scored against an observed-fraction level get the
+same count noise from their N and the predicted rate in the intervals and scores, never in
+the mean; `development_map.npz` has the learned noise only (no N). Per-point noise is
+stored as `point_noise_k` in `fit_arrays.npz`. On the synthetic sweep it keeps the bias of
+`learned` and evens out coverage: at 50 hits 1σ/2σ dim 0.69/0.94 and bright 0.69/0.95,
+against 0.59/0.87 and 0.86/0.99 with `learned`.
+
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
 adjusted original-scale targets and offsets, `transformed_training_arrays.npz` records
 the exact GP targets (log of the smoothed value minus the offset), and `levels.json` records per model-mean level how many values hit

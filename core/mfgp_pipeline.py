@@ -174,7 +174,7 @@ def log_target_offset(
     return mean - np.log(np.asarray(probability, dtype=float))
 
 
-LOG_BIAS_TOLERANCE = 0.01  # largest change of an offset (log units) at convergence
+LOG_BIAS_TOLERANCE = 0.01  # largest change of an offset or noise (log units) at convergence
 
 
 def resolve_log_bias_refits(max_refits, output_transform):
@@ -188,6 +188,38 @@ def resolve_log_bias_refits(max_refits, output_transform):
     return max_refits
 
 
+@dataclass
+class LogCorrectedFit:
+    """Result of :func:`fit_mfgp_log_corrected`; per-level arrays [n_k] or None."""
+
+    gp: MultiFidelityGP
+    offsets: list[np.ndarray | None]
+    point_noise: list[np.ndarray | None]
+    refits: int
+    converged: bool
+    max_change: float
+
+    def summary(self) -> dict:
+        return dict(
+            refits=self.refits,
+            converged=self.converged,
+            max_change=self.max_change,
+            point_noise=any(v is not None for v in self.point_noise),
+        )
+
+
+def log_count_noise(rate: np.ndarray, events: np.ndarray, pseudocount: float) -> np.ndarray:
+    """Count noise [n] of the log target, Var[log((m + a)/(N + 2a))], at the rate [n].
+
+    A rate outside (0, 1) raises: it is never clipped.
+    """
+    rate = np.asarray(rate, dtype=float)
+    invalid = int(((rate <= 0) | (rate >= 1)).sum())
+    if invalid:
+        raise ValueError(f"{invalid} predicted rates outside (0, 1); no binomial noise")
+    return binomial_log_moments(rate, np.asarray(events, dtype=float), pseudocount)[1]
+
+
 def fit_mfgp_log_corrected(
     X_list: list[np.ndarray],
     Y_list: list[np.ndarray],
@@ -195,35 +227,37 @@ def fit_mfgp_log_corrected(
     events: list[np.ndarray | None],
     max_refits: int,
     pseudocount: float,
+    point_noise: bool = False,
     n_restarts: int = 5,
     **fit_kwargs,
-) -> tuple[MultiFidelityGP, list[np.ndarray | None], dict]:
+) -> LogCorrectedFit:
     """Log-mode fit whose observed-fraction targets average to log p (bias correction).
 
     Y_list[k]: [n_k, 1] smoothed targets in original units (fit_targets); events[k]: [n_k]
     event counts of an observed-fraction level, None for other levels. After a first fit
-    (``n_restarts``), each refit divides an observed-fraction target by exp(offset), with
-    the offset E[log y] − log p (log_target_offset) at the rate p the previous fit predicts
-    for that level, and starts from the previous hyperparameters (one optimizer run).
-    Refits stop when no offset changes by more than LOG_BIAS_TOLERANCE, or after
-    ``max_refits``. Returns the GP, the last offsets [n_k] per level (None: uncorrected)
-    and dict(refits, converged, max_change). A predicted rate outside (0, 1) raises: it
-    is never clipped.
+    (``n_restarts``, learned constant noise only), each refit divides an observed-fraction
+    target by exp(offset), with the offset E[log y] − log p (log_target_offset) at the rate
+    p the previous fit predicts for that level, and starts from the previous hyperparameters
+    (one optimizer run). With ``point_noise`` those points also get their count noise
+    Var[log y] at that rate as a fixed variance on top of the learned level noise. Refits
+    stop when no offset or noise changes by more than LOG_BIAS_TOLERANCE, or after
+    ``max_refits``. A predicted rate outside (0, 1) raises: it is never clipped.
     """
     if len(events) != len(Y_list):
         raise ValueError("events needs one entry (or None) per level")
     if max_refits < 0:
         raise ValueError("max_refits must be nonnegative")
+    if point_noise and not max_refits:
+        raise ValueError("point_noise needs at least one refit")
+    n = len(Y_list)
     gp = fit_mfgp(X_list, Y_list, output_transform="log", n_restarts=n_restarts, **fit_kwargs)
-    offsets: list[np.ndarray | None] = [None] * len(Y_list)
-    previous = [
-        np.zeros(len(y)) if n is not None else None for y, n in zip(Y_list, events, strict=True)
-    ]
+    offsets: list[np.ndarray | None] = [None] * n
+    noises: list[np.ndarray | None] = [None] * n
     refits, change = 0, float("inf")
     while refits < max_refits and change > LOG_BIAS_TOLERANCE:
         targets, change = list(Y_list), 0.0
-        for k, n in enumerate(events):
-            if n is None:
+        for k, counts in enumerate(events):
+            if counts is None:
                 continue
             rate, _ = gp.predict(X_list[k], fidelity=k)
             invalid = int(((rate <= 0) | (rate >= 1)).sum())
@@ -232,21 +266,31 @@ def fit_mfgp_log_corrected(
                     f"Level {k}: {invalid} predicted rates outside (0, 1); "
                     "can't correct the log target"
                 )
-            offsets[k] = log_target_offset(rate, np.asarray(n, dtype=float), pseudocount)
-            change = max(change, float(np.abs(offsets[k] - previous[k]).max()))
-            previous[k] = offsets[k]
-            targets[k] = Y_list[k] * np.exp(-offsets[k])[:, None]
+            mean_log, var_log = binomial_log_moments(
+                rate, np.asarray(counts, dtype=float), pseudocount
+            )
+            offset = mean_log - np.log(rate)
+            previous = np.zeros_like(offset) if offsets[k] is None else offsets[k]
+            change = max(change, float(np.abs(offset - previous).max()))
+            offsets[k] = offset
+            if point_noise:
+                previous = np.zeros_like(var_log) if noises[k] is None else noises[k]
+                change = max(change, float(np.abs(var_log - previous).max()))
+                noises[k] = var_log
+            targets[k] = Y_list[k] * np.exp(-offset)[:, None]
         gp = fit_mfgp(
             X_list,
             targets,
             output_transform="log",
             n_restarts=1,
             initial_parameters=gp.model.param_array.copy(),
+            point_noise=noises if point_noise else None,
             **fit_kwargs,
         )
         refits += 1
-    info = dict(refits=refits, converged=change <= LOG_BIAS_TOLERANCE, max_change=change)
-    return gp, offsets, info
+    return LogCorrectedFit(
+        gp, offsets, noises, refits, converged=change <= LOG_BIAS_TOLERANCE, max_change=change
+    )
 
 
 def fit_mfgp(
@@ -258,11 +302,13 @@ def fit_mfgp(
     verbose: bool = False,
     output_transform: str = "identity",
     initial_parameters: np.ndarray | None = None,
+    point_noise: list[np.ndarray | None] | None = None,
 ) -> MultiFidelityGP:
     """Fit a linear multi-fidelity GP with one level per (X, Y) pair, lowest fidelity first.
 
     X_list[k]: [n_k, D_theta]; Y_list[k]: [n_k, 1]. Log mode requires strictly positive
-    targets, already smoothed or floored by the caller.
+    targets, already smoothed or floored by the caller. point_noise[k] [n_k]: fixed
+    observation variance per point in fitted units (MultiFidelityGP.fit).
     """
     if len(X_list) != len(Y_list) or len(X_list) < 2:
         raise ValueError("Need matching X/Y lists with at least two levels")
@@ -277,6 +323,7 @@ def fit_mfgp(
         n_restarts=n_restarts,
         verbose=verbose,
         initial_parameters=initial_parameters,
+        point_noise=point_noise,
     )
 
 

@@ -99,12 +99,19 @@ def gp_metrics(observed, predicted, *, intervals=None, samples=None, median=None
     return result
 
 
-def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096):
-    """Score the actual Gaussian/lognormal observation distribution of an MFGP."""
-    mean, _ = gp.predict(theta, fidelity=fidelity)
-    mu, variance = gp.predict_transformed(theta, fidelity=fidelity)
+def mfgp_metrics(gp, theta, observed, *, fidelity=None, seed=42, n_draws=4096, noise=None):
+    """Score the actual Gaussian/lognormal observation distribution of an MFGP.
+
+    noise [n]: fixed observation variance per scored point in fitted units (e.g. count
+    noise), added to the GP's learned noise; None: learned noise only.
+    """
+    extra = {} if noise is None else dict(noise=noise)
+    mean, _ = gp.predict(theta, fidelity=fidelity, **extra)
+    mu, variance = gp.predict_transformed(theta, fidelity=fidelity, **extra)
     sigma = np.sqrt(variance)
-    intervals = {k: gp.predict_interval(theta, fidelity=fidelity, n_sigma=k) for k in (1, 2, 3)}
+    intervals = {
+        k: gp.predict_interval(theta, fidelity=fidelity, n_sigma=k, **extra) for k in (1, 2, 3)
+    }
     draws = np.random.default_rng(seed).normal(mu, sigma, size=(n_draws, len(mu)))
     log_space = getattr(gp, "output_transform", "identity") == "log"
     samples = np.exp(draws) if log_space else draws
