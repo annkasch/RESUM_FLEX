@@ -58,14 +58,13 @@ def predict_partition(
 ):
     """Predict every design point of a prepared partition with a context-free checkpoint.
 
-    ``events_from`` = (partition, fidelity): each design point keeps its own theta but takes the
-    event inputs (phi) of a randomly drawn donor design point of that partition (seeded), never
-    its own (same design point id), so the partition itself can be the donor pool. For event
-    features defined relative to the design point (offset, direction), this is a fresh emission
-    sample: the prediction then uses nothing from the design point's own simulation, as for a
-    position that was never simulated. Features that are not (e.g. absolute positions) need the
-    provider's optional ``transfer_events``, which moves the donor events to the design point;
-    without it the donor phi is used unchanged. Default: the design point's own event inputs.
+    Default: each design point is predicted from its own event inputs. ``events_from`` =
+    (partition, fidelity) asks for donors instead: each design point takes the event inputs of a
+    randomly drawn donor design point of that partition (seeded), never its own (same design point
+    id), so the partition itself can be the donor pool. The prediction then uses nothing from the
+    design point's own simulation, as for a position that was never simulated. How events move
+    from one design point to another depends on what phi means, so donors need the provider's
+    ``transfer_events`` (``core/surrogates/datasets.py``); without it ``events_from`` fails.
 
     ``data_provider`` defaults to the provider the checkpoint was trained with. The inputs
     must be normalized exactly as the training data: the provider's normalization must
@@ -87,6 +86,12 @@ def predict_partition(
     if data_provider == FROM_CHECKPOINT:
         data_provider = model.metadata.get("data_provider")
     provider = load_provider(data_provider, data_directory)
+    if events_from is not None and getattr(provider, "transfer_events", None) is None:
+        raise ValueError(
+            f"events_from needs {type(provider).__name__}.transfer_events, the rule that moves "
+            "event inputs to another design point; without it predict uses each design point's "
+            "own events"
+        )
     if stream_units(model):
         # A field trained on ungrouped events works in physical units: map this data's
         # design point inputs (theta + offset) into them instead of requiring equal normalization.
@@ -109,23 +114,23 @@ def predict_partition(
     with compute.stage("data_loading"):
         batch, data = provider.load(partition, fidelity, labels=False)
         ids = provider.theta(partition, fidelity)[1]
-        donors = transfer = None
+        donors = None
         if events_from is not None:
+            from schemas.data_models import StandardBatch
+
             donor = provider.load(*events_from, labels=False)[0]
             donor_ids = provider.theta(*events_from)[1]
             batch, donors = _donor_batch(batch, donor, seed, target_ids=ids, donor_ids=donor_ids)
-            transfer = getattr(provider, "transfer_events", None)
-            if transfer is not None:
-                from schemas.data_models import StandardBatch
-
-                phi = transfer(batch.phi, tuple(events_from), donors, (partition, fidelity))
-                batch = StandardBatch(
-                    mode=batch.mode,
-                    theta=batch.theta,
-                    phi=np.asarray(phi, dtype=batch.phi.dtype),  # [B, N, D_phi]
-                    labels=batch.labels,
-                    event_counts=batch.events_per_design_point,
-                )
+            phi = provider.transfer_events(
+                batch.phi, tuple(events_from), donors, (partition, fidelity)
+            )
+            batch = StandardBatch(
+                mode=batch.mode,
+                theta=batch.theta,
+                phi=np.asarray(phi, dtype=batch.phi.dtype),  # [B, N, D_phi]
+                labels=batch.labels,
+                event_counts=batch.events_per_design_point,
+            )
     uncertainty = {}
     with evaluation_threads(threads), compute.stage("prediction"):
         prediction = _predict(model, batch, None)
@@ -191,9 +196,7 @@ def predict_partition(
                 seed=seed,
                 donor_index=donors.tolist(),
                 own_excluded=True,
-                transfer=(
-                    "provider transfer_events" if transfer is not None else "donor phi unchanged"
-                ),
+                transfer="provider transfer_events",
             )
         ),
         event_logits=events_directory.name if event_logits else None,

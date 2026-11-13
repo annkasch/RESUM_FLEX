@@ -46,8 +46,9 @@ class DatasetProvider(Protocol):
     # transfer_events(phi, source, source_rows, target) -> phi moves donor event inputs to other
     # design points for ``predict --events-from``. phi [B, N, D_phi] normalized: row b holds the
     # events of design point source_rows[b] of source = (partition, fidelity), to be placed at
-    # design point b of target = (partition, fidelity). Needed when phi is not relative to the
-    # design point (e.g. absolute positions); without it the donor phi is used unchanged.
+    # design point b of target = (partition, fidelity); return phi itself if the inputs are
+    # relative to the design point. Without it there are no donors: each design point is
+    # predicted from its own events, and ``events_from`` fails.
 
 
 def load_provider(spec: str | None, root) -> DatasetProvider:

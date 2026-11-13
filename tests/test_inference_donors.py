@@ -104,6 +104,34 @@ def test_predict_with_donors_from_the_same_partition_uses_the_provider_transfer(
 NORMALIZATION = {"theta": {"method": "none"}, "phi": {"method": "none"}}  # recorded as equal
 
 
+def test_donors_need_the_provider_transfer_rule(tmp_path):
+    from core.surrogates import build_surrogate
+    from core.surrogates.checkpoints import save_surrogate
+    from core.surrogates.inference import predict_partition
+
+    root = tmp_path / "data"
+    target = _batch(3, 4, 0.0, 1)
+    root.mkdir()
+    np.savez(
+        root / "arrays.npz",
+        theta=target.theta,
+        phi=target.phi,
+        counts=target.events_per_design_point,
+    )
+    model = build_surrogate({"kind": "mlp", "architecture": {"hidden_dims": [4]}}, 3, 6, seed=0)
+    model.metadata = {
+        "normalization.json": NORMALIZATION,
+        "step": 1,
+        "data_provider": "tests.test_inference_donors:PlainProvider",
+    }
+    checkpoint = tmp_path / "run" / "checkpoints" / "best"
+    save_surrogate(checkpoint, model)
+    with pytest.raises(ValueError, match="transfer_events"):
+        predict_partition(checkpoint, root, "test", "lf", events_from=("test", "lf"))
+    path = predict_partition(checkpoint, root, "test", "lf")  # default: own events
+    assert json.loads(path.with_suffix(".json").read_text())["event_inputs"] == "own"
+
+
 class ShiftProvider:
     """Minimal provider over arrays.npz whose transfer adds 1 to every donor event input."""
 
@@ -140,3 +168,9 @@ class ShiftProvider:
     def transfer_events(self, phi, source, source_rows, target):
         ShiftProvider.calls.append((np.array(phi), source, np.array(source_rows), target))
         return phi + 1.0
+
+
+class PlainProvider(ShiftProvider):
+    """The same provider without a transfer rule."""
+
+    transfer_events = None

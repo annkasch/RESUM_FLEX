@@ -92,11 +92,11 @@ inputs of a seeded random donor design point of that partition instead of its ow
 event sample, so nothing of the design point's own simulation enters (written as
 `<partition>_<fidelity>_events-<donor partition>_<donor fidelity>`). A design point never
 draws itself (same design point id), so the scored partition can be its own donor pool; a pool
-of other design points keeps the plain seeded draw. The donor phi is used as it is, which
-assumes event inputs relative to the design point; a provider whose phi is not (e.g. absolute
-positions) implements `transfer_events` (`core/surrogates/datasets.py`) to move the donor
-events to the target design point. The `.json` records the donor indices, the exclusion and
-whether the provider transfer was used.
+of other design points keeps the plain seeded draw. How events move to another design point
+depends on what phi means, so donors need the provider's `transfer_events`
+(`core/surrogates/datasets.py`; identity for inputs relative to the design point); without it
+`--events-from` fails and predictions use each design point's own events (the default). The
+`.json` records the donor indices and the exclusion.
 
 `--event-logits` (off by default) also writes every event's logit to
 `RUN/inference/best/<partition>_<fidelity>_events/`: float32, padding dropped, in the
