@@ -76,6 +76,12 @@ def plot_surrogate_run(directory):
                         directory / f"{fidelity}_{split}_feature_calibration.png",
                         title=f"{fidelity.upper()} {split}, best checkpoint",
                     )
+                if "residual_correction_events" in arrays:
+                    plot_residual_correction(
+                        arrays,
+                        directory / f"{fidelity}_{split}_residual_correction.png",
+                        title=f"{fidelity.upper()} {split}, best checkpoint",
+                    )
         fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")
         for ax, checkpoint in zip(axes, ("best", "final"), strict=True):
             for split in ("train", "validation") if fidelity == "lf" else ("validation",):
@@ -187,6 +193,65 @@ def plot_feature_calibration(arrays, out_path, *, title):
         axes[2 * (f // columns) + 1, f % columns].set_visible(False)
     axes[0, 0].legend(fontsize=8)
     fig.suptitle(f"{title}: calibration per input feature (equal-count bins)")
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
+def plot_residual_correction(arrays, out_path, *, title):
+    """Residual test: the trees' rate change log(Σp'/Σp) per bin against the observed
+    log(hits/Σp) (central 68 % Poisson interval of the hits), along logit p and each input."""
+    from scipy.stats import chi2
+
+    names = [str(n) for n in arrays["residual_correction_names"]]
+    hits = arrays["residual_correction_hits"]  # [C, bins]
+    predicted, corrected = (
+        arrays["residual_correction_predicted"],
+        arrays["residual_correction_corrected"],
+    )
+    value = arrays["residual_correction_value"]
+    # Garwood interval: lower 0 for zero hits, drawn as an upper limit.
+    lower = np.where(hits > 0, chi2.ppf(0.15865525, 2 * hits) / 2, 0.0)
+    upper = chi2.ppf(0.84134475, 2 * (hits + 1)) / 2
+    columns = min(len(names), 4)
+    rows = -(-len(names) // columns)
+    fig, axes = plt.subplots(
+        rows, columns, figsize=(4 * columns, 3.5 * rows), squeeze=False, layout="constrained"
+    )
+    for c, name in enumerate(names):
+        ax = axes[c // columns, c % columns]
+        seen = hits[c] > 0
+        observed = np.log(np.where(seen, hits[c], 1) / predicted[c])
+        ax.errorbar(
+            value[c][seen],
+            observed[seen],
+            yerr=[
+                observed[seen] - np.log(lower[c][seen] / predicted[c][seen]),
+                np.log(upper[c][seen] / predicted[c][seen]) - observed[seen],
+            ],
+            fmt="o",
+            ms=3,
+            capsize=2,
+            color="black",
+            label="observed log(hits/Σp), 68 %",
+        )
+        if (~seen).any():
+            ax.plot(
+                value[c][~seen],
+                np.log(upper[c][~seen] / predicted[c][~seen]),
+                "kv",
+                ms=4,
+                label="no hits: 68 % upper limit",
+            )
+        ax.plot(
+            value[c], np.log(corrected[c] / predicted[c]), "C0o-", ms=3, label="trees log(Σp'/Σp)"
+        )
+        ax.axhline(0, color="gray", lw=0.8)
+        ax.set(title=name, xlabel=f"{name} (bin median)", ylabel="log rate ratio (bin)")
+        ax.grid(alpha=0.2)
+    for c in range(len(names), rows * columns):
+        axes[c // columns, c % columns].set_visible(False)
+    axes[0, 0].legend(fontsize=7)
+    fig.suptitle(f"{title}: residual test correction (equal-count bins)")
     fig.savefig(out_path, dpi=150)
     plt.close(fig)
 
@@ -500,6 +565,12 @@ def plot_stream_run(directory):
                 plot_feature_calibration(
                     arrays,
                     directory / "stream_feature_calibration.png",
+                    title="Stream validation events, best checkpoint",
+                )
+            if "residual_correction_events" in arrays:
+                plot_residual_correction(
+                    arrays,
+                    directory / "stream_residual_correction.png",
                     title="Stream validation events, best checkpoint",
                 )
     fig, axes = plt.subplots(1, 2, figsize=(12, 4), layout="constrained")

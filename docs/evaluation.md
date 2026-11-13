@@ -103,14 +103,24 @@ test asks whether anything learnable is left: LightGBM (`binary` objective = BCE
 - Arrays: `residual_logits` (logit p'; padding and unused stream events NaN),
   `residual_fold` (−1 there), per design point `residual_gain_per_point`,
   `residual_phi_gain_per_point` (nats).
+- Correction plot `{fidelity}_{split}_residual_correction.png` (stream:
+  `stream_residual_correction.png`; best checkpoint): what the trees changed. Equal-count bins
+  along logit p and along each input column (bin count from `feature_calibration.bins`),
+  per bin the trees' rate change log(Σp'/Σp) over the observed log(hits/Σp) with the central
+  68 % Poisson interval of the hits (bins without hits: upper limit). If the trees follow the
+  observed points, the gain sits along that column; streams bin the scored (kept) events.
+  Arrays `residual_correction_{events,hits,predicted,corrected,value}` [1+F, bins] (Σp,
+  Σp', median column value) and `residual_correction_names` (`logit_p` first). Grouped and
+  stream data alike; not written when the test is skipped.
 - Cost: 2 LightGBM fits per fold, ≈ 1.5 s for 6·10⁴ events on one thread.
 - Finished runs: `python -m core.surrogates residual RESIDUAL.yaml` (`docs/configs.md`)
   runs the same test on the saved logits and labels, without retraining; it writes
-  `residual_test.json` and `{fidelity}_{split}_{checkpoint}_residual.npz` into its own
-  output directory.
+  `residual_test.json`, `{fidelity}_{split}_{checkpoint}_residual.npz` and
+  `..._residual_correction.png` into its own output directory (bins from the run's
+  `feature_calibration`).
 
 Precision is set by positives, not design points. A positive gain says that something is
-learnable, not what; compare with the per-feature calibration to locate it.
+learnable, not what; the correction plot and the per-feature calibration locate it.
 
 Evaluation layout: context-free models (mlp, transformer, field, bdt) score every event
 of every design point, as stream runs do. For context models (cnp, legacy_cnp) each

@@ -41,7 +41,7 @@ parentheses.
 | `selection_max_design_points` | Select checkpoints on a seeded subset of this many validation design points (all). |
 | `evaluation_threads` | CPU threads for evaluation passes (1). |
 | `within_point_null_draws` | Label draws per design point for the within-design-point null (1000, ≥ 100). The ±3σ coverage is rough at 1000; 10 000 costs ~10×. Also in stream configs. |
-| `feature_calibration` | Calibration per input column on every held-out split: `{bins: 10}`, equal-count bins per column (≥ 2). Also in stream configs (validation events and evaluation sets). |
+| `feature_calibration` | Calibration per input column on every held-out split: `{bins: 10}`, equal-count bins per column (≥ 2), also for the residual-test correction plot. Also in stream configs (validation events and evaluation sets). |
 | `residual_test` | Residual learnability test on every held-out split, settings below (none: off). Needs the `lgbm` extra; the run fails at start without it. |
 
 ### Residual learnability test (`residual_test`)

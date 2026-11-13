@@ -239,7 +239,7 @@ def stream_metrics(
         from core.surrogates.residual import stream_residual
 
         metrics["residual_test"], residual_arrays = stream_residual(
-            features, labels, logits, residual, seed=seed
+            features, labels, logits, residual, seed=seed, bins=feature_bins
         )
         arrays.update(residual_arrays)
     return metrics, arrays

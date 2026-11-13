@@ -11,6 +11,8 @@ from core.surrogates.evaluation import evaluate_surrogate, feature_columns, with
 from core.surrogates.readout import readout_metrics
 from core.surrogates.residual import (
     balanced_folds,
+    correction_bins,
+    design_point_residual,
     require_lightgbm,
     residual_test,
     stream_residual,
@@ -135,6 +137,67 @@ def test_stream_subsample_keeps_about_max_positives(data):
     assert again == metrics
     every, _ = stream_residual(features, labels, z, ResidualTestConfig(max_positives=None), seed=1)
     assert every["subsample_fraction"] == 1.0 and every["events"] == len(labels)
+
+
+def test_correction_bins_count_every_event_once():
+    rng = np.random.default_rng(np.random.SeedSequence([5, 0]))
+    features = rng.random((500, 2))  # [E, F]
+    z = rng.normal(-3, 1, 500)
+    labels = (rng.random(500) < 0.05).astype(np.int64)
+    arrays = correction_bins(["a", "b"], features, labels, z, z, n_bins=7)
+    assert list(arrays["residual_correction_names"]) == ["logit_p", "a", "b"]
+    assert arrays["residual_correction_events"].shape == (3, 7)
+    assert (arrays["residual_correction_events"].sum(axis=1) == 500).all()
+    assert (arrays["residual_correction_hits"].sum(axis=1) == labels.sum()).all()
+    assert np.allclose(
+        arrays["residual_correction_predicted"], arrays["residual_correction_corrected"]
+    )
+    assert (np.diff(arrays["residual_correction_value"], axis=1) >= 0).all()
+    with pytest.raises(ValueError, match="one name per column"):
+        correction_bins(["a"], features, labels, z, z)
+
+
+def test_correction_follows_the_missing_phi_trend(data):
+    batch, p = data
+    q = point_mean(batch, p)
+    _, arrays = design_point_residual(batch, batch.labels, logit(q), SETTINGS, seed=1, bins=5)
+    names = list(arrays["residual_correction_names"])
+    assert names == ["logit_p", "theta_0", "phi_0", "phi_1"]
+    ratio = np.log(
+        arrays["residual_correction_corrected"] / arrays["residual_correction_predicted"]
+    )
+    observed = np.log(arrays["residual_correction_hits"] / arrays["residual_correction_predicted"])
+    # True / model rate = 0.5 + φ0: log ratio from ≈ log 0.6 to ≈ log 1.4 over the φ0 bins.
+    assert ratio[2, 0] < -0.25 and ratio[2, -1] > 0.15
+    assert np.abs(ratio[2] - observed[2]).max() < 0.1
+    assert np.abs(ratio[3]).max() < 0.1  # φ1 is noise
+
+
+def test_stream_correction_covers_kept_events(data):
+    batch, p = data
+    features, labels, z, _ = flat_inputs(batch, point_mean(batch, p))
+    metrics, arrays = stream_residual(
+        features, labels, z, ResidualTestConfig(max_positives=1000), seed=1, bins=4
+    )
+    assert list(arrays["residual_correction_names"]) == [
+        "logit_p",
+        "record_0",
+        "record_1",
+        "record_2",
+    ]
+    assert (arrays["residual_correction_events"].sum(axis=1) == metrics["events"]).all()
+
+
+def test_correction_plot_renders(data, tmp_path):
+    from viz.surrogate import plot_residual_correction
+
+    batch, p = data
+    _, arrays = design_point_residual(
+        batch, batch.labels, logit(point_mean(batch, p)), SETTINGS, seed=1, bins=40
+    )
+    arrays["residual_correction_hits"][1, 0] = 0  # an empty bin is drawn as an upper limit
+    plot_residual_correction(arrays, tmp_path / "correction.png", title="test")
+    assert (tmp_path / "correction.png").stat().st_size > 0
 
 
 def test_max_positives_only_for_stream_records():

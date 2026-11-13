@@ -211,7 +211,7 @@ def readout_metrics(
         from core.surrogates.residual import design_point_residual
 
         metrics["residual_test"], residual_arrays = design_point_residual(
-            target, arrays["labels"], arrays["logits"], residual, seed=seed
+            target, arrays["labels"], arrays["logits"], residual, seed=seed, bins=feature_bins
         )
         extra.update(residual_arrays)
     return metrics, extra

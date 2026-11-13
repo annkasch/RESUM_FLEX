@@ -42,7 +42,8 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
   metrics): `within_point.json`, `{fidelity}_{split}_{checkpoint}_within_point.npz` and
   `_within_point_gain.png`; the run's own files stay unchanged.
 - Shared PNG/PDF validation-history, mean/residual and PR plots; per held-out split the
-  within-design-point gain and the feature-calibration plots.
+  within-design-point gain and the feature-calibration plots, with `residual_test:` the
+  residual-test correction plot.
 
 The Python entry point is `core.surrogates.experiment.run_experiment(config)`.
 Notebooks can call it and display artifacts, without duplicating a training loop.

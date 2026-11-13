@@ -78,6 +78,12 @@ def test_stage_reproduces_the_training_readout(training_run):
     assert (output / "lf_test_final_residual.npz").exists()
     with np.load(run / "lf_validation_best.npz") as arrays:  # bins from the config
         assert arrays["feature_calibration_events"].shape[1] == 4
+        readout = arrays["residual_correction_corrected"]
+    with np.load(output / "lf_validation_best_residual.npz") as arrays:
+        assert np.array_equal(arrays["residual_correction_corrected"], readout)
+    assert readout.shape[1] == 4
+    assert (output / "lf_validation_best_residual_correction.png").exists()
+    assert (run / "lf_validation_residual_correction.png").exists()
     with pytest.raises(FileExistsError):
         run_residual(config)
 
@@ -123,6 +129,8 @@ def test_stage_on_a_stream_run(tmp_path):
     assert all(v["gain"] is not None for v in expected.values())
     assert {k[2] for k in expected} == {"stream", "lf", "hf"}
     assert expected["best", "validation", "stream"]["units"] == "events"
+    assert (run / "stream_residual_correction.png").exists()
+    assert (output / "stream_validation_best_residual_correction.png").exists()
 
 
 def test_config_checks_set_names():

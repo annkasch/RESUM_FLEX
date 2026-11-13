@@ -14,7 +14,12 @@ LightGBM is imported here only (optional ``lgbm`` extra); inputs and outputs are
 import numpy as np
 from scipy.special import expit, logit
 
-from core.surrogates.evaluation import bootstrap_bands, feature_columns
+from core.surrogates.evaluation import (
+    CALIBRATION_BINS,
+    bootstrap_bands,
+    calibration_bins,
+    feature_columns,
+)
 
 # SeedSequence key under the evaluation seed (read-out keys 0-3 are taken).
 RESIDUAL_KEY = 4
@@ -126,18 +131,57 @@ def _fit_fold(x, y, z, train_units, unit, unit_positives, settings, rng):
     return lgb.train(params, refit, num_boost_round=trees), trees
 
 
-def design_point_residual(target, labels, logits, settings, *, seed):
+def correction_bins(names, features, labels, logits, corrected, n_bins=CALIBRATION_BINS):
+    """Predicted hits before and after the trees' correction, in equal-count bins.
+
+    Columns: ``logit_p`` first, then each input column. names: F; features: [E, F];
+    labels, logits (logit p), corrected (logit p'): [E] events the test scored. Arrays
+    ``residual_correction_*`` [1+F, bins]: events, hits, predicted (Σp), corrected (Σp'),
+    value (median column value per bin); ``residual_correction_names`` [1+F].
+    """
+    features = np.asarray(features, dtype=np.float64)
+    z = np.asarray(logits, dtype=np.float64)
+    if features.shape != (len(z), len(names)):
+        raise ValueError("features must be [E, F] with one name per column")
+    columns = np.column_stack([z, features])  # [E, 1+F]
+    n_bins = min(n_bins, len(z))
+    keys = ("events", "hits", "predicted", "corrected", "value")
+    arrays = {f"residual_correction_{k}": np.zeros((columns.shape[1], n_bins)) for k in keys}
+    p, p_corrected = expit(z), expit(np.asarray(corrected, dtype=np.float64))
+    for c in range(columns.shape[1]):
+        before = calibration_bins(labels, p, n_bins, sort_by=columns[:, c])
+        after = calibration_bins(labels, p_corrected, n_bins, sort_by=columns[:, c])
+        order = np.argsort(columns[:, c], kind="stable")  # the bins of calibration_bins
+        arrays["residual_correction_events"][c] = before["calibration_events"]
+        arrays["residual_correction_hits"][c] = before["calibration_hits"]
+        arrays["residual_correction_predicted"][c] = before["calibration_predicted"]
+        arrays["residual_correction_corrected"][c] = after["calibration_predicted"]
+        arrays["residual_correction_value"][c] = [
+            np.median(columns[b, c]) for b in np.array_split(order, n_bins)
+        ]
+    arrays["residual_correction_names"] = np.asarray(["logit_p", *names])
+    return arrays
+
+
+def design_point_residual(target, labels, logits, settings, *, seed, bins=CALIBRATION_BINS):
     """residual_test on a design-point batch, split by design point.
 
     target: StandardBatch (θ, φ, mask); labels, logits: [B, N]. Per-event arrays come back
-    as [B, N] with padding NaN (``residual_logits``) or -1 (``residual_fold``).
+    as [B, N] with padding NaN (``residual_logits``) or -1 (``residual_fold``), plus the
+    ``correction_bins`` arrays (``bins`` bins per column).
     """
     mask = target.event_mask  # [B, N]
-    _, values = feature_columns(target)  # [B, N, F]
+    names, values = feature_columns(target)  # [B, N, F]
     rows = np.nonzero(mask)[0]  # [E] design point of each valid event
     metrics, arrays = residual_test(
         values[mask], labels[mask], logits[mask], rows, settings, seed=seed
     )
+    if "residual_logits" in arrays:
+        arrays.update(
+            correction_bins(
+                names, values[mask], labels[mask], logits[mask], arrays["residual_logits"], bins
+            )
+        )
     for key, fill in (("residual_logits", np.nan), ("residual_fold", -1)):
         if key in arrays:
             full = np.full(mask.shape, fill, dtype=float if key == "residual_logits" else int)
@@ -146,13 +190,14 @@ def design_point_residual(target, labels, logits, settings, *, seed):
     return metrics, arrays
 
 
-def stream_residual(features, labels, logits, settings, *, seed):
+def stream_residual(features, labels, logits, settings, *, seed, bins=CALIBRATION_BINS):
     """residual_test on independent stream records, split by event.
 
     With ``settings.max_positives``, a seeded uniform fraction min(1, max_positives /
     positives) of all events is kept: the same fraction for hits and non-hits, so the gain
     needs no weights. features: [M, W]; labels, logits: [M]. Per-event arrays come back as
-    [M] with NaN (``residual_logits``) or -1 (``residual_fold``) for events not kept.
+    [M] with NaN (``residual_logits``) or -1 (``residual_fold``) for events not kept; the
+    ``correction_bins`` arrays (columns ``record_j``) cover the kept events.
     """
     labels = np.asarray(labels)
     positives = int(labels.sum())
@@ -172,6 +217,14 @@ def stream_residual(features, labels, logits, settings, *, seed):
         settings,
         seed=seed,
     )
+    if "residual_logits" in arrays:
+        kept = np.asarray(features, dtype=np.float64)[keep]  # [E, W]
+        names = [f"record_{j}" for j in range(kept.shape[1])]
+        arrays.update(
+            correction_bins(
+                names, kept, labels[keep], np.asarray(logits)[keep], arrays["residual_logits"], bins
+            )
+        )
     metrics.update(
         events_available=int(len(labels)),
         positives_available=positives,
