@@ -1,4 +1,8 @@
-"""Boosted binary classifier over design point coordinates and event features."""
+"""Boosted binary classifier over design point coordinates and event features.
+
+Trained on design points it sees normalized [theta, phi]; trained on an event stream
+(``stream_records``) it sees the stream record columns in physical units.
+"""
 
 import numpy as np
 from scipy.special import expit
@@ -20,6 +24,45 @@ def event_features(batch):
     if not parts:
         raise ValueError("BDT requires at least one feature")
     return np.concatenate(parts, axis=-1).reshape(batch.batch_size * batch.n_events, -1)
+
+
+def _affine(normalization, group, size):
+    """(offset, scale) [size] of an affine normalization x_n = (x - offset) / scale."""
+    entry = normalization.get(group) if isinstance(normalization, dict) else None
+    if not isinstance(entry, dict) or not {"offset", "scale"} <= entry.keys():
+        raise ValueError(f"A stream BDT needs an affine {group} normalization (offset, scale)")
+    offset = np.asarray(entry["offset"], dtype=np.float64)
+    scale = np.asarray(entry["scale"], dtype=np.float64)
+    if offset.shape != (size,) or scale.shape != (size,):
+        raise ValueError(f"{group} normalization does not match {size} input columns")
+    return offset, scale
+
+
+def stream_records(batch, normalization, position_columns):
+    """Design-point inputs as stream record columns [B * N, W] in physical units.
+
+    Position = theta + phi[position_columns] (theta alone for []), then the other phi columns
+    in phi order: the layout a stream BDT was trained on (docs/stream.md). ``normalization``
+    is the data's affine normalization of theta and phi.
+    """
+    if batch.theta is None:
+        raise ValueError("A stream BDT needs theta (the record position)")
+    b, n = batch.batch_size, batch.n_events
+    theta_offset, theta_scale = _affine(normalization, "theta", batch.theta.shape[-1])
+    position = np.broadcast_to(
+        (batch.theta * theta_scale + theta_offset)[:, None, :], (b, n, batch.theta.shape[-1])
+    )  # [B, N, T]
+    parts = [position]
+    if batch.phi is not None:
+        dim_phi = batch.phi.shape[-1]
+        phi_offset, phi_scale = _affine(normalization, "phi", dim_phi)
+        phi = batch.phi * phi_scale + phi_offset  # [B, N, P]
+        if position_columns:
+            parts[0] = position + phi[..., position_columns]
+        parts.append(phi[..., [c for c in range(dim_phi) if c not in position_columns]])
+    elif position_columns:
+        raise ValueError("position_columns need phi")
+    return np.concatenate(parts, axis=-1).reshape(b * n, -1)
 
 
 def build_bdt(config):

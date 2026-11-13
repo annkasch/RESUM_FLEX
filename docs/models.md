@@ -82,7 +82,9 @@ the finest half-period it can represent is `1 / (2 max_frequency)`. `direction` 
 normalized to unit length and encoded by real orthonormal spherical harmonics up to
 `degree` ((degree + 1)² features). All other phi columns enter unencoded. Without
 `position`, theta alone is the position. Training, selection, inference, the GP levels and
-the Bayesian last layer work as for the MLP.
+the Bayesian last layer work as for the MLP. `architecture` is an MLP (`hidden_dims`) or,
+given transformer keys (`token_dim`, `n_heads`, ...), the tabular transformer with one token
+per encoded column; the stream transformer (`docs/stream.md`) is this field without encodings.
 
 ## Legacy two-output CNP
 

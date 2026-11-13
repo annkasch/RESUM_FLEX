@@ -1,6 +1,7 @@
-"""Train a neural field on every event of an event store (``python -m core.surrogates stream``).
+"""Train an event model on every event of an event store (``python -m core.surrogates stream``).
 
-Each optimizer step takes one batch of raw event records from the event source (random
+Neural kinds (field; mlp and transformer as the unencoded field with that network): each
+optimizer step takes one batch of raw event records from the event source (random
 order, see its documentation); the field normalizes positions with the store's train
 normalization (``BernoulliField.set_stream_normalization``) and encodes the direction from the
 momentum. Checkpoints are selected by the Bernoulli log loss on the first
@@ -11,8 +12,14 @@ events (exact Bernoulli Hessian of the final layer, as for design point training
 Several GPUs: launch with ``torchrun``; every rank reads its own blocks of each pass and
 DistributedDataParallel averages the gradients. Rank 0 validates and writes the outputs.
 
-The checkpoints are ordinary field checkpoints: ``predict`` / ``score_event_model.py``
-evaluate them on design point data, mapping theta + offset into the field's stream units.
+``kind: bdt``: boosted trees do not learn batch by batch, so one pass over the training
+events keeps a case-control sample in memory (every positive, a seeded fraction of the
+negatives weighted 1 / fraction; ``case_control_sample``); trees are added ``eval_every`` at a
+time and selected by the same validation log loss. No last layer.
+
+The checkpoints are ordinary field (or BDT) checkpoints: ``predict`` / ``score_event_model.py``
+evaluate them on design point data, mapping theta + offset into the model's stream units
+(trees: physical record columns). There is no stream CNP (docs/stream.md).
 """
 
 import json
@@ -38,6 +45,8 @@ from core.surrogates.readout import NULL_DRAWS
 from schemas.surrogates import StreamRunConfig
 
 VALIDATION_CHUNK = 2**20
+# Sub-stream of the training seed for the case-control sample of a stream BDT.
+SAMPLE_KEY = 7
 
 
 def _distributed():
@@ -62,6 +71,56 @@ def _stream_module(field):
             return self.field.forward_events(records)
 
     return StreamForward(field)
+
+
+def stream_logits(model, records):
+    """Logits [M] float32 (CPU) of raw records [M, W + 1] (torch) for any stream-trained model."""
+    import torch
+
+    if model.config.kind == "bdt":
+        features = records[:, :-1].cpu().numpy().astype(np.float64)  # [M, W]
+        return torch.as_tensor(model.estimator.decision_function(features), dtype=torch.float32)
+    with torch.no_grad():
+        return torch.cat(
+            [
+                model.module.forward_events(records[start : start + VALIDATION_CHUNK]).float().cpu()
+                for start in range(0, len(records), VALIDATION_CHUNK)
+            ]
+        )
+
+
+def case_control_sample(source, *, negatives_per_positive, batch_size, seed):
+    """In-memory case-control sample of an event source, from one pass over it.
+
+    Keeps every positive and each negative with probability q = min(1, k n+ / n-), k =
+    ``negatives_per_positive``; kept negatives get weight 1 / q, so weighted sums over the
+    sample estimate sums over all events (calibrated probabilities). Returns (records
+    [K, W + 1] float32 numpy, weights [K] float64, summary dict).
+    """
+    negatives = source.n_events - source.n_positive
+    if source.n_positive == 0 or negatives == 0:
+        raise ValueError("Training events must contain events with label 1 and with label 0")
+    fraction = min(1.0, negatives_per_positive * source.n_positive / negatives)
+    rng = np.random.default_rng(np.random.SeedSequence([seed, SAMPLE_KEY]))
+    kept, labels = [], []
+    for batch in source.batches(batch_size, 0):
+        positive = event_labels(batch).cpu().numpy() == 1
+        keep = positive | (rng.random(len(positive)) < fraction)
+        kept.append(batch.cpu().numpy()[keep])
+        labels.append(positive[keep])
+    records, positive = np.concatenate(kept), np.concatenate(labels)
+    weights = np.where(positive, 1.0, 1.0 / fraction)
+    summary = dict(
+        strategy="case_control",
+        events=int(len(records)),
+        positives=int(positive.sum()),
+        negatives=int((~positive).sum()),
+        negative_fraction=fraction,
+        negative_weight=1.0 / fraction,
+        source_events=int(source.n_events),
+        source_positives=int(source.n_positive),
+    )
+    return records, weights, summary
 
 
 def _log_loss(forward, events, device, autocast) -> float:
@@ -255,6 +314,7 @@ def _evaluate_checkpoints(
     residual=None,
     feature_bins=CALIBRATION_BINS,
     null_draws=NULL_DRAWS,
+    normalization=None,
 ):
     """metrics.json, arrays and plots of best and final, as for design point training.
 
@@ -267,22 +327,16 @@ def _evaluate_checkpoints(
     rows = []
     for checkpoint in ("best", "final"):
         saved = load_surrogate(output / "checkpoints" / checkpoint)
-        saved.module.to(device)
-        saved.module.eval()
-        logits = []
-        import torch
-
-        with torch.no_grad():
-            for start in range(0, len(validation), VALIDATION_CHUNK):
-                logits.append(
-                    saved.module.forward_events(validation[start : start + VALIDATION_CHUNK])
-                    .float()
-                    .cpu()
-                )
+        if saved.config.kind == "bdt":
+            if episodes:
+                saved.configure_normalization(normalization)
+        else:
+            saved.module.to(device)
+            saved.module.eval()
         labels = event_labels(validation).cpu().numpy()
         summary, arrays = stream_metrics(
             labels,
-            torch.cat(logits).numpy(),
+            stream_logits(saved, validation).numpy(),
             reference_rate=prevalence,
             features=validation[:, :-1].float().cpu().numpy(),
             residual=residual,
@@ -332,7 +386,157 @@ def _evaluate_checkpoints(
     plot_stream_run(output)
 
 
+def _new_output(config: StreamRunConfig) -> Path:
+    output = Path(config.output_directory)
+    if output.exists() and any(output.iterdir()):
+        raise FileExistsError(f"{output} is not empty; choose a new output directory")
+    output.mkdir(parents=True, exist_ok=True)
+    return output
+
+
+def _validation_events(config: StreamRunConfig, loading: dict, device):
+    """The first ``validation_events`` validation records as a tensor on ``device``."""
+    import torch
+
+    source = open_event_source(config.event_source, config.event_store, "validation", **loading)
+    events = source.load()
+    if config.training.validation_events is not None:
+        events = events[: config.training.validation_events]
+    return torch.as_tensor(np.ascontiguousarray(events), device=device)
+
+
+def _run_stream_trees(config: StreamRunConfig) -> dict:
+    """``kind: bdt``: boosted trees on a case-control sample, selected on validation events."""
+    import torch
+
+    from core.surrogate_bdt import build_bdt
+
+    if _distributed()[1] > 1:
+        raise ValueError("A stream BDT trains in one process; launch it without torchrun")
+    if config.residual_test is not None:
+        from core.surrogates.residual import require_lightgbm
+
+        require_lightgbm()
+    training, trees = config.training, config.model.architecture
+    output = _new_output(config)
+    compute = ComputeLog()
+    loading = dict(config.event_source_options)
+    train = open_event_source(
+        config.event_source,
+        config.event_store,
+        "train",
+        seed=training.seed,
+        rank=0,
+        world_size=1,
+        **loading,
+    )
+    normalization = train.normalization()
+    prevalence = train.n_positive / train.n_events
+    with compute.stage("sampling"):
+        records, weights, sample = case_control_sample(
+            train,
+            negatives_per_positive=training.negatives_per_positive,
+            batch_size=training.batch_size,
+            seed=training.seed,
+        )
+    x = records[:, :-1].astype(np.float64)  # [K, W]
+    y = (event_labels(torch.as_tensor(records)).numpy() == 1).astype(np.int8)
+    del records
+    model = build_surrogate(config.model, config.dim_theta, config.dim_phi, seed=training.seed)
+    model.stream_position = config.position_columns
+    if x.shape[1] != model.n_features:
+        raise ValueError(
+            f"Stream records have {x.shape[1]} input columns; dim_theta + dim_phi - "
+            f"position columns = {model.n_features}"
+        )
+    episodes, history_episode, data = {}, None, None
+    with compute.stage("validation_loading"):
+        validation = _validation_events(config, loading, "cpu")
+        if config.evaluation:
+            episodes, history_episode, data = _design_point_episodes(config)
+            model.configure_normalization(data["normalization"])
+    checkpoints = output / "checkpoints"
+    metadata = dict(
+        resolved_config=config.model_dump(mode="json"),
+        event_store=str(config.event_store),
+        event_source=config.event_source,
+        data_provider=config.data_provider,
+        stream_normalization=normalization,
+        training_events=train.n_events,
+        training_prevalence=prevalence,
+        training_sample=sample,
+        validation_events=len(validation),
+        world_size=1,
+        selection="bernoulli_log_loss on the validation events",
+        uses_context=False,
+        uncertainty=False,
+    )
+    if data is not None:
+        metadata.update(
+            design_point_evaluation=data["provenance"],
+            history_design_points=data["history_design_points"],
+        )
+        metadata["normalization.json"] = data["normalization"]
+    model.metadata = metadata
+    labels = event_labels(validation).numpy()
+    model.estimator = build_bdt(trees)
+    counts = list(range(trees.eval_every, trees.max_iter + 1, trees.eval_every))
+    if not counts or counts[-1] != trees.max_iter:
+        counts.append(trees.max_iter)
+    history, best = [], dict(loss=math.inf, step=0)
+    with compute.stage("training"):
+        for step in counts:
+            model.estimator.set_params(max_iter=step)
+            model.estimator.fit(x, y, sample_weight=weights)  # warm start: adds trees
+            train_logits = model.estimator.decision_function(x)
+            train_loss = float(
+                np.average(
+                    np.where(y == 1, np.logaddexp(0, -train_logits), np.logaddexp(0, train_logits)),
+                    weights=weights,
+                )
+            )
+            logits = stream_logits(model, validation).double().numpy()
+            loss = float(
+                np.where(labels == 1, np.logaddexp(0, -logits), np.logaddexp(0, logits)).mean()
+            )
+            row = dict(step=step, pass_index=0, training_loss=train_loss, stream_log_loss=loss)
+            if history_episode is not None:
+                row.update(
+                    evaluate_surrogate(model, history_episode.target, reference_rate=prevalence)[0]
+                )
+            history.append(row)
+            print(f"trees {step}: train {train_loss:.6f} val {loss:.6f}", flush=True)
+            if loss < best["loss"]:
+                best.update(loss=loss, step=step, pass_index=0)
+                model.metadata.update(best_step=step, best_stream_log_loss=loss)
+                save_surrogate(checkpoints / "best", model, metadata={"step": step})
+    model.metadata.update(steps=counts[-1], final_stream_log_loss=history[-1]["stream_log_loss"])
+    save_surrogate(checkpoints / "final", model, metadata={"step": counts[-1]})
+    (output / "history.json").write_text(json.dumps(history, indent=1, allow_nan=False))
+    report = dict(steps=counts[-1], events_seen=sample["events"], best=best, history=history)
+    with compute.stage("evaluation"):
+        _evaluate_checkpoints(
+            output,
+            validation,
+            episodes,
+            prevalence,
+            config.evaluation_seed,
+            "cpu",
+            residual=config.residual_test,
+            feature_bins=config.feature_calibration.bins,
+            null_draws=config.within_point_null_draws,
+            normalization=None if data is None else data["normalization"],
+        )
+    (output / "experiment.json").write_text(
+        json.dumps(dict(metadata, report=report), indent=2, allow_nan=False)
+    )
+    compute.write(output)
+    return report
+
+
 def run_stream(config: StreamRunConfig) -> dict:
+    if config.model.kind == "bdt":
+        return _run_stream_trees(config)
     import torch
 
     rank, world, local_rank = _distributed()
@@ -350,11 +554,7 @@ def run_stream(config: StreamRunConfig) -> dict:
         from core.surrogates.residual import require_lightgbm
 
         require_lightgbm()
-    output = Path(config.output_directory)
-    if rank == 0:
-        if output.exists() and any(output.iterdir()):
-            raise FileExistsError(f"{output} is not empty; choose a new output directory")
-        output.mkdir(parents=True, exist_ok=True)
+    output = _new_output(config) if rank == 0 else Path(config.output_directory)
     compute = ComputeLog()
     loading = dict(config.event_source_options)
     train = open_event_source(
@@ -393,13 +593,7 @@ def run_stream(config: StreamRunConfig) -> dict:
     validation, episodes, history_episode = None, {}, None
     with compute.stage("validation_loading"):
         if rank == 0:
-            source = open_event_source(
-                config.event_source, config.event_store, "validation", **loading
-            )
-            events = source.load()
-            if training.validation_events is not None:
-                events = events[: training.validation_events]
-            validation = torch.as_tensor(np.ascontiguousarray(events), device=device)
+            validation = _validation_events(config, loading, device)
             if config.evaluation:
                 episodes, history_episode, data = _design_point_episodes(config)
                 model.configure_normalization(data["normalization"])
@@ -478,7 +672,7 @@ def run_stream(config: StreamRunConfig) -> dict:
         model.metadata.update(steps=step, final_stream_log_loss=history[-1]["stream_log_loss"])
         save_surrogate(checkpoints / "final", model, metadata={"step": step})
         (output / "history.json").write_text(json.dumps(history, indent=1, allow_nan=False))
-        if config.model.last_layer is not None:
+        if config.network.last_layer is not None:
             stream = open_event_source(config.event_source, config.event_store, "train", **loading)
             with compute.stage("last_layer"):
                 for name in ("best", "final"):

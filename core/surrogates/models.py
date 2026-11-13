@@ -70,7 +70,10 @@ class NeuralSurrogate(EventSurrogate):
         """Explicit final projection for each architecture; never infer by ordering."""
         if self.config.kind == "transformer":
             return self.module.head[-1]
-        return self.module.decoder.net[-1]
+        decoder = self.module.decoder
+        if self.config.kind == "field" and hasattr(decoder, "transformer"):
+            return decoder.head[-1]  # field with a transformer network
+        return decoder.net[-1]
 
     def predict(self, target, *, context=None):
         import torch
@@ -111,11 +114,40 @@ class TreeSurrogate(EventSurrogate):
                 'BDT requires the optional dependency: pip install -e ".[bdt]"'
             ) from exc
 
-    def predict(self, target, *, context=None):
-        from core.surrogate_bdt import event_features
+    # Stream-trained trees: phi columns added to theta to give the record position ([]: theta
+    # alone); None for trees trained on design points. Saved with the checkpoint.
+    stream_position = None
+    _data_normalization = None
 
+    @property
+    def uses_stream_units(self) -> bool:
+        return self.stream_position is not None
+
+    @property
+    def n_features(self) -> int:
+        """Input columns of the estimator: theta + phi, or the stream record width."""
+        width = (self.dim_theta or 0) + (self.dim_phi or 0)
+        return width - len(self.stream_position or [])
+
+    def configure_normalization(self, normalization):
+        """Stream-trained trees map design-point inputs back to physical record columns."""
+        if self.uses_stream_units:
+            if normalization is None:
+                raise ValueError("A stream-trained BDT needs the design-point data normalization")
+            self._data_normalization = normalization
+
+    def features(self, target):
+        from core.surrogate_bdt import event_features, stream_records
+
+        if not self.uses_stream_units:
+            return event_features(target)
+        if self._data_normalization is None:
+            raise ValueError("Call configure_normalization before scoring design points")
+        return stream_records(target, self._data_normalization, self.stream_position)
+
+    def predict(self, target, *, context=None):
         self.validate(target, context)
-        logits = self.estimator.decision_function(event_features(target))
+        logits = self.estimator.decision_function(self.features(target))
         return EventPrediction(
             np.asarray(logits).reshape(target.batch_size, target.n_events),
             event_counts=target.event_counts,

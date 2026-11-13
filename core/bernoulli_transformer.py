@@ -115,3 +115,28 @@ class BernoulliTransformer(nn.Module):
 
     def predict_beta(self, context, target):
         return self(context, target).sigmoid()
+
+
+class FeatureTransformerDecoder(nn.Module):
+    """The tabular transformer as a network on given feature columns: [..., F] -> [..., 1].
+
+    The neural field's network for ``architecture`` = a transformer config, e.g. the stream
+    transformer on normalized record columns (one token per column).
+    """
+
+    def __init__(self, config, features: int):
+        super().__init__()
+        self.transformer = BernoulliTransformer(config, features, None)
+
+    @property
+    def head(self):
+        return self.transformer.head
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        flat = features.reshape(-1, features.shape[-1])  # [M, F]
+        if self.training or len(flat) == 0:
+            logits = self.transformer._logits(flat)
+        else:
+            chunk = self.transformer.config.inference_chunk_size
+            logits = torch.cat([self.transformer._logits(part) for part in flat.split(chunk)])
+        return logits.reshape(*features.shape[:-1], 1)

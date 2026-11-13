@@ -276,7 +276,7 @@ def test_stream_mlp_trains_and_scores_on_design_points(tmp_path):
                     "dim_phi": 6,
                 }
             ).model,
-            "mlp_position": FieldPosition(phi_columns=[0, 1, 2]),
+            "record_position": FieldPosition(phi_columns=[0, 1, 2]),
         }
     )
     report = run_stream(config)
@@ -298,7 +298,7 @@ def test_stream_config_checks_the_columns():
         StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **{**base, "dim_theta": 2}})
     with pytest.raises(ValidationError, match="dim_phi > 5"):
         StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 5, **base})
-    with pytest.raises(ValidationError, match="mlp_position is for kind: mlp"):
+    with pytest.raises(ValidationError, match="record_position is for kind: mlp"):
         StreamRunConfig.model_validate(
             {"model": SPEC, "dim_phi": 6, "mlp_position": {"phi_columns": [0, 1, 2]}, **base}
         )

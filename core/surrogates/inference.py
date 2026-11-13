@@ -31,8 +31,8 @@ SHARD_EVENTS = 2**22
 
 
 def stream_units(model) -> bool:
-    """True for a field trained on an event store (its own physical position units)."""
-    module = getattr(model, "module", None)
+    """True for a model trained on an event store (its own physical position units)."""
+    module = getattr(model, "module", model)  # trees: the surrogate itself
     return bool(getattr(module, "uses_stream_units", False))
 
 

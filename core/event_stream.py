@@ -1,11 +1,11 @@
-"""Ungrouped events for context-free event models (stream MLP, neural field), streamed by an
-application's event source.
+"""Ungrouped events for context-free event models (stream MLP, transformer, neural field,
+BDT), streamed by an application's event source.
 
 Record layout (the stream format): float32 [M, W + 1] = W input columns, then label bits in
 the last column (label = any bit set, stored as int32 bits in the float32 slot). The input
 columns are the position (``dim_theta`` columns), then the other event inputs in phi order
-(``StreamRunConfig``). The stream MLP takes any W; the neural field is meant for point
-clouds, e.g. x, y, z, px, py, pz with a 3-D direction for its spherical harmonics.
+(``StreamRunConfig``). The stream MLP, transformer and BDT take any W; the neural field is
+meant for point clouds, e.g. x, y, z, px, py, pz with a 3-D direction for its spherical harmonics.
 
 An event source delivers these records in random order; the run config names it by import
 path (``event_source: module:Class``) and passes ``event_source_options`` to its constructor

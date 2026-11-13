@@ -12,11 +12,12 @@ Inputs per event (all optional, from schemas.surrogates.FieldModel):
 
 With ``encoding: {kind: none}`` and no direction the field is a plain MLP on its
 normalized inputs: the stream-trained MLP (``kind: mlp`` in a stream run config), for any
-number of position and other columns.
+number of position and other columns. With a transformer ``architecture`` it is the
+stream-trained transformer (``kind: transformer``), one token per normalized column.
 
-An MLP maps the concatenated encodings to the logit. Without the encodings an MLP on raw
-coordinates learns mainly smooth (low-frequency) functions; the Fourier features let it
-represent structure down to a half-period of 1 / (2 f_max).
+An MLP (or the transformer) maps the concatenated encodings to the logit. Without the
+encodings an MLP on raw coordinates learns mainly smooth (low-frequency) functions; the
+Fourier features let it represent structure down to a half-period of 1 / (2 f_max).
 
 Position units. By default the field position is in normalized theta units of the
 design-point data it is trained on. A field trained on ungrouped events (``forward_events``)
@@ -177,7 +178,12 @@ class BernoulliField(nn.Module):
         if width == 0:
             raise ValueError("The field has no inputs")
         arch = config.architecture
-        self.decoder = MLPEncoder(width, list(arch.hidden_dims), 1, arch.dropout)
+        if hasattr(arch, "token_dim"):  # tabular transformer, one token per encoded column
+            from core.bernoulli_transformer import FeatureTransformerDecoder
+
+            self.decoder = FeatureTransformerDecoder(arch, width)
+        else:
+            self.decoder = MLPEncoder(width, list(arch.hidden_dims), 1, arch.dropout)
 
     # Buffers added after the first field checkpoints; older weights load with their defaults.
     _OPTIONAL_BUFFERS = (

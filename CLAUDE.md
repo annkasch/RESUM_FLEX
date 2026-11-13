@@ -29,8 +29,9 @@ for config settings.
     (`mfgp`), or a binomial count GP directly on outcome counts (`binomial`, optional
     event-model covariate). The baseline.
 - Event model kinds (`schemas/surrogates.py`): `cnp`, `mlp`, `field` (neural field for
-  point-cloud data, 3-D direction), `transformer`, `bdt`, `legacy_cnp`. `mlp` and `field` also
-  train on an event stream (`stream`, any record layout for the MLP).
+  point-cloud data, 3-D direction), `transformer`, `bdt`, `legacy_cnp`. `mlp`, `field`, `transformer` and `bdt`
+  also train on an event stream (`stream`; BDT on an in-memory case-control sample). No stream
+  CNP: ungrouped events have no context sets (`docs/stream.md`).
 - Optional: IVR/EI active learning over θ (`core/optimizer.py`, GP-based); residual
   learnability test in the read-out (`residual_test:`, `core/surrogates/residual.py`, LightGBM).
 - Finished runs are re-scored from their saved logits without retraining: `residual`,

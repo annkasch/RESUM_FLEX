@@ -16,7 +16,7 @@ application DatasetProvider (core/surrogates/datasets.py; NpzBatches built in)
        └─ route B  inference.py (predict: mean p per design point)
                      ├─ mfgp_stage.py -> mfgp_pipeline.py -> surrogate_mfgp.py (Emukit/GPy)
                      └─ binomial_stage.py -> binomial_gp.py (counts, optional covariate)
-event store -> EventSource (core/event_stream.py) -> stream_training.py (mlp, field)
+event store -> EventSource (core/event_stream.py) -> stream_training.py (mlp, field, transformer, bdt)
 GP posterior -> core/optimizer.py (IVR / EI over θ)
 ```
 

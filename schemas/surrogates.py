@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import Field, field_validator, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 
 from schemas.bdt import BDTConfig
 from schemas.config import EncoderConfig, StrictConfigModel
@@ -121,16 +121,21 @@ class RawPosition(StrictConfigModel):
 
 
 class FieldModel(StrictConfigModel):
-    """Neural field for point-cloud data: an MLP on encoded event coordinates,
+    """Neural field for point-cloud data: a network on encoded event coordinates,
     p(position, direction, rest). The direction is a 3-vector (spherical harmonics).
 
     Position = theta (+ ``position.phi_columns`` in physical units) through the Fourier
     encoding; ``direction`` columns through spherical harmonics; all other phi columns
-    enter unencoded. Context-free like the MLP.
+    enter unencoded. Context-free like the MLP. ``architecture``: an MLP (``hidden_dims``),
+    or a tabular transformer with one token per encoded column (``token_dim``, ...; the
+    stream transformer).
     """
 
     kind: Literal["field"] = "field"
-    architecture: MLPArchitecture = Field(default_factory=MLPArchitecture)
+    # Untagged: both forbid extra fields, so the keys decide (MLP by default).
+    architecture: MLPArchitecture | TabularTransformerConfig = Field(
+        default_factory=MLPArchitecture
+    )
     position: FieldPosition | None = None
     direction: FieldDirection | None = None
     # Untagged: configs without ``kind`` stay Fourier (both models forbid extra fields).
@@ -909,6 +914,22 @@ class StreamTraining(StrictConfigModel):
     validation_events: int | None = Field(default=20_000_000, gt=0)
 
 
+class StreamTreeTraining(StrictConfigModel):
+    """Stream training of ``kind: bdt``: boosted trees fit an in-memory case-control sample.
+
+    One pass over the training events keeps every positive and a seeded fraction of the
+    negatives, about ``negatives_per_positive`` per positive; the kept negatives get weight
+    1 / fraction, so the fitted probabilities stay calibrated. The boosting settings
+    (``max_iter``, ``eval_every``, ...) are the model's ``architecture``.
+    """
+
+    negatives_per_positive: float = Field(default=20.0, gt=0, allow_inf_nan=False)
+    batch_size: int = Field(default=65536, gt=0)  # records per read of the event source
+    seed: int = 0
+    # As in StreamTraining: validation events used for checkpoint selection; None = all.
+    validation_events: int | None = Field(default=20_000_000, gt=0)
+
+
 class DesignPointEvaluationSet(StrictConfigModel):
     """A prepared design point partition on which a stream-trained field is scored, under the split
     name used in metrics.json and the plots (``{fidelity}_{split}_{checkpoint}.npz``)."""
@@ -928,13 +949,17 @@ class StreamRunConfig(StrictConfigModel):
     the other phi columns in phi order, then the label.
 
     ``model: {kind: field}``: the neural field for point-cloud data (3-D direction for the
-    spherical harmonics; see ``core.bernoulli_field``). ``model: {kind: mlp}``: an MLP on all
-    normalized record columns, any number of them; ``mlp_position`` names the phi columns
-    that are added to theta to give the record position (None: theta alone).
+    spherical harmonics; see ``core.bernoulli_field``). ``kind: mlp`` / ``kind: transformer``:
+    an MLP / tabular transformer on all normalized record columns, any number of them.
+    ``kind: bdt``: boosted trees on an in-memory case-control sample of the records
+    (``training`` is then a StreamTreeTraining). For all but the field, ``record_position``
+    (old name ``mlp_position``) names the phi columns that are added to theta to give the
+    record position (None: theta alone). No stream CNP: its context sets are the events of
+    one design point, and ungrouped events have none (docs/stream.md).
     """
 
-    model: FieldModel | MLPModel = Field(discriminator="kind")
-    training: StreamTraining = Field(default_factory=StreamTraining)
+    model: FieldModel | MLPModel | TransformerModel | BDTModel = Field(discriminator="kind")
+    training: StreamTraining | StreamTreeTraining = Field(default_factory=StreamTraining)
     event_store: Path
     # The application's event source ('module:Class', see core.event_stream) and its own
     # reading/shuffling options, passed to it unchanged.
@@ -960,7 +985,33 @@ class StreamRunConfig(StrictConfigModel):
     output_directory: Path
     dim_theta: int = Field(ge=1)
     dim_phi: int = Field(ge=0)
-    mlp_position: FieldPosition | None = None
+    record_position: FieldPosition | None = Field(
+        default=None, validation_alias=AliasChoices("record_position", "mlp_position")
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def training_for_kind(cls, data):
+        """Parse ``training`` as the settings of the model kind (trees or gradient steps)."""
+        if not isinstance(data, dict):
+            return data
+        model = data.get("model")
+        kind = model.get("kind") if isinstance(model, dict) else getattr(model, "kind", None)
+        training = data.get("training")
+        if training is None or isinstance(training, dict):
+            schema = StreamTreeTraining if kind == "bdt" else StreamTraining
+            try:
+                data = {**data, "training": schema.model_validate(training or {})}
+            except ValueError as exc:
+                raise ValueError(f"training of a stream {kind}: {exc}") from exc
+        return data
+
+    @model_validator(mode="after")
+    def training_matches_kind(self):
+        trees = isinstance(self.model, BDTModel)
+        if trees != isinstance(self.training, StreamTreeTraining):
+            raise ValueError("kind: bdt takes StreamTreeTraining, the other kinds StreamTraining")
+        return self
 
     @model_validator(mode="after")
     def evaluation_sets(self):
@@ -980,26 +1031,38 @@ class StreamRunConfig(StrictConfigModel):
 
     @property
     def network(self) -> FieldModel:
-        """The network trained: the field, or for ``kind: mlp`` the unencoded field."""
+        """The network trained: the field, or for ``kind: mlp`` / ``transformer`` the
+        unencoded field with that network. Not for ``kind: bdt`` (no network)."""
         if isinstance(self.model, FieldModel):
             return self.model
+        if isinstance(self.model, BDTModel):
+            raise ValueError("A stream BDT has no network; see position_columns")
         return FieldModel(
             architecture=self.model.architecture,
-            position=self.mlp_position,
+            position=self.record_position,
             encoding=RawPosition(),
-            last_layer=self.model.last_layer,
+            last_layer=getattr(self.model, "last_layer", None),
         )
+
+    @property
+    def position_columns(self) -> list[int]:
+        """phi columns added to theta to give the record position ([]: theta alone)."""
+        position = (
+            self.model.position if isinstance(self.model, FieldModel) else self.record_position
+        )
+        return [] if position is None else list(position.phi_columns)
 
     @model_validator(mode="after")
     def stream_columns(self):
-        if self.mlp_position is not None and not isinstance(self.model, MLPModel):
-            raise ValueError("mlp_position is for kind: mlp; a field uses model.position")
-        model = self.network
-        groups = [g for g in (model.position, model.direction) if g is not None]
-        used = [c for g in groups for c in g.phi_columns]
+        if self.record_position is not None and isinstance(self.model, FieldModel):
+            raise ValueError(
+                "record_position is for kind: mlp, transformer, bdt; a field uses model.position"
+            )
+        direction = getattr(self.model, "direction", None)
+        used = self.position_columns + ([] if direction is None else direction.phi_columns)
         if used and max(used) >= self.dim_phi:
             raise ValueError(f"phi_columns {used} need dim_phi > {max(used)}")
-        if model.position is not None and len(model.position.phi_columns) != self.dim_theta:
+        if self.position_columns and len(self.position_columns) != self.dim_theta:
             raise ValueError("position phi_columns must match dim_theta one to one")
         return self
 

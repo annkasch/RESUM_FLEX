@@ -11,7 +11,7 @@ One topic per file. Read the one you need, not all of them.
 | [data.md](data.md) | `StandardBatch`, input scaling, dataset providers, unequal event counts |
 | [models.md](models.md) | Event model kinds, the shared Python API, neural field, legacy CNP |
 | [training.md](training.md) | Loss, sampling, mixup, episode building, real-plus-mixup objective |
-| [stream.md](stream.md) | Training the MLP or field on an ungrouped event stream |
+| [stream.md](stream.md) | Training the MLP, field, transformer or BDT on an ungrouped event stream |
 | [last-layer.md](last-layer.md) | Bayesian last layer: rates with uncertainty without a GP |
 | [runs.md](runs.md) | CLI stages, run outputs, compute accounting, `predict` |
 | [evaluation.md](evaluation.md) | Event-model metrics, read-out, blinded test sets |

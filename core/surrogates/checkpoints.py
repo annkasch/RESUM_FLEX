@@ -26,6 +26,8 @@ def save_surrogate(path, model, *, metadata=None):
         import sklearn
 
         manifest["backend_version"] = sklearn.__version__
+        if model.stream_position is not None:
+            manifest["stream_position"] = list(model.stream_position)
     else:
         import torch
 
@@ -71,7 +73,8 @@ def load_surrogate(path):
         import joblib
 
         model.estimator = joblib.load(path / "estimator.joblib")
-        if model.estimator.n_features_in_ != (model.dim_theta or 0) + (model.dim_phi or 0):
+        model.stream_position = manifest.get("stream_position")
+        if model.estimator.n_features_in_ != model.n_features:
             raise ValueError("Checkpoint feature dimensions do not match estimator")
     else:
         import torch

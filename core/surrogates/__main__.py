@@ -50,7 +50,7 @@ def main():
     mfgp.add_argument("config")
     binomial = commands.add_parser("binomial", help="Fit a binomial count GP on hit counts")
     binomial.add_argument("config")
-    stream = commands.add_parser("stream", help="Train a neural field on an event store")
+    stream = commands.add_parser("stream", help="Train an event model on an event store")
     stream.add_argument("config")
     residual = commands.add_parser(
         "residual", help="Residual learnability test on a finished training or stream run"
