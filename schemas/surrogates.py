@@ -1094,6 +1094,72 @@ class WithinPointRunConfig(StrictConfigModel):
         return checkpoints
 
 
+class ScoreRunConfig(StrictConfigModel):
+    """``python -m core.surrogates score``: count-level predictive scores of a finished
+    context-free event model with a Bayesian last layer on prepared design-point sets, the same
+    measures as the binomial GP (predictive count NLL, plug-in NLL, MAE, RMSE, CRPS, Pearson r,
+    coverage), with coverage and z-score plots. Predicts the sets anew; the run is not modified.
+
+    Each design point is predicted from its own event inputs unless ``donors`` asks for the
+    inputs of other design points (never its own), which needs the provider's
+    ``transfer_events`` rule (``core/surrogates/datasets.py``).
+    """
+
+    run: Path
+    checkpoints: list[str] = Field(default_factory=lambda: ["best"], min_length=1)
+    # Provider partitions as "partition/fidelity", e.g. validation/hf (any prepared set; the
+    # run's train sets are rejected).
+    sets: list[str] = Field(min_length=1)
+    # None: own event inputs. "scored": donors from each scored set itself. "partition/fidelity":
+    # donors from that set. Donors need the provider's transfer_events.
+    donors: str | None = None
+    seed: int = 0  # donor draw
+    threads: int = Field(default=1, ge=1)
+    # Provider and data of the run's record unless given (e.g. another view of the same data).
+    data_provider: str | None = "run"
+    data_directory: Path | None = None
+    # Coverage plot y-range; None: from the data.
+    plot_ylim: tuple[float, float] | None = None
+    # The run's own test partition is blinded unless set.
+    unblind_test: bool = False
+    output_directory: Path
+
+    @field_validator("sets")
+    @classmethod
+    def set_names(cls, sets):
+        for name in sets:
+            partition, _, fidelity = name.partition("/")
+            if not partition or not fidelity or "/" in fidelity:
+                raise ValueError(f"sets entries are partition/fidelity, not {name!r}")
+        if len(set(sets)) != len(sets):
+            raise ValueError("sets must be unique")
+        return sets
+
+    @field_validator("donors")
+    @classmethod
+    def donor_name(cls, donors):
+        if donors not in (None, "scored"):
+            partition, _, fidelity = donors.partition("/")
+            if not partition or not fidelity or "/" in fidelity:
+                raise ValueError(f"donors is None, 'scored' or partition/fidelity, not {donors!r}")
+        return donors
+
+    @field_validator("checkpoints")
+    @classmethod
+    def unique_checkpoints(cls, checkpoints):
+        if len(set(checkpoints)) != len(checkpoints):
+            raise ValueError("checkpoints must be unique")
+        return checkpoints
+
+
+def load_score_config(path: str | Path) -> ScoreRunConfig:
+    """Score config; run, output and data paths resolve relative to the YAML file."""
+    path = Path(path).resolve()
+    config = ScoreRunConfig.model_validate(yaml.safe_load(path.read_text()))
+    names = ("run", "output_directory") + (("data_directory",) if config.data_directory else ())
+    return _resolve_run_paths(config, path, names=names)
+
+
 def _resolve_run_paths(config, path, names=("run", "output_directory")):
     for name in names:
         value = getattr(config, name).expanduser()

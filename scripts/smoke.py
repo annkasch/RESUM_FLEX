@@ -6,7 +6,7 @@ temporary directory, under a minute, safe on a login node (one thread, CPU):
     train (mlp + last layer) -> predict -> mfgp -> binomial (event-model covariate),
     stream (stream MLP on an in-memory event source, scored on the design-point data),
     residual (on the train and stream runs; only with the lgbm extra),
-    within_point (on the train run)
+    within_point (on the train run), score (train run on the GP validation set)
 
 Each stage runs the real CLI (``python -m core.surrogates ...``) in a subprocess; independent
 stages run side by side (at most 3 single-thread processes). Prints OK and the wall time per
@@ -201,6 +201,11 @@ def write_configs(root: Path) -> dict[str, Path]:
         "run": "runs/train",
         "within_point_null_draws": 100,
     }
+    configs["score"] = {
+        "run": "runs/train",
+        "sets": ["gp_validation/hf"],
+        "output_directory": "runs/score",
+    }
     # Residual learnability test only where the optional lgbm extra is installed.
     if importlib.util.find_spec("lightgbm") is not None:
         residual = {"min_positives": 1, "min_data_in_leaf": 5, "max_trees": 20}
@@ -252,6 +257,8 @@ def stages(root: Path, configs: dict[str, Path]):
     output = runs / "train"
     check = lambda output=output: _check_json(output, ("within_point.json",))  # noqa: E731
     predicts.append(("within_point", ["within_point", configs["within_point"]], check))
+    check = lambda: _check_json(runs / "score", ("score.json", "compute.json"))  # noqa: E731
+    predicts.append(("score", ["score", configs["score"]], check))
     for run in ("train", "stream"):
         if f"residual {run}" in configs:
             output = runs / f"residual_{run}"

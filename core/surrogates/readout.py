@@ -167,6 +167,46 @@ def within_point_coverage(target, logits, gain, variance, *, seed, draws=NULL_DR
     return coverage, np.stack([np.stack(null[k]) for k in (1, 2, 3)])
 
 
+def predictive_scores(hits, trials, draws, *, seed, plugin=None):
+    """Count-level predictive scores of design-point rate draws, as for the binomial GP.
+
+    hits, trials: [B]; draws: [S, B] rate draws (e.g. Bayesian last layer); plugin: optional
+    [B] point estimate of the rate, scored alone as ``plugin_count_nll``. Returns
+    (scores, arrays) of ``core.gp_metrics.count_predictive_scores``.
+    """
+    from scipy.stats import binom
+
+    from core.gp_metrics import count_predictive_scores
+
+    scores, arrays = count_predictive_scores(hits, trials, draws, seed=seed)
+    if plugin is not None:
+        scores["plugin_count_nll"] = float(-binom.logpmf(hits, trials, plugin).mean())
+    return scores, arrays
+
+
+def plot_predictive_coverage(arrays, path, title, *, xlabel="Design point index", ylim=None):
+    """Observation-predictive coverage plot of ``predictive_scores`` arrays (1/2/3 sigma)."""
+    from viz.dispatch import plot_coverage_test
+
+    intervals = {k: (arrays[f"lower_{k}"], arrays[f"upper_{k}"]) for k in (1, 2, 3)}
+    if ylim is None:
+        high = max(float(arrays["observed"].max()), float(intervals[3][1].max()))
+        ylim = (0, high * 1.05)
+    plot_coverage_test(
+        arrays["observed"],
+        arrays["mean"],
+        arrays["sigma"],
+        out_path=path,
+        title=title,
+        xlabel=xlabel,
+        predicted_label="Predictive mean",
+        raw_label="Observed fraction",
+        ylim=tuple(ylim),
+        intervals=intervals,
+        show_predicted=False,
+    )
+
+
 def readout_metrics(
     target,
     arrays,

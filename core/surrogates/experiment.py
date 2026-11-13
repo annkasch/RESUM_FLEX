@@ -305,31 +305,19 @@ def _design_point_predictive(model, episode, stem):
 
     Writes ``<stem>.npz`` (per-design-point predictive arrays) and a coverage plot.
     """
-    from core.gp_metrics import count_predictive_scores
     from core.surrogates.last_layer import design_point_probability_draws
+    from core.surrogates.readout import plot_predictive_coverage, predictive_scores
 
     target = episode.target
     draws = design_point_probability_draws(model, target, episode.context)  # [S, B]
     hits = np.where(target.event_mask, target.labels, 0).sum(axis=1)
-    scores, arrays = count_predictive_scores(
+    scores, arrays = predictive_scores(
         hits, target.events_per_design_point, draws, seed=model.config.last_layer.seed
     )
     np.savez_compressed(stem.with_suffix(".npz"), **arrays)
-    from viz.dispatch import plot_coverage_test
-
-    intervals = {k: (arrays[f"lower_{k}"], arrays[f"upper_{k}"]) for k in (1, 2, 3)}
-    high = max(float(arrays["observed"].max()), float(intervals[3][1].max()))
-    plot_coverage_test(
-        arrays["observed"],
-        arrays["mean"],
-        arrays["sigma"],
-        out_path=stem.parent / f"{stem.name}_coverage.png",
-        title=f"{stem.name}: Bayesian last layer, observation-predictive coverage",
-        xlabel="Design point index",
-        predicted_label="Predictive mean",
-        raw_label="Observed fraction",
-        ylim=(0, high * 1.05),
-        intervals=intervals,
-        show_predicted=False,
+    plot_predictive_coverage(
+        arrays,
+        stem.parent / f"{stem.name}_coverage.png",
+        f"{stem.name}: Bayesian last layer, observation-predictive coverage",
     )
     return scores

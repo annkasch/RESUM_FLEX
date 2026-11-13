@@ -24,7 +24,8 @@ CLI (`core/surrogates/__main__.py`): `train` -> `run_experiment`, `predict` -> i
 `mfgp` -> `run_mfgp_config`, `binomial` -> `run_binomial_config`, `stream` -> `run_stream`,
 `residual` -> `residual_stage.run_residual` (residual test on a finished run), `within_point` ->
 `within_point_stage.run_within_point` (within-design-point metrics on a finished run); both load
-the run's inputs through `finished_run.py`.
+the run's inputs through `finished_run.py`. `score` -> `score_stage.run_score` (predictive
+scores of a finished run on prepared sets; predicts them anew through `inference.py`).
 
 ## Layout
 
@@ -58,6 +59,7 @@ Module docstrings describe each file.
 | Metrics (count NLL, coverage, CRPS) | `core/surrogates/evaluation.py`, `core/gp_metrics.py` |
 | Z-score plots (quantile residuals) | `core/quantile_residuals.py`, `viz/zscore.py` |
 | Read-out, residual learnability test | `core/surrogates/readout.py`, `core/surrogates/residual.py`, `residual_stage.py`, `within_point_stage.py`, `finished_run.py` (finished runs) |
+| Predictive scores of a finished run on prepared sets | `core/surrogates/score_stage.py`, `inference.py` (prediction, donors), `readout.predictive_scores` |
 | Bayesian last layer | `core/last_layer.py` (numpy math), `core/surrogates/last_layer.py` (torch side) |
 | GP levels / fidelities | `core/surrogates/mfgp_stage.py`, `core/mfgp_pipeline.py` (`fit_targets`: GP targets per level) |
 | MFGP rate bias on synthetic counts | `core/mfgp_bias.py`, `scripts/mfgp_noise_sweep.py` |

@@ -5,7 +5,8 @@ python -m core.surrogates binomial BINOMIAL_GP.yaml
 python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)
 python -m core.surrogates residual RESIDUAL.yaml   (residual test on a finished run)
 python -m core.surrogates within_point WITHIN_POINT.yaml   (within-design-point metrics on a
-    finished run)"""
+    finished run)
+python -m core.surrogates score SCORE.yaml   (predictive scores of a finished run on sets)"""
 
 import argparse
 
@@ -59,6 +60,12 @@ def main():
         "within_point", help="Within-design-point metrics on a finished training or stream run"
     )
     within_point.add_argument("config")
+    score = commands.add_parser(
+        "score",
+        help="Predictive scores of a finished event model (Bayesian last layer) on design-point "
+        "sets, as for the binomial GP",
+    )
+    score.add_argument("config")
     args = parser.parse_args()
     import torch
 
@@ -69,6 +76,13 @@ def main():
 
         output = run_residual(load_residual_config(args.config))
         print(f"Residual test written to {output}", flush=True)
+        return
+    if args.command == "score":
+        from core.surrogates.score_stage import run_score
+        from schemas.surrogates import load_score_config
+
+        output = run_score(load_score_config(args.config))
+        print(f"Scores written to {output}", flush=True)
         return
     if args.command == "within_point":
         from core.surrogates.within_point_stage import run_within_point

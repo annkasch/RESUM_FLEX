@@ -41,6 +41,10 @@ selection (`selection_fidelity` changes this). Training PR is in-sample. Files u
 - Added later by `python -m core.surrogates within_point` (runs from before the within-point
   metrics): `within_point.json`, `{fidelity}_{split}_{checkpoint}_within_point.npz` and
   `_within_point_gain.png`; the run's own files stay unchanged.
+- Scored later by `python -m core.surrogates score` (predictive scores on prepared sets, own
+  or donor event inputs; `docs/configs.md`): `score.json`, `compute.json` and per set the
+  prediction, predictive arrays, coverage and z-score plots, in the config's new
+  `output_directory`.
 - Shared PNG/PDF validation-history, mean/residual and PR plots; per held-out split the
   within-design-point gain and the feature-calibration plots, with `residual_test:` the
   residual-test correction plot.

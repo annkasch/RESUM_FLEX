@@ -9,6 +9,7 @@ parentheses.
 - [Binomial GP config](#binomial-gp-config) (`python -m core.surrogates binomial`)
 - [Residual test config](#residual-test-config) (`python -m core.surrogates residual`)
 - [Within-design-point config](#within-design-point-config) (`python -m core.surrogates within_point`)
+- [Score config](#score-config) (`python -m core.surrogates score`)
 
 ## Training config
 
@@ -210,3 +211,35 @@ files are not changed; a run with a `within_point.json` is refused.
 | `checkpoints` | Checkpoints whose saved arrays are scored (`[best]`). |
 | `sets` | Design-point sets as `split/fidelity`, e.g. `validation/lf`; no stream events (all design-point sets the run evaluated). |
 | `within_point_null_draws` | Label draws per design point for the null (1000, ≥ 100), as in training configs. |
+
+## Score config
+
+`ScoreRunConfig`: count-level predictive scores of a finished context-free event model with a
+Bayesian last layer (mlp, field, ...) on prepared design-point sets, with the measures of the
+binomial GP (predictive count NLL, `plugin_count_nll` from the mean p alone, MAE, RMSE, CRPS,
+Pearson r, 1/2/3σ coverage) and coverage and z-score plots, so event models and GPs are scored
+alike, also on sets the run never evaluated (e.g. a GP benchmark set). The sets are predicted
+anew (`core/surrogates/inference.py`); the hits come from the provider's labels. Each design
+point is predicted from its own event inputs unless `donors` asks for the inputs of other design
+points (a fresh event sample, so nothing of its own simulation enters; never its own), which
+needs the provider's `transfer_events` rule (`core/surrogates/datasets.py`); without it a donor
+request fails. Sets the run trained on are refused; the run's test partition needs
+`unblind_test`. Writes into a new `output_directory` (e.g. a folder in the run): `score.json`
+(one row per checkpoint and set: scores, event inputs, provenance), `compute.json` and per set
+`<partition>_<fidelity>_<checkpoint>_prediction.npz` (ids, coordinates, mean p, last-layer
+draws, donor rows), `_predictive.npz`, `_coverage.png`, `_zscore*.png`.
+
+| Key | Meaning |
+|---|---|
+| `run` | Run directory (training or stream run). Required. |
+| `checkpoints` | Checkpoints to score (`[best]`). |
+| `sets` | Provider partitions as `partition/fidelity`, e.g. `validation/hf`. Required. |
+| `donors` | None: own event inputs (default). `scored`: donors from each scored set itself; `partition/fidelity`: donors from that set. Needs the provider's `transfer_events`. |
+| `seed` | Donor draw seed (0). |
+| `threads` | Evaluation threads (1). |
+| `data_provider` | Provider `module:Class` (`run`: the run's). |
+| `data_directory` | Prepared data (the run's), e.g. another set of the same normalization. |
+| `plot_ylim` | Coverage plot y-range `[low, high]` (from the data). |
+| `unblind_test` | Allow the run's test partition (false). |
+| `output_directory` | Output directory; must not exist. Required. |
+
