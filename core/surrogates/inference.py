@@ -59,10 +59,13 @@ def predict_partition(
     """Predict every design point of a prepared partition with a context-free checkpoint.
 
     ``events_from`` = (partition, fidelity): each design point keeps its own theta but takes the
-    event inputs (phi) of a randomly drawn donor design point of that partition (seeded). For event
+    event inputs (phi) of a randomly drawn donor design point of that partition (seeded), never
+    its own (same design point id), so the partition itself can be the donor pool. For event
     features defined relative to the design point (offset, direction), this is a fresh emission
     sample: the prediction then uses nothing from the design point's own simulation, as for a
-    position that was never simulated. Default: the design point's own event inputs (no labels).
+    position that was never simulated. Features that are not (e.g. absolute positions) need the
+    provider's optional ``transfer_events``, which moves the donor events to the design point;
+    without it the donor phi is used unchanged. Default: the design point's own event inputs.
 
     ``data_provider`` defaults to the provider the checkpoint was trained with. The inputs
     must be normalized exactly as the training data: the provider's normalization must
@@ -106,10 +109,23 @@ def predict_partition(
     with compute.stage("data_loading"):
         batch, data = provider.load(partition, fidelity, labels=False)
         ids = provider.theta(partition, fidelity)[1]
-        donors = None
+        donors = transfer = None
         if events_from is not None:
             donor = provider.load(*events_from, labels=False)[0]
-            batch, donors = _donor_batch(batch, donor, seed)
+            donor_ids = provider.theta(*events_from)[1]
+            batch, donors = _donor_batch(batch, donor, seed, target_ids=ids, donor_ids=donor_ids)
+            transfer = getattr(provider, "transfer_events", None)
+            if transfer is not None:
+                from schemas.data_models import StandardBatch
+
+                phi = transfer(batch.phi, tuple(events_from), donors, (partition, fidelity))
+                batch = StandardBatch(
+                    mode=batch.mode,
+                    theta=batch.theta,
+                    phi=np.asarray(phi, dtype=batch.phi.dtype),  # [B, N, D_phi]
+                    labels=batch.labels,
+                    event_counts=batch.events_per_design_point,
+                )
     uncertainty = {}
     with evaluation_threads(threads), compute.stage("prediction"):
         prediction = _predict(model, batch, None)
@@ -174,6 +190,10 @@ def predict_partition(
                 donor_fidelity=events_from[1],
                 seed=seed,
                 donor_index=donors.tolist(),
+                own_excluded=True,
+                transfer=(
+                    "provider transfer_events" if transfer is not None else "donor phi unchanged"
+                ),
             )
         ),
         event_logits=events_directory.name if event_logits else None,
@@ -266,15 +286,48 @@ def read_event_logits(directory, design_points=None):
     return np.concatenate(ids), np.concatenate(counts), np.concatenate(logits)
 
 
-def _donor_batch(batch, donor, seed):
-    """batch with each design point's phi replaced by a seeded random donor design point's phi."""
+def draw_donors(n_targets, donor_ids, target_ids, seed):
+    """Seeded donor index [B] into ``donor_ids``; a target never draws its own id.
+
+    Targets whose id is not among the donors draw uniformly from all donors, exactly as without
+    the exclusion (same stream), so pools of other design points keep their earlier draws.
+    """
+    donor_ids, target_ids = list(donor_ids), list(target_ids)
+    if len(target_ids) != n_targets:
+        raise ValueError(f"{len(target_ids)} target ids for {n_targets} design points")
+    position = {key: j for j, key in enumerate(donor_ids)}
+    if len(position) != len(donor_ids):
+        raise ValueError("donor design point ids are not unique")
+    own = np.array([position.get(key, -1) for key in target_ids])  # [B], -1: not a donor
+    m = len(donor_ids)
+    rng = np.random.default_rng(np.random.SeedSequence([seed, 0]))
+    if not np.any(own >= 0):
+        return rng.integers(m, size=n_targets)
+    if m < 2:
+        raise ValueError("the donor pool must hold another design point than the target")
+    index = rng.integers(m - (own >= 0))  # [B] among the allowed donors
+    return index + ((own >= 0) & (index >= own))  # skip the target's own position
+
+
+def _donor_batch(batch, donor, seed, *, target_ids=None, donor_ids=None):
+    """batch with each design point's phi replaced by a seeded random donor design point's phi.
+
+    With ids, a design point never takes its own events (see ``draw_donors``).
+    """
     from schemas.data_models import StandardBatch
 
     if donor.phi is None or batch.phi is None:
         raise ValueError("events_from needs event inputs (phi) in both partitions")
-    index = np.random.default_rng(np.random.SeedSequence([seed, 0])).integers(
-        donor.batch_size, size=batch.batch_size
-    )
+    if (target_ids is None) != (donor_ids is None):
+        raise ValueError("give both target_ids and donor_ids, or neither")
+    if target_ids is None:
+        index = np.random.default_rng(np.random.SeedSequence([seed, 0])).integers(
+            donor.batch_size, size=batch.batch_size
+        )
+    else:
+        if len(donor_ids) != donor.batch_size:
+            raise ValueError(f"{len(donor_ids)} donor ids for {donor.batch_size} design points")
+        index = draw_donors(batch.batch_size, donor_ids, target_ids, seed)
     counts = donor.events_per_design_point[index]
     return StandardBatch(
         mode=batch.mode,

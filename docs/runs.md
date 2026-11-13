@@ -87,6 +87,17 @@ overwritten. Use design points the model was not trained on, so no labels can be
 With a Bayesian last layer the file also holds `probability_draws` [S, B] and their
 `probability_mean` / `probability_sd` per design point.
 
+`--events-from PARTITION/FIDELITY` (with `--seed`) predicts each design point from the event
+inputs of a seeded random donor design point of that partition instead of its own: a fresh
+event sample, so nothing of the design point's own simulation enters (written as
+`<partition>_<fidelity>_events-<donor partition>_<donor fidelity>`). A design point never
+draws itself (same design point id), so the scored partition can be its own donor pool; a pool
+of other design points keeps the plain seeded draw. The donor phi is used as it is, which
+assumes event inputs relative to the design point; a provider whose phi is not (e.g. absolute
+positions) implements `transfer_events` (`core/surrogates/datasets.py`) to move the donor
+events to the target design point. The `.json` records the donor indices, the exclusion and
+whether the provider transfer was used.
+
 `--event-logits` (off by default) also writes every event's logit to
 `RUN/inference/best/<partition>_<fidelity>_events/`: float32, padding dropped, in the
 provider's event order (design point by design point, each design point's events in load order). Shards

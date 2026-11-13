@@ -36,7 +36,8 @@ def main():
         "--events-from",
         metavar="PARTITION/FIDELITY",
         help="use the event inputs of seeded random donor design points of this partition (a fresh "
-        "emission sample) instead of each design point's own",
+        "event sample, never the design point itself; may be the predicted partition) instead of "
+        "each design point's own; moved by the provider's transfer_events if it has one",
     )
     predict.add_argument("--seed", type=int, default=0, help="donor draw seed")
     predict.add_argument(

@@ -42,6 +42,13 @@ class DatasetProvider(Protocol):
     def normalization(self) -> dict | None:
         """Affine input normalization ({'theta': ..., 'phi': ...}) or None if unnormalized."""
 
+    # Optional (looked up with getattr, so not part of the protocol's required methods):
+    # transfer_events(phi, source, source_rows, target) -> phi moves donor event inputs to other
+    # design points for ``predict --events-from``. phi [B, N, D_phi] normalized: row b holds the
+    # events of design point source_rows[b] of source = (partition, fidelity), to be placed at
+    # design point b of target = (partition, fidelity). Needed when phi is not relative to the
+    # design point (e.g. absolute positions); without it the donor phi is used unchanged.
+
 
 def load_provider(spec: str | None, root) -> DatasetProvider:
     """Provider ``spec`` ('module:Class', None = NpzBatches) for data directory ``root``."""
