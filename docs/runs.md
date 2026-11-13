@@ -83,7 +83,8 @@ inference + GP fit for NN + GP.
 ```
 
 writes `RUN/inference/best/<partition>_<fidelity>.{npz,json}`: per design point the provider's design point
-id and coordinates, normalized theta, event count and `mean_probability` (mean predicted p
+id and coordinates, normalized theta (the provider's, also for event-only models without theta
+input, as the GP stages check it), event count and `mean_probability` (mean predicted p
 over the design point's events), plus provenance. It uses the provider the checkpoint was trained
 with (`--data-provider` overrides it). Only context-free models (mlp, field, transformer, bdt)
 are accepted, and the provider normalization must equal the checkpoint's. Results are never

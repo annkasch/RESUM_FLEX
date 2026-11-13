@@ -174,3 +174,48 @@ class PlainProvider(ShiftProvider):
     """The same provider without a transfer rule."""
 
     transfer_events = None
+
+
+class EventOnlyProvider(ShiftProvider):
+    """Event-only batches (no theta input) whose design points keep coordinates as metadata."""
+
+    def load(self, partition, fidelity, *, labels=True):
+        a = self.arrays
+        batch = StandardBatch(
+            mode=InputMode.EVENT_ONLY,
+            theta=None,
+            phi=a["phi"],
+            labels=np.zeros(a["phi"].shape[:2], dtype=np.int8),
+            event_counts=a["counts"],
+        )
+        return batch, {"partition": partition}
+
+
+def test_predict_saves_provider_theta_also_for_event_only_models(tmp_path):
+    from core.surrogates import build_surrogate
+    from core.surrogates.checkpoints import save_surrogate
+    from core.surrogates.inference import predict_partition
+
+    root = tmp_path / "data"
+    target = _batch(4, 6, 5.0, 1)
+    root.mkdir()
+    np.savez(
+        root / "arrays.npz",
+        theta=target.theta,
+        phi=target.phi,
+        counts=target.events_per_design_point,
+    )
+    model = build_surrogate({"kind": "mlp", "architecture": {"hidden_dims": [4]}}, None, 6, seed=0)
+    model.metadata = {
+        "normalization.json": NORMALIZATION,
+        "step": 1,
+        "data_provider": "tests.test_inference_donors:EventOnlyProvider",
+    }
+    checkpoint = tmp_path / "run" / "checkpoints" / "best"
+    save_surrogate(checkpoint, model)
+    path = predict_partition(checkpoint, root, "test", "lf")
+    provider = EventOnlyProvider(root)
+    theta, ids = provider.theta("test", "lf")
+    with np.load(path) as arrays:  # no pickled None: loadable as the GP stages load it
+        assert arrays["design_point_ids"].tolist() == ids
+        np.testing.assert_allclose(arrays["theta"], theta, rtol=0, atol=1e-12)

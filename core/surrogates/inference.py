@@ -87,15 +87,17 @@ def predict_design_points(
 ):
     """Context-free prediction of one partition from its own event inputs or donors.
 
-    Returns a dict: ``batch`` (the inputs predicted on), ``prediction``, ``ids``, ``data``
-    (provider provenance), ``donors`` (index into the donor partition, or None) and
+    Returns a dict: ``batch`` (the inputs predicted on), ``prediction``, ``ids`` and ``theta``
+    (the provider's design point ids and normalized coordinates, also for event-only models
+    whose batch has no theta), ``data`` (provider provenance), ``donors`` (index into the donor
+    partition, or None) and
     ``uncertainty`` (last-layer ``probability_draws`` [S, B], ``probability_mean``,
     ``probability_sd``; empty without a last layer). Labels are not loaded.
     """
     compute = compute or ComputeLog()
     with compute.stage("data_loading"):
         batch, data = provider.load(partition, fidelity, labels=False)
-        ids = provider.theta(partition, fidelity)[1]
+        theta, ids = provider.theta(partition, fidelity)  # design point metadata
         donors = None
         if events_from is not None:
             from schemas.data_models import StandardBatch
@@ -129,6 +131,7 @@ def predict_design_points(
         batch=batch,
         prediction=prediction,
         ids=ids,
+        theta=np.asarray(theta),  # [B, D_theta]
         data=data,
         donors=donors,
         uncertainty=uncertainty,
@@ -211,7 +214,9 @@ def predict_partition(
         stem.with_suffix(".npz"),
         design_point_ids=np.array(ids),  # [B] provider design point identifiers
         coordinates=provider.coordinates(partition, fidelity),  # [B, D] physical
-        theta=batch.theta,  # [B, D_theta] normalized model input
+        # [B, D_theta] normalized design point coordinates from the provider, as the GP stages
+        # check them; equal to the model input when the model sees theta.
+        theta=result["theta"],
         event_counts=batch.events_per_design_point,  # [B]
         mean_probability=prediction.mean,  # [B] mean predicted p over each design point's events
         **uncertainty,
