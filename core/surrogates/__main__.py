@@ -9,7 +9,9 @@ python -m core.surrogates within_point WITHIN_POINT.yaml   (within-design-point 
 python -m core.surrogates score SCORE.yaml   (predictive scores of a finished run on sets)"""
 
 import argparse
+import os
 
+from core.provenance import save_config
 from core.surrogates.experiment import run_experiment
 from schemas.surrogates import load_surrogate_config
 
@@ -75,6 +77,7 @@ def main():
         from schemas.surrogates import load_residual_config
 
         output = run_residual(load_residual_config(args.config))
+        save_config(args.config, output, "residual")
         print(f"Residual test written to {output}", flush=True)
         return
     if args.command == "score":
@@ -82,6 +85,7 @@ def main():
         from schemas.surrogates import load_score_config
 
         output = run_score(load_score_config(args.config))
+        save_config(args.config, output, "score")
         print(f"Scores written to {output}", flush=True)
         return
     if args.command == "within_point":
@@ -89,6 +93,7 @@ def main():
         from schemas.surrogates import load_within_point_config
 
         output = run_within_point(load_within_point_config(args.config))
+        save_config(args.config, output, "within_point")
         print(f"Within-design-point metrics written to {output}", flush=True)
         return
     if args.command == "stream":
@@ -98,6 +103,8 @@ def main():
         config = load_stream_config(args.config)
         print(f"Training a neural field on events of {config.event_store}", flush=True)
         report = run_stream(config)
+        if os.environ.get("RANK", "0") == "0":  # torchrun: rank 0 writes the outputs
+            save_config(args.config, config.output_directory, "stream")
         print({k: report[k] for k in ("steps", "events_seen", "best")}, flush=True)
         return
     if args.command == "binomial":
@@ -106,7 +113,9 @@ def main():
 
         config = load_binomial_config(args.config)
         print(f"Fitting a binomial GP on {len(config.observations)} count sets", flush=True)
-        print(run_binomial_config(config), flush=True)
+        result = run_binomial_config(config)
+        save_config(args.config, config.output_directory, "binomial")
+        print(result, flush=True)
         return
     if args.command == "mfgp":
         from core.surrogates.mfgp_stage import run_mfgp_config
@@ -114,7 +123,9 @@ def main():
 
         config = load_mfgp_config(args.config)
         print(f"Fitting a {len(config.levels)}-level MFGP", flush=True)
-        print(run_mfgp_config(config), flush=True)
+        result = run_mfgp_config(config)
+        save_config(args.config, config.output_directory, "mfgp")
+        print(result, flush=True)
         return
     if args.command == "predict":
         from core.surrogates.inference import predict_partition
@@ -136,7 +147,9 @@ def main():
         return
     config = load_surrogate_config(args.config)
     print(f"Training {config.model.kind}; selecting by {config.selection}", flush=True)
-    print(run_experiment(config), flush=True)
+    output = run_experiment(config)
+    save_config(args.config, output, "train")
+    print(output, flush=True)
 
 
 if __name__ == "__main__":

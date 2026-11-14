@@ -84,10 +84,17 @@ Every output records which resum_flex code wrote it (`core.provenance`): a `code
 (None on a detached HEAD), `dirty` (tracked files differ from the commit; untracked files don't
 count), `git_error` if git failed (e.g. an installed copy outside a checkout), the Python
 version, the installed `packages` (resum_flex and the libraries it uses, None if absent) and
-`torch_cuda` (CUDA build of Torch, None for CPU). Git is asked in the resum_flex source
+`torch_cuda` (CUDA build of Torch, None for CPU) and `command` (the command line). Git is asked in the resum_flex source
 directory, not the working directory; the state is taken once per process, at the start of
 the run. The application's own code is not recorded; `code_provenance(source)` describes any
 repository the same way, for an application to write into its own outputs.
+
+Every CLI stage also copies its input YAML unchanged into its output directory when it
+finishes, as `<stage>.yaml` (`train`, `stream`, `mfgp`, `binomial`, `score`, `residual`;
+`within_point.yaml` in the run directory), never overwriting. The copy keeps comments and
+shows which settings were set explicitly, unlike the resolved config; relative paths in it
+still refer to the original file's directory. `predict` takes no YAML; its arguments are in
+`command`. Runs started from Python (`run_experiment(config)`) have no YAML to copy.
 
 ## Context-free inference
 

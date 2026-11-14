@@ -11,6 +11,10 @@
     packages      installed versions of resum_flex and the libraries it uses (None if absent)
     torch_cuda    CUDA version Torch was built with (None for a CPU build), only if Torch is
                   already imported
+    command       the process's command line (``sys.argv``)
+
+``save_config`` copies a stage's input YAML unchanged into its output directory
+(``<stage>.yaml``), next to the resolved config.
 
 resum_flex records its own code only. ``source`` lets an application describe its own
 repository the same way; the git query runs in ``source``, not in the working directory.
@@ -20,6 +24,7 @@ the first call of a process (at the start of a run) describes the code that run 
 """
 
 import platform
+import shutil
 import subprocess
 import sys
 from functools import cache
@@ -93,4 +98,18 @@ def code_provenance(source: str | Path = SOURCE) -> dict:
     record["packages"] = dict(record["packages"])
     torch = sys.modules.get("torch")
     record["torch_cuda"] = None if torch is None else torch.version.cuda
+    record["command"] = list(sys.argv)
     return record
+
+
+def save_config(config: str | Path, directory: str | Path, stage: str) -> Path:
+    """Copy the input YAML ``config`` unchanged to ``directory/<stage>.yaml``; never overwrite.
+
+    Relative paths inside the copy still refer to the original file's directory; the stage's
+    resolved config (e.g. ``experiment.json``) holds them resolved.
+    """
+    target = Path(directory) / f"{stage}.yaml"
+    if target.exists():
+        raise FileExistsError(f"{target} exists; refusing to overwrite a saved config")
+    shutil.copyfile(config, target)
+    return target

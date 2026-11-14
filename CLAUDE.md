@@ -77,7 +77,7 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
   entry point `experiment.run_experiment`, data access via `datasets.py` (DatasetProvider).
 - `core/`: models and math (`core/quantile_residuals.py`: randomized quantile residuals of hit
   counts behind every z-score plot; `core/provenance.py`: the `code` block, resum_flex commit,
-  dirty flag and package versions, in every run's JSON); `data/`: synthetic data; `viz/`: plotting
+  dirty flag, package versions and command line, in every run's JSON, and the YAML copy); `data/`: synthetic data; `viz/`: plotting
   (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
 - `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`,
   `scripts/mfgp_noise_sweep.py` (MFGP bias on synthetic counts, `core/mfgp_bias.py`), `notebooks/`,
@@ -88,7 +88,7 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
 - Config: every YAML loads into a pydantic model in `schemas/`; change behaviour through YAML.
   No per-model scripts, no inert config fields. Paths resolve relative to the YAML file.
 - Run outputs: one `output_directory` per run, never overwritten. A run writes `experiment.json`
-  (resolved config, input hashes, normalization), `checkpoints/{best,final}/`, `history.json`,
+  (resolved config, input hashes, normalization), a verbatim copy of its YAML (`<stage>.yaml`), `checkpoints/{best,final}/`, `history.json`,
   `metrics.json`, `compute.json`, evaluation arrays and plots (see `docs/runs.md`).
 - Seeding: explicit `seed` fields; derive streams with
   `np.random.default_rng(np.random.SeedSequence([seed, k]))` and `torch.manual_seed`. No unseeded

@@ -6,7 +6,14 @@ import subprocess
 import pytest
 
 from core.compute import ComputeLog
-from core.provenance import PACKAGES, SOURCE, code_provenance, git_state, package_versions
+from core.provenance import (
+    PACKAGES,
+    SOURCE,
+    code_provenance,
+    git_state,
+    package_versions,
+    save_config,
+)
 
 
 def _git(path, *args):
@@ -63,3 +70,19 @@ def test_compute_json_carries_the_code_block(tmp_path):
     summary = json.loads(ComputeLog().write(tmp_path).read_text())
     assert summary["code"]["source"] == str(SOURCE)
     assert "commit" in summary["code"] and "torch_cuda" in summary["code"]
+
+
+def test_code_block_records_the_command_line(monkeypatch):
+    monkeypatch.setattr("sys.argv", ["resum", "train", "run.yaml"])
+    assert code_provenance()["command"] == ["resum", "train", "run.yaml"]
+
+
+def test_save_config_copies_verbatim_and_never_overwrites(tmp_path):
+    source = tmp_path / "in.yaml"
+    source.write_text("# my comment\nseed: 3  # chosen\noutput_directory: ../runs/a\n")
+    output = tmp_path / "run"
+    output.mkdir()
+    target = save_config(source, output, "train")
+    assert target == output / "train.yaml" and target.read_bytes() == source.read_bytes()
+    with pytest.raises(FileExistsError):
+        save_config(source, output, "train")

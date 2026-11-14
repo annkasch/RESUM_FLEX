@@ -223,12 +223,17 @@ def write_configs(root: Path) -> dict[str, Path]:
     return paths
 
 
-def _check_json(run: Path, names=("metrics.json", "compute.json")) -> None:
+RUN_JSON = ("metrics.json", "compute.json")
+
+
+def _check_json(run: Path, names=RUN_JSON) -> None:
+    """Each file exists and is not empty (JSON files must also parse)."""
     for name in names:
         path = run / name
         if not path.is_file():
             raise RuntimeError(f"{path} missing")
-        if not json.loads(path.read_text()):
+        text = path.read_text()
+        if not (json.loads(text) if path.suffix == ".json" else text.strip()):
             raise RuntimeError(f"{path} is empty")
 
 
@@ -237,8 +242,16 @@ def stages(root: Path, configs: dict[str, Path]):
     runs = root / "runs"
     checkpoint = runs / "train" / "checkpoints" / "best"
     yield [
-        ("train", ["train", configs["train"]], lambda: _check_json(runs / "train")),
-        ("stream", ["stream", configs["stream"]], lambda: _check_json(runs / "stream")),
+        (
+            "train",
+            ["train", configs["train"]],
+            lambda: _check_json(runs / "train", (*RUN_JSON, "train.yaml")),
+        ),
+        (
+            "stream",
+            ["stream", configs["stream"]],
+            lambda: _check_json(runs / "stream", (*RUN_JSON, "stream.yaml")),
+        ),
     ]
     predicts = []
     for k, (partition, fidelity) in enumerate(PREDICTED):
@@ -255,19 +268,28 @@ def stages(root: Path, configs: dict[str, Path]):
         args += ["--event-logits"] if k == 0 else []
         predicts.append((f"predict {partition}/{fidelity}", args, exists))
     output = runs / "train"
-    check = lambda output=output: _check_json(output, ("within_point.json",))  # noqa: E731
+    check = lambda output=output: _check_json(output, ("within_point.json", "within_point.yaml"))  # noqa: E731
     predicts.append(("within_point", ["within_point", configs["within_point"]], check))
-    check = lambda: _check_json(runs / "score", ("score.json", "compute.json"))  # noqa: E731
+    check = lambda: _check_json(runs / "score", ("score.json", "compute.json", "score.yaml"))  # noqa: E731
     predicts.append(("score", ["score", configs["score"]], check))
     for run in ("train", "stream"):
         if f"residual {run}" in configs:
             output = runs / f"residual_{run}"
-            check = lambda output=output: _check_json(output, ("residual_test.json",))  # noqa: E731
+            names = ("residual_test.json", "residual.yaml")
+            check = lambda output=output, names=names: _check_json(output, names)  # noqa: E731
             predicts.append((f"residual {run}", ["residual", configs[f"residual {run}"]], check))
     yield predicts
     yield [
-        ("mfgp", ["mfgp", configs["mfgp"]], lambda: _check_json(runs / "mfgp")),
-        ("binomial", ["binomial", configs["binomial"]], lambda: _check_json(runs / "binomial")),
+        (
+            "mfgp",
+            ["mfgp", configs["mfgp"]],
+            lambda: _check_json(runs / "mfgp", (*RUN_JSON, "mfgp.yaml")),
+        ),
+        (
+            "binomial",
+            ["binomial", configs["binomial"]],
+            lambda: _check_json(runs / "binomial", (*RUN_JSON, "binomial.yaml")),
+        ),
     ]
 
 
