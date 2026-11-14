@@ -86,8 +86,15 @@ count), `git_error` if git failed (e.g. an installed copy outside a checkout), t
 version, the installed `packages` (resum_flex and the libraries it uses, None if absent) and
 `torch_cuda` (CUDA build of Torch, None for CPU) and `command` (the command line). Git is asked in the resum_flex source
 directory, not the working directory; the state is taken once per process, at the start of
-the run. The application's own code is not recorded; `code_provenance(source)` describes any
-repository the same way, for an application to write into its own outputs.
+the run.
+
+Code named in a config (`data_provider`, `event_source`, loaded by `load_object`) is listed in
+`modules` when it lies outside resum_flex: `module`, `source` (its folder), `commit`, `branch`,
+`dirty` (or `git_error`) of the checkout containing it, and the installed `distribution` and
+`version` owning it (None if not installed, e.g. a script folder on `sys.path`). So a run
+records the application's provider along with resum_flex, for any application; its git state
+is taken when the module is first loaded. `code_provenance(source, packages)` describes any
+repository and package list the same way, for an application to write into its own outputs.
 
 Every CLI stage also copies its input YAML unchanged into its output directory when it
 finishes, as `<stage>.yaml` (`train`, `stream`, `mfgp`, `binomial`, `score`, `residual`;

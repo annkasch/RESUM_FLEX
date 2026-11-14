@@ -10,7 +10,6 @@ application data config when it is outdated; configs with ``data_config`` requir
 """
 
 import hashlib
-import importlib
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -55,14 +54,9 @@ def load_provider(spec: str | None, root) -> DatasetProvider:
     """Provider ``spec`` ('module:Class', None = NpzBatches) for data directory ``root``."""
     if spec is None:
         return NpzBatches(root)
-    module, _, name = spec.partition(":")
-    if not module or not name:
-        raise ValueError(f"data_provider must be 'module:Class', got {spec!r}")
-    try:
-        factory = getattr(importlib.import_module(module), name)
-    except (ImportError, AttributeError) as exc:
-        raise ValueError(f"Cannot import data_provider {spec!r}: {exc}") from exc
-    return factory(Path(root))
+    from core.provenance import load_object
+
+    return load_object(spec, "data_provider")(Path(root))
 
 
 def prepare_data(spec: str | None, data_config, root) -> dict:

@@ -41,6 +41,7 @@ def run_residual(config: ResidualRunConfig) -> Path:
     if config.residual_test.max_positives != default and all(f != "stream" for _, f in sets):
         raise ValueError("max_positives applies to stream validation events; none selected")
     targets, records, seed = run_inputs(run, experiment, sets)
+    code = code_provenance()  # again: now with the provider run_inputs loaded
     bins = (
         experiment["resolved_config"].get("feature_calibration", {}).get("bins", CALIBRATION_BINS)
     )

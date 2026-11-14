@@ -66,6 +66,7 @@ def run_within_point(config: WithinPointRunConfig) -> Path:
         raise ValueError(f"{run} evaluated no design-point sets")
     sets = select_sets(run, config.sets, available=grouped)
     targets, _, seed = run_inputs(run, experiment, sets)
+    code = code_provenance()  # again: now with the provider run_inputs loaded
     steps = {
         (r["checkpoint"], r["split"], r["fidelity"]): r.get("step")
         for r in json.loads((run / "metrics.json").read_text())

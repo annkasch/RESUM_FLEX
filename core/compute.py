@@ -139,7 +139,9 @@ class ComputeLog:
             stages=list(self.stages),
             total=_record("total", wall, cpu, self._cores, _torch_threads()),
             environment=environment(),
-            code=self.code,
+            # resum_flex's state is the one taken at construction (cached); modules loaded
+            # since (e.g. the dataset provider) are added now.
+            code=code_provenance(),
         )
 
     def write(self, directory) -> Path:

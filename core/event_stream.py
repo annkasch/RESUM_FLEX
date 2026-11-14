@@ -12,7 +12,6 @@ path (``event_source: module:Class``) and passes ``event_source_options`` to its
 unchanged. RESUM_FLEX never imports a data package directly.
 """
 
-import importlib
 from typing import Protocol
 
 
@@ -40,11 +39,6 @@ def event_labels(batch):
 
 def open_event_source(spec: str, store, split: str, **options) -> EventSource:
     """Event source ``spec`` ('module:Class') for one split of ``store``."""
-    module, _, name = spec.partition(":")
-    if not module or not name:
-        raise ValueError(f"event_source must be 'module:Class', got {spec!r}")
-    try:
-        factory = getattr(importlib.import_module(module), name)
-    except (ImportError, AttributeError) as exc:
-        raise ValueError(f"Cannot import event_source {spec!r}: {exc}") from exc
-    return factory(store, split, **options)
+    from core.provenance import load_object
+
+    return load_object(spec, "event_source")(store, split, **options)
