@@ -56,7 +56,7 @@ each BDT fit resets the estimator. This is not optimizer-state resume support.
 
 ## Neural field (kind: field)
 
-The neural field is meant for point-cloud data: events with a continuous position (any
+The neural field is meant for point-cloud data: events with continuous coordinates (any
 dimension) and optionally a 3-D direction vector, e.g. particles or rays with a start point
 and a direction. The spherical-harmonic direction encoding needs exactly 3 direction
 columns. For other event inputs use the MLP, CNP, transformer or BDT, which take any number
@@ -66,22 +66,26 @@ of θ and φ columns.
 model:
   kind: field
   architecture: {hidden_dims: [256, 256, 256]}
-  position: {phi_columns: [0, 1, 2]}           # theta + these columns = one continuous position
   direction: {phi_columns: [3, 4, 5], degree: 4}
-  encoding: {kind: fourier, n_frequencies: 8, max_frequency: 8.0}
+  encoding: {kind: fourier, columns: [0, 1, 2], n_frequencies: 8, max_frequency: 8.0}
   last_layer: {}                               # optional
 ```
 
 A context-free model like the MLP, but on encoded coordinates (`core/bernoulli_field.py`).
-`position` adds the listed phi columns to theta in physical units, using the provider's
-affine normalization (`x_n = (x - offset) / scale`, stored in the checkpoint), so for a
-position plus an emission offset the field sees the emission point and never the grid of
-design points. The position (in normalized theta units) is Fourier-encoded: the raw value plus
-sin/cos at `n_frequencies` octave-spaced frequencies up to `max_frequency` cycles per unit;
-the finest half-period it can represent is `1 / (2 max_frequency)`. `direction` columns are
+`encoding.columns` names what is Fourier-encoded: `theta` (the default) or a list of phi
+columns, taken as they are; theta is then not an input. φ holds each event's own inputs
+(e.g. the absolute emission point), and the toolkit never adds θ to them: an application
+that stores events relative to their design point makes them absolute in its dataset
+provider. With the emission point in φ the field sees the emission point and never the grid
+of design points. The encoded columns (in normalized units) get the raw value plus sin/cos
+at `n_frequencies` octave-spaced frequencies up to `max_frequency` cycles per unit; the
+finest half-period it can represent is `1 / (2 max_frequency)`. `encoding: {kind: none}`
+leaves them unencoded. `direction` columns are mapped back to physical units with the
+provider's affine normalization (`x_n = (x - offset) / scale`, stored in the checkpoint),
 normalized to unit length and encoded by real orthonormal spherical harmonics up to
-`degree` ((degree + 1)² features). All other phi columns enter unencoded. Without
-`position`, theta alone is the position. Training, selection, inference, the GP levels and
+`degree` ((degree + 1)² features). All other phi columns enter unencoded. The former
+`position` setting (θ + φ offsets) was removed on 2026-11-13; configs and checkpoints with it
+fail with a hint. Training, selection, inference, the GP levels and
 the Bayesian last layer work as for the MLP. `architecture` is an MLP (`hidden_dims`) or,
 given transformer keys (`token_dim`, `n_heads`, ...), the tabular transformer with one token
 per encoded column; the stream transformer (`docs/stream.md`) is this field without encodings.

@@ -1,7 +1,7 @@
 """Boosted binary classifier over design point coordinates and event features.
 
 Trained on design points it sees normalized [theta, phi]; trained on an event stream
-(``stream_records``) it sees the stream record columns in physical units.
+(``stream_records``) it sees the stream record columns (phi) in physical units.
 """
 
 import numpy as np
@@ -38,31 +38,17 @@ def _affine(normalization, group, size):
     return offset, scale
 
 
-def stream_records(batch, normalization, position_columns):
-    """Design-point inputs as stream record columns [B * N, W] in physical units.
+def stream_records(batch, normalization):
+    """Design-point event inputs as stream record columns [B * N, P] in physical units.
 
-    Position = theta + phi[position_columns] (theta alone for []), then the other phi columns
-    in phi order: the layout a stream BDT was trained on (docs/stream.md). ``normalization``
-    is the data's affine normalization of theta and phi.
+    The phi columns in phi order, un-normalized with the data's affine ``normalization``:
+    the layout a stream BDT was trained on (docs/stream.md). Theta is not a stream input.
     """
-    if batch.theta is None:
-        raise ValueError("A stream BDT needs theta (the record position)")
-    b, n = batch.batch_size, batch.n_events
-    theta_offset, theta_scale = _affine(normalization, "theta", batch.theta.shape[-1])
-    position = np.broadcast_to(
-        (batch.theta * theta_scale + theta_offset)[:, None, :], (b, n, batch.theta.shape[-1])
-    )  # [B, N, T]
-    parts = [position]
-    if batch.phi is not None:
-        dim_phi = batch.phi.shape[-1]
-        phi_offset, phi_scale = _affine(normalization, "phi", dim_phi)
-        phi = batch.phi * phi_scale + phi_offset  # [B, N, P]
-        if position_columns:
-            parts[0] = position + phi[..., position_columns]
-        parts.append(phi[..., [c for c in range(dim_phi) if c not in position_columns]])
-    elif position_columns:
-        raise ValueError("position_columns need phi")
-    return np.concatenate(parts, axis=-1).reshape(b * n, -1)
+    if batch.phi is None:
+        raise ValueError("A stream BDT needs phi (the stream record columns)")
+    b, n, dim_phi = batch.phi.shape
+    offset, scale = _affine(normalization, "phi", dim_phi)
+    return (batch.phi * scale + offset).reshape(b * n, dim_phi)
 
 
 def build_bdt(config):

@@ -181,9 +181,9 @@ def test_stream_correction_covers_kept_events(data):
     )
     assert list(arrays["residual_correction_names"]) == [
         "logit_p",
-        "record_0",
-        "record_1",
-        "record_2",
+        "phi_0",
+        "phi_1",
+        "phi_2",
     ]
     assert (arrays["residual_correction_events"].sum(axis=1) == metrics["events"]).all()
 

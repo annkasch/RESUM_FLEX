@@ -66,8 +66,8 @@ error back in). Per event the gain is `loss(p̄_b) - loss(p_i) = a_i y_i + c_i` 
 {bins: 10}` in the config): for each input column, equal-count
 bins of its value pooled over all events and design points; per bin hits vs Σp, `z = (K -
 M) / sqrt(V)`. Reported per column as `chi2_per_bin` (≈ 1) and `max_abs_z`. Columns are
-`theta_j` (repeated over the events of a design point) and `phi_j`, or `record_j` for
-stream records. It says which input is wrong and in which direction; it sees projections
+`theta_j` (repeated over the events of a design point) and `phi_j` (stream records: `phi_j`
+only). It says which input is wrong and in which direction; it sees projections
 only, so errors that cancel along a column (interactions) are missed, and if the φ
 distribution differs between design points, rate differences can partly mimic or hide a
 φ-trend (the `within_point_*` metrics do not have this problem).

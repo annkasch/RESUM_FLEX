@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import AliasChoices, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
 from schemas.bdt import BDTConfig
 from schemas.config import EncoderConfig, StrictConfigModel
@@ -78,15 +78,14 @@ class MLPModel(StrictConfigModel):
     last_layer: BayesianLastLayer | None = None
 
 
-class FieldPosition(StrictConfigModel):
-    """Event columns that, added to theta in physical units, give one continuous position.
-
-    For example theta = a position and phi[0:3] = an emission offset from it. The sum uses the
-    data normalization stored with the model, so it is exact in physical units; the field never
-    sees the design point structure.
-    """
-
-    phi_columns: list[Annotated[int, Field(ge=0)]] = Field(min_length=1)
+# Removed 2026-11-13: phi holds the event's own inputs and is never added to theta.
+REMOVED_POSITION = (
+    "{key} was removed: phi holds the event's own (absolute) inputs and the toolkit never adds "
+    "theta to them. Name the encoded phi columns with model.encoding.columns; the "
+    "application's provider turns offsets into absolute inputs (docs/models.md)"
+)
+# Inputs of the field's encoding: theta, or a list of phi columns (theta is then unused).
+EncodedColumns = Literal["theta"] | list[Annotated[int, Field(ge=0)]]
 
 
 class FieldDirection(StrictConfigModel):
@@ -103,32 +102,45 @@ class FieldDirection(StrictConfigModel):
 
 
 class FourierEncoding(StrictConfigModel):
-    """sin/cos of each position coordinate at ``n_frequencies`` octave-spaced frequencies
-    up to ``max_frequency`` (cycles per unit of normalized theta), plus the raw value.
+    """sin/cos of each encoded column at ``n_frequencies`` octave-spaced frequencies up to
+    ``max_frequency`` (cycles per normalized unit), plus the raw value.
 
-    The finest resolvable half-period is 1 / (2 max_frequency) normalized units.
+    ``columns``: ``theta`` (the design point coordinates) or a list of phi columns, taken as
+    they are; theta is then not an input. The finest resolvable half-period is
+    1 / (2 max_frequency) normalized units.
     """
 
     kind: Literal["fourier"] = "fourier"
+    columns: EncodedColumns = "theta"
     n_frequencies: int = Field(default=8, ge=1, le=16)
     max_frequency: float = Field(default=8.0, gt=0, allow_inf_nan=False)
 
+    @field_validator("columns")
+    @classmethod
+    def some_columns(cls, value):
+        if value == []:
+            raise ValueError("A Fourier encoding needs columns: theta or at least one phi column")
+        return value
+
 
 class RawPosition(StrictConfigModel):
-    """The position in normalized units, unencoded (an MLP on raw coordinates)."""
+    """The ``columns`` (theta or a list of phi columns) in normalized units, unencoded (an MLP
+    on raw coordinates). ``columns: []``: no theta, every phi column unencoded."""
 
     kind: Literal["none"] = "none"
+    columns: EncodedColumns = "theta"
 
 
 class FieldModel(StrictConfigModel):
     """Neural field for point-cloud data: a network on encoded event coordinates,
-    p(position, direction, rest). The direction is a 3-vector (spherical harmonics).
+    p(encoded columns, direction, rest). The direction is a 3-vector (spherical harmonics).
 
-    Position = theta (+ ``position.phi_columns`` in physical units) through the Fourier
-    encoding; ``direction`` columns through spherical harmonics; all other phi columns
-    enter unencoded. Context-free like the MLP. ``architecture``: an MLP (``hidden_dims``),
-    or a tabular transformer with one token per encoded column (``token_dim``, ...; the
-    stream transformer).
+    ``encoding.columns``: theta (default) or a list of phi columns, taken as they are (phi
+    holds the event's own inputs, e.g. the emission point; theta is then not an input),
+    through the Fourier encoding; ``direction`` columns through spherical harmonics; all
+    other phi columns enter unencoded. Context-free like the MLP. ``architecture``: an MLP
+    (``hidden_dims``), or a tabular transformer with one token per encoded column
+    (``token_dim``, ...; the stream transformer).
     """
 
     kind: Literal["field"] = "field"
@@ -136,18 +148,35 @@ class FieldModel(StrictConfigModel):
     architecture: MLPArchitecture | TabularTransformerConfig = Field(
         default_factory=MLPArchitecture
     )
-    position: FieldPosition | None = None
     direction: FieldDirection | None = None
-    # Untagged: configs without ``kind`` stay Fourier (both models forbid extra fields).
-    encoding: FourierEncoding | RawPosition = Field(default_factory=FourierEncoding)
+    # Configs without ``kind`` are Fourier (removed_position fills it in).
+    encoding: FourierEncoding | RawPosition = Field(
+        default_factory=FourierEncoding, discriminator="kind"
+    )
     last_layer: BayesianLastLayer | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def removed_position(cls, data):
+        if isinstance(data, dict):
+            if "position" in data:
+                raise ValueError(REMOVED_POSITION.format(key="model.position"))
+            encoding = data.get("encoding")
+            if isinstance(encoding, dict) and "kind" not in encoding:
+                data = {**data, "encoding": {"kind": "fourier", **encoding}}
+        return data
+
+    @property
+    def phi_encoded(self) -> list[int]:
+        """phi columns of the encoding ([] when it encodes theta)."""
+        columns = self.encoding.columns
+        return [] if columns == "theta" else list(columns)
 
     @model_validator(mode="after")
     def distinct_columns(self):
-        groups = [g.phi_columns for g in (self.position, self.direction) if g is not None]
-        columns = [c for group in groups for c in group]
+        columns = self.phi_encoded + ([] if self.direction is None else self.direction.phi_columns)
         if len(set(columns)) != len(columns):
-            raise ValueError("position and direction phi_columns must be distinct")
+            raise ValueError("encoding.columns and direction.phi_columns must be distinct")
         return self
 
 
@@ -946,17 +975,16 @@ class StreamRunConfig(StrictConfigModel):
 
     ``dim_theta`` and ``dim_phi`` are the input widths of the design-point data it will be
     evaluated on, so the checkpoint loads like any field. A stream record holds the
-    position (``dim_theta`` columns: theta + the position phi columns at evaluation), then
-    the other phi columns in phi order, then the label.
+    ``dim_phi`` event inputs in phi order, then the label; the model never uses theta, and
+    at evaluation it sees the design points' phi columns as they are.
 
     ``model: {kind: field}``: the neural field for point-cloud data (3-D direction for the
-    spherical harmonics; see ``core.bernoulli_field``). ``kind: mlp`` / ``kind: transformer``:
-    an MLP / tabular transformer on all normalized record columns, any number of them.
-    ``kind: bdt``: boosted trees on an in-memory case-control sample of the records
-    (``training`` is then a StreamTreeTraining). For all but the field, ``record_position``
-    (old name ``mlp_position``) names the phi columns that are added to theta to give the
-    record position (None: theta alone). No stream CNP: its context sets are the events of
-    one design point, and ungrouped events have none (docs/stream.md).
+    spherical harmonics; see ``core.bernoulli_field``), encoding phi columns
+    (``encoding.columns``, not theta). ``kind: mlp`` / ``kind: transformer``: an MLP /
+    tabular transformer on all normalized record columns, any number of them. ``kind: bdt``:
+    boosted trees on an in-memory case-control sample of the records (``training`` is then
+    a StreamTreeTraining). No stream CNP: its context sets are the events of one design
+    point, and ungrouped events have none (docs/stream.md).
     """
 
     model: FieldModel | MLPModel | TransformerModel | BDTModel = Field(discriminator="kind")
@@ -985,10 +1013,7 @@ class StreamRunConfig(StrictConfigModel):
     unblind_test: bool = False
     output_directory: Path
     dim_theta: int = Field(ge=1)
-    dim_phi: int = Field(ge=0)
-    record_position: FieldPosition | None = Field(
-        default=None, validation_alias=AliasChoices("record_position", "mlp_position")
-    )
+    dim_phi: int = Field(ge=1)
 
     @model_validator(mode="before")
     @classmethod
@@ -996,6 +1021,9 @@ class StreamRunConfig(StrictConfigModel):
         """Parse ``training`` as the settings of the model kind (trees or gradient steps)."""
         if not isinstance(data, dict):
             return data
+        for key in ("record_position", "mlp_position"):
+            if key in data:
+                raise ValueError(REMOVED_POSITION.format(key=key))
         model = data.get("model")
         kind = model.get("kind") if isinstance(model, dict) else getattr(model, "kind", None)
         training = data.get("training")
@@ -1037,34 +1065,25 @@ class StreamRunConfig(StrictConfigModel):
         if isinstance(self.model, FieldModel):
             return self.model
         if isinstance(self.model, BDTModel):
-            raise ValueError("A stream BDT has no network; see position_columns")
+            raise ValueError("A stream BDT has no network")
         return FieldModel(
             architecture=self.model.architecture,
-            position=self.record_position,
-            encoding=RawPosition(),
+            encoding=RawPosition(columns=[]),
             last_layer=self.model.last_layer,
         )
 
-    @property
-    def position_columns(self) -> list[int]:
-        """phi columns added to theta to give the record position ([]: theta alone)."""
-        position = (
-            self.model.position if isinstance(self.model, FieldModel) else self.record_position
-        )
-        return [] if position is None else list(position.phi_columns)
-
     @model_validator(mode="after")
     def stream_columns(self):
-        if self.record_position is not None and isinstance(self.model, FieldModel):
-            raise ValueError(
-                "record_position is for kind: mlp, transformer, bdt; a field uses model.position"
-            )
-        direction = getattr(self.model, "direction", None)
-        used = self.position_columns + ([] if direction is None else direction.phi_columns)
-        if used and max(used) >= self.dim_phi:
-            raise ValueError(f"phi_columns {used} need dim_phi > {max(used)}")
-        if self.position_columns and len(self.position_columns) != self.dim_theta:
-            raise ValueError("position phi_columns must match dim_theta one to one")
+        if isinstance(self.model, FieldModel):
+            if self.model.encoding.columns == "theta":
+                raise ValueError(
+                    "Stream records hold phi only: set model.encoding.columns to the phi "
+                    "columns to encode (theta is not a stream input)"
+                )
+            direction = self.model.direction
+            used = self.model.phi_encoded + ([] if direction is None else direction.phi_columns)
+            if used and max(used) >= self.dim_phi:
+                raise ValueError(f"phi_columns {used} need dim_phi > {max(used)}")
         return self
 
 

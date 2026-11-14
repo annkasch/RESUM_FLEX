@@ -10,8 +10,7 @@ and `bdt` (an in-memory case-control sample). There is no stream CNP (below).
 ```yaml
 model: {kind: mlp, architecture: {hidden_dims: [256, 256, 256]}, last_layer: {}}
 dim_theta: 2                     # input widths of the design-point data it is evaluated on
-dim_phi: 3
-record_position: {phi_columns: [0, 1]}   # phi columns added to theta = record position (optional)
+dim_phi: 3                       # = the stream record's input columns
 training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16}
 event_store: /path/to/store
 event_source: my_package.loader:MyEventStream   # required: the application's reader
@@ -19,21 +18,26 @@ event_source_options: {in_memory: true}         # passed to it unchanged
 output_directory: runs/stream_mlp/seed0
 ```
 
-The stream format (`core/event_stream.py`): float32 records [M, W + 1] = the position
-(`dim_theta` columns), then the other φ columns in φ order, then the label bits. In the
-example: θ + φ[0:2], φ[2], label (W = 3). At evaluation on design-point data, the record
-position is θ plus the position φ columns, so the model sees the same inputs in both cases.
+The stream format (`core/event_stream.py`): float32 records [M, W + 1] = the W = `dim_phi`
+event inputs in φ order, then the label bits. A stream model never uses θ: at evaluation on
+design-point data it sees the φ columns of each event as they are, so the design-point data
+must hold the same columns as the stream (e.g. the absolute emission point, not an offset
+from the design point). Offsets, coordinate transforms and the like belong in the
+application: its event source and its dataset provider deliver the same columns. Width
+checks: the source's `normalization()` must cover W columns, and every record batch must be
+[M, W + 1]; nothing checks what a column means.
 
-- `kind: mlp`: an MLP on all W normalized record columns, any layout. `record_position`
-  (old name `mlp_position`, still read) names the φ columns added to θ (none: θ alone is the
-  position, all φ columns follow).
+- `kind: mlp`: an MLP on all W normalized record columns.
 - `kind: transformer`: the tabular transformer on the same normalized columns, one token per
-  column (`architecture` as for design-point training); layout as for `mlp`.
-- `kind: field`: the neural field (point clouds); its `position` and `direction` settings
-  define the layout, e.g. `dim_theta: 3`, `dim_phi: 6`, position φ[0:3], direction φ[3:6]
-  gives records x, y, z, px, py, pz, label.
-- `kind: bdt`: boosted trees on the W record columns in physical units; layout as for `mlp`.
-  `training` takes other settings, see below.
+  column (`architecture` as for design-point training).
+- `kind: field`: the neural field (point clouds); `encoding.columns` (φ columns, not `theta`)
+  are Fourier-encoded, `direction` takes 3 φ columns, e.g. `dim_phi: 6`, `encoding.columns:
+  [0, 1, 2]`, direction φ[3:6] gives records x, y, z, px, py, pz, label.
+- `kind: bdt`: boosted trees on the W record columns in physical units. `training` takes
+  other settings, see below.
+
+`record_position` / `mlp_position` (φ columns added to θ) were removed on 2026-11-13;
+configs and checkpoints with them fail with a hint.
 
 The event source implements the `EventSource` protocol (`n_events`, `n_positive`,
 `normalization` of the W input columns, `n_batches`, `batches`, `load`); its reading and
@@ -42,7 +46,7 @@ own units from the store's train normalization (`set_stream_normalization`). Che
 selected by the Bernoulli log loss on the validation events. With `last_layer` (not bdt),
 the selected checkpoints get the Laplace posterior from one streaming pass over all training
 events.
-The stream validation events also get the calibration per record column (`record_j`,
+The stream validation events also get the calibration per record column (`phi_j`,
 `stream_feature_calibration.png`; `docs/evaluation.md`; bin count `feature_calibration: {bins:
 10}` and `within_point_null_draws`, as in training configs). With `residual_test:` (settings
 in `docs/configs.md`) the validation events get the residual learnability test split by
@@ -55,8 +59,8 @@ the stream metrics with fidelity `stream`.
 
 The mlp and transformer checkpoints are ordinary field checkpoints (a field without
 encodings, with an MLP or transformer network). `predict` evaluates them on design-point
-data: θ, offsets and other φ columns are mapped into the model's stream units, so no equal
-normalization is required.
+data: each φ column is mapped from the data's normalization into the model's stream units,
+so no equal normalization is required; θ is not used.
 
 ## BDT: case-control sample
 
@@ -76,9 +80,9 @@ training: {negatives_per_positive: 20, batch_size: 65536, seed: 0, validation_ev
 Trees are added `eval_every` at a time; each step scores the validation events and saves
 `best` on a lower log loss. One process only (no `torchrun`); the OpenMP threads follow
 `OMP_NUM_THREADS`. `experiment.json` records the sample (`training_sample`: events, positives,
-negative fraction and weight). The checkpoint stores the record layout (`stream_position` in
-`model.json`); `predict` maps design-point θ and φ back to physical record columns with the
-data's affine normalization.
+negative fraction and weight). The checkpoint marks the trees as stream-trained
+(`stream_records: phi` in `model.json`); `predict` maps design-point φ back to physical
+record columns with the data's affine normalization.
 
 ## Why no stream CNP
 

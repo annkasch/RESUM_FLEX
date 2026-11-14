@@ -197,7 +197,7 @@ def stream_residual(features, labels, logits, settings, *, seed, bins=CALIBRATIO
     positives) of all events is kept: the same fraction for hits and non-hits, so the gain
     needs no weights. features: [M, W]; labels, logits: [M]. Per-event arrays come back as
     [M] with NaN (``residual_logits``) or -1 (``residual_fold``) for events not kept; the
-    ``correction_bins`` arrays (columns ``record_j``) cover the kept events.
+    ``correction_bins`` arrays (columns ``phi_j``) cover the kept events.
     """
     labels = np.asarray(labels)
     positives = int(labels.sum())
@@ -219,7 +219,7 @@ def stream_residual(features, labels, logits, settings, *, seed, bins=CALIBRATIO
     )
     if "residual_logits" in arrays:
         kept = np.asarray(features, dtype=np.float64)[keep]  # [E, W]
-        names = [f"record_{j}" for j in range(kept.shape[1])]
+        names = [f"phi_{j}" for j in range(kept.shape[1])]
         arrays.update(
             correction_bins(
                 names, kept, labels[keep], np.asarray(logits)[keep], arrays["residual_logits"], bins

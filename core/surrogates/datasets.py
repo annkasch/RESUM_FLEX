@@ -45,8 +45,10 @@ class DatasetProvider(Protocol):
     # transfer_events(phi, source, source_rows, target) -> phi moves donor event inputs to other
     # design points for ``predict --events-from``. phi [B, N, D_phi] normalized: row b holds the
     # events of design point source_rows[b] of source = (partition, fidelity), to be placed at
-    # design point b of target = (partition, fidelity); return phi itself if the inputs are
-    # relative to the design point. Without it there are no donors: each design point is
+    # design point b of target = (partition, fidelity). phi holds the events' own inputs (e.g.
+    # absolute emission points; the toolkit never adds theta to them), so the rule moves them
+    # to the target, or returns phi itself if they do not depend on the design point. Without
+    # it there are no donors: each design point is
     # predicted from its own events, and ``events_from`` fails.
 
 

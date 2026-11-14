@@ -10,7 +10,12 @@ from pydantic import ValidationError
 from core.event_stream import event_labels
 from core.surrogates import load_surrogate
 from core.surrogates.models import build_surrogate
-from core.surrogates.stream_training import case_control_sample, run_stream, stream_logits
+from core.surrogates.stream_training import (
+    case_control_sample,
+    check_record_width,
+    run_stream,
+    stream_logits,
+)
 from schemas.data_models import InputMode, StandardBatch
 from schemas.surrogates import FieldModel, StreamRunConfig, StreamTreeTraining
 from tests.test_bernoulli_field import NORMALIZATION, _physical_batch, _random_physical
@@ -32,7 +37,7 @@ def _config(model, *, dim_theta=3, dim_phi=6, **extra):
 def _variant(tmp_path, model, training):
     """The field's test run (data, evaluation sets) with another model and training."""
     data = _run_config(tmp_path).model_dump(mode="json")
-    data.update(model=model, training=training, record_position={"phi_columns": [0, 1, 2]})
+    data.update(model=model, training=training)
     return StreamRunConfig.model_validate(data)
 
 
@@ -40,16 +45,16 @@ def _variant(tmp_path, model, training):
 
 
 def test_stream_transformer_is_the_unencoded_field_with_a_transformer():
-    network = _config(TRANSFORMER, record_position={"phi_columns": [0, 1, 2]}).network
+    network = _config(TRANSFORMER).network
     assert network.kind == "field" and network.encoding.kind == "none"
     assert network.architecture.token_dim == 8 and network.last_layer is None  # not configured
-    assert network.position.phi_columns == [0, 1, 2]
+    assert network.encoding.columns == []
 
 
 def test_training_settings_follow_the_kind():
     trees = _config({"kind": "bdt"}, training={"negatives_per_positive": 5})
     assert isinstance(trees.training, StreamTreeTraining)
-    assert trees.training.negatives_per_positive == 5 and trees.position_columns == []
+    assert trees.training.negatives_per_positive == 5
     with pytest.raises(ValidationError, match="training of a stream bdt"):
         _config({"kind": "bdt"}, training={"n_passes": 3})  # gradient steps: not for trees
     with pytest.raises(ValidationError, match="training of a stream mlp"):
@@ -58,10 +63,10 @@ def test_training_settings_follow_the_kind():
         _config({"kind": "cnp"})  # no stream CNP: ungrouped events have no context sets
 
 
-def test_old_mlp_position_name_still_loads():
-    config = _config({"kind": "mlp"}, mlp_position={"phi_columns": [0, 1, 2]})
-    assert config.record_position.phi_columns == [0, 1, 2]
-    assert "record_position" in config.model_dump()
+def test_record_width_is_dim_phi_plus_the_label():
+    check_record_width(np.zeros((4, 7), dtype=np.float32), 6, "Training")
+    with pytest.raises(ValueError, match=r"expected \[M, dim_phi \+ 1\] = \[M, 7\]"):
+        check_record_width(np.zeros((4, 8), dtype=np.float32), 6, "Training")
 
 
 def test_a_field_architecture_is_an_mlp_unless_it_names_transformer_settings():
@@ -73,23 +78,13 @@ def test_a_field_architecture_is_an_mlp_unless_it_names_transformer_settings():
 # --- Transformer ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("position", [[0, 1], None], ids=["theta+offset", "theta_only"])
-def test_stream_transformer_logits_match_on_design_point_inputs(position):
+def test_stream_transformer_logits_match_on_design_point_inputs():
     dim_theta, dim_phi = 2, 3
-    config = _config(
-        TRANSFORMER,
-        dim_theta=dim_theta,
-        dim_phi=dim_phi,
-        **({"record_position": {"phi_columns": position}} if position else {}),
-    )
+    config = _config(TRANSFORMER, dim_theta=dim_theta, dim_phi=dim_phi)
     rng = np.random.default_rng(4)
     b, n = 3, 20
-    theta = rng.normal(5.0, 2.0, (b, dim_theta))  # physical units
-    phi = rng.normal(-1.0, 0.5, (b, n, dim_phi))
-    pos = position or []
-    rest = [c for c in range(dim_phi) if c not in pos]
-    record_position = theta[:, None, :] + (phi[..., pos] if pos else np.zeros((b, n, 1)))
-    records = np.concatenate([record_position, phi[..., rest]], axis=-1).reshape(b * n, -1)
+    phi = rng.normal(-1.0, 0.5, (b, n, dim_phi))  # physical units
+    records = phi.reshape(b * n, dim_phi)
     data_norm = {
         "theta": {"offset": [4.0] * dim_theta, "scale": [3.0] * dim_theta},
         "phi": {"offset": [-0.5] * dim_phi, "scale": [0.7] * dim_phi},
@@ -99,15 +94,10 @@ def test_stream_transformer_logits_match_on_design_point_inputs(position):
         {"offset": list(records.mean(0)), "scale": list(records.std(0))}
     )
     surrogate.configure_normalization(data_norm)
-
-    def normalized(values, group):
-        entry = data_norm[group]
-        return (values - np.asarray(entry["offset"])) / np.asarray(entry["scale"])
-
     batch = StandardBatch(
         mode=InputMode.FULL,
-        theta=normalized(theta, "theta"),
-        phi=normalized(phi, "phi").astype(np.float32),
+        theta=rng.normal(size=(b, dim_theta)),  # not an input of a stream model
+        phi=((phi - (-0.5)) / 0.7).astype(np.float32),
         labels=np.zeros((b, n), dtype=np.int8),
     )
     stream = torch.as_tensor(
@@ -180,20 +170,15 @@ def test_case_control_sample_keeps_positives_and_weights_negatives():
     assert everything[2]["negative_fraction"] == 1 and len(everything[0]) == len(labels)
 
 
-def test_stream_records_are_the_physical_record_layout():
+def test_stream_records_are_the_physical_phi_columns():
     from core.surrogate_bdt import stream_records
 
     rng = np.random.default_rng(1)
-    centre, offset, direction = _random_physical(rng, b=2, n=5)
-    batch = _physical_batch(centre, offset, direction)
-    records = stream_records(batch, NORMALIZATION, [0, 1, 2])
-    expected = np.concatenate(
-        [(centre[:, None, :] + offset).reshape(-1, 3), direction.reshape(-1, 3)], axis=1
-    )
+    centre, point, direction = _random_physical(rng, b=2, n=5)
+    batch = _physical_batch(centre, point, direction)
+    records = stream_records(batch, NORMALIZATION)
+    expected = np.concatenate([point.reshape(-1, 3), direction.reshape(-1, 3)], axis=1)
     np.testing.assert_allclose(records, expected, rtol=1e-5, atol=1e-9)
-    theta_only = stream_records(batch, NORMALIZATION, [])
-    assert theta_only.shape == (10, 9)
-    np.testing.assert_allclose(theta_only[:, :3], np.repeat(centre, 5, axis=0), rtol=1e-6)
 
 
 def test_stream_bdt_trains_selects_and_scores_on_design_points(tmp_path):
@@ -211,10 +196,10 @@ def test_stream_bdt_trains_selects_and_scores_on_design_points(tmp_path):
     train = FakeEventSource(tmp_path / "store", "train")
     assert sample["positives"] == train.n_positive and sample["source_events"] == 6000
     best = load_surrogate(run / "checkpoints" / "best")
-    assert best.stream_position == [0, 1, 2] and best.metadata["step"] == report["best"]["step"]
-    assert json.loads((run / "checkpoints" / "best" / "model.json").read_text())[
-        "stream_position"
-    ] == [0, 1, 2]
+    assert best.stream_trained and best.n_features == 6
+    assert best.metadata["step"] == report["best"]["step"]
+    manifest_path = run / "checkpoints" / "best" / "model.json"
+    assert json.loads(manifest_path.read_text())["stream_records"] == "phi"
     # The selected checkpoint reproduces its validation loss.
     validation = torch.as_tensor(np.load(tmp_path / "store" / "validation.npy")[:1500])
     logits = stream_logits(best, validation).double()
@@ -235,7 +220,13 @@ def test_stream_bdt_trains_selects_and_scores_on_design_points(tmp_path):
     batch = provider.load("gp_validation", "hf")[0]
     from core.surrogate_bdt import stream_records
 
-    direct = model.estimator.decision_function(stream_records(batch, NORMALIZATION, [0, 1, 2]))
+    direct = model.estimator.decision_function(stream_records(batch, NORMALIZATION))
     np.testing.assert_allclose(model.predict(batch).logits.ravel(), direct)
     with pytest.raises(FileExistsError):
         run_stream(config)
+    # A stream BDT written before the change (records with theta + offset) is refused.
+    manifest = json.loads(manifest_path.read_text())
+    manifest["stream_position"] = [0, 1, 2]
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="Retrain it"):
+        load_surrogate(run / "checkpoints" / "best")

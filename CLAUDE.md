@@ -21,6 +21,10 @@ for config settings.
 - `θ` design parameters (one per simulation trial / design point), `φ` event parameters,
   `X` binary outcomes. Modes FULL (θ,φ,X), EVENT_ONLY (φ,X), DESIGN_ONLY (θ,X): missing inputs
   use learnable null embeddings (`core/networks.py`), never separate code paths.
+- `φ` holds each event's own inputs (e.g. the absolute emission point), never offsets from θ:
+  the toolkit never adds θ to φ. Offsets and coordinate transforms belong in the application's
+  dataset provider / event source. Stream records are the `dim_phi` φ columns + label; stream
+  models never use θ.
 - Two ways from event probabilities to design-point rates, compared on the same predictive
   metrics (count NLL, coverage, CRPS):
   - Event model + Bayesian last layer (`model.last_layer`, Laplace over the final linear

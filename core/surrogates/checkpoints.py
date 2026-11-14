@@ -28,8 +28,8 @@ def save_surrogate(path, model, *, metadata=None):
         import sklearn
 
         manifest["backend_version"] = sklearn.__version__
-        if model.stream_position is not None:
-            manifest["stream_position"] = list(model.stream_position)
+        if model.stream_trained:
+            manifest["stream_records"] = "phi"
     else:
         import torch
 
@@ -74,8 +74,13 @@ def load_surrogate(path):
     if model.config.kind == "bdt":
         import joblib
 
+        if "stream_position" in manifest:
+            raise ValueError(
+                f"{path} is a stream BDT whose records added phi offsets to theta (before "
+                "2026-11-13); stream records now hold phi only. Retrain it"
+            )
         model.estimator = joblib.load(path / "estimator.joblib")
-        model.stream_position = manifest.get("stream_position")
+        model.stream_trained = manifest.get("stream_records") == "phi"
         if model.estimator.n_features_in_ != model.n_features:
             raise ValueError("Checkpoint feature dimensions do not match estimator")
     else:

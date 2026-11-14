@@ -77,8 +77,8 @@ class SmokeEventSource:
         self.n_positive = int((self.records[:, -1].view(np.int32) != 0).sum())
 
     def normalization(self):
-        width = DIM_THETA + DIM_PHI  # same units as the design-point data (identity)
-        return {"offset": [0.0] * width, "scale": [1.0] * width}
+        # The phi columns, in the units of the design-point data (identity).
+        return {"offset": [0.0] * DIM_PHI, "scale": [1.0] * DIM_PHI}
 
     def n_batches(self, batch_size, pass_index, *, drop_last=False):
         n = len(self.records) // self.world_size
@@ -98,11 +98,10 @@ class SmokeEventSource:
 
 
 def _records(batch) -> np.ndarray:
-    """Stream records [B*N, D+P+1] float32 of a batch: theta, phi, label bits."""
+    """Stream records [B*N, P+1] float32 of a batch: phi, label bits (theta is no stream input)."""
     b, n = batch.labels.shape
-    theta = np.repeat(batch.theta[:, None, :], n, axis=1)  # [B, N, D]
-    out = np.zeros((b * n, DIM_THETA + DIM_PHI + 1), dtype=np.float32)
-    out[:, :-1] = np.concatenate([theta, batch.phi], axis=-1).reshape(b * n, -1)
+    out = np.zeros((b * n, DIM_PHI + 1), dtype=np.float32)
+    out[:, :-1] = batch.phi.reshape(b * n, -1)
     out[:, -1] = batch.labels.reshape(-1).astype(np.int32).view(np.float32)
     return out
 

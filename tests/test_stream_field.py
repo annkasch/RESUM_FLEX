@@ -12,7 +12,7 @@ from core.surrogates import load_surrogate
 from core.surrogates.models import build_surrogate
 from core.surrogates.stream_training import run_stream
 from schemas.data_models import InputMode, StandardBatch
-from schemas.surrogates import FieldPosition, StreamRunConfig
+from schemas.surrogates import StreamRunConfig
 from tests.test_bernoulli_field import (
     NORMALIZATION,
     SPEC,
@@ -30,7 +30,7 @@ STREAM_NORMALIZATION = {
 
 # Stream MLP: raw position and momentum (what ``model: {kind: mlp}`` trains on events).
 MLP_CHANGES = {
-    "encoding": {"kind": "none"},
+    "encoding": {"kind": "none", "columns": [0, 1, 2]},
     "direction": {"phi_columns": [3, 4, 5], "encoding": "momentum"},
 }
 
@@ -80,13 +80,12 @@ def test_stream_trained_field_gives_the_same_logits_on_design_point_inputs(chang
     model.module.set_stream_normalization(STREAM_NORMALIZATION)
     model.configure_normalization(NORMALIZATION)  # design point data of the evaluation
     rng = np.random.default_rng(1)
-    centre, offset, direction = _random_physical(rng)
+    centre, point, direction = _random_physical(rng)
     direction *= rng.uniform(0.9, 1.1, direction.shape[:-1])[..., None]  # wavelength spread
-    batch = _physical_batch(centre, offset, direction)
+    batch = _physical_batch(centre, point, direction)
     with torch.no_grad():
         design_point = model.module(None, batch)  # [B, N]
-        position = (centre[:, None, :] + offset).reshape(-1, 3)
-        events = torch.as_tensor(_records(position, direction.reshape(-1, 3)))
+        events = torch.as_tensor(_records(point.reshape(-1, 3), direction.reshape(-1, 3)))
         direct = model.module.forward_events(events).reshape(design_point.shape)
     torch.testing.assert_close(design_point, direct, rtol=1e-4, atol=1e-4)
 
@@ -117,29 +116,22 @@ def test_stream_mlp_config_is_the_unencoded_field():
             "output_directory": "o",
             "dim_theta": 3,
             "dim_phi": 6,
-            "mlp_position": {"phi_columns": [0, 1, 2]},
         }
     )
     network = config.network
     assert network.kind == "field" and network.encoding.kind == "none"
-    assert network.direction is None
-    assert network.position.phi_columns == [0, 1, 2]
+    assert network.direction is None and network.encoding.columns == []
     assert list(network.architecture.hidden_dims) == [32, 32]
 
 
-def test_design_point_trained_field_is_unchanged_and_old_weights_load():
+def test_design_point_trained_field_has_no_stream_units():
     model = _field()
-    rng = np.random.default_rng(2)
-    batch = _physical_batch(*_random_physical(rng))
-    state = model.module.state_dict()
-    old = {k: v for k, v in state.items() if k not in model.module._OPTIONAL_BUFFERS}
-    restored = _field(seed=5)
-    restored.module.load_state_dict(old)
-    with torch.no_grad():
-        torch.testing.assert_close(restored.module(None, batch), model.module(None, batch))
-    assert not restored.module.uses_stream_units
+    assert not model.module.uses_stream_units
     with pytest.raises(ValueError, match="set_stream_normalization"):
         model.module.forward_events(torch.zeros((2, 7)))
+    theta_field = build_surrogate({"kind": "field"}, 3, 6)  # encodes theta: no stream field
+    with pytest.raises(ValueError, match="phi only"):
+        theta_field.module.set_stream_normalization(STREAM_NORMALIZATION)
 
 
 def _stream_split(rng, n):
@@ -155,10 +147,9 @@ def _design_point_data(root, rng):
     """Design point evaluation data (NpzBatches layout) with the same rate as the events."""
     x0 = STREAM_NORMALIZATION["offset"][0]
     for partition, fidelity in (("cnp_validation", "lf"), ("gp_validation", "hf")):
-        centre, offset, direction = _random_physical(rng, b=6, n=60)
-        x = centre[:, None, 0] + offset[..., 0]
-        p = 1 / (1 + np.exp(-(-3.0 + 25.0 * (x - x0))))
-        batch = _physical_batch(centre, offset, direction, labels=rng.binomial(1, p))
+        centre, point, direction = _random_physical(rng, b=6, n=60)
+        p = 1 / (1 + np.exp(-(-3.0 + 25.0 * (point[..., 0] - x0))))
+        batch = _physical_batch(centre, point, direction, labels=rng.binomial(1, p))
         folder = root / "batches" / partition
         folder.mkdir(parents=True, exist_ok=True)
         np.savez(
@@ -276,14 +267,13 @@ def test_stream_mlp_trains_and_scores_on_design_points(tmp_path):
                     "dim_phi": 6,
                 }
             ).model,
-            "record_position": FieldPosition(phi_columns=[0, 1, 2]),
         }
     )
     report = run_stream(config)
     assert report["history"][-1]["stream_log_loss"] < report["history"][0]["stream_log_loss"]
     best = load_surrogate(tmp_path / "run" / "checkpoints" / "best")
     assert best.module.fourier is None and best.module.direction_columns == []
-    assert best.module.extra_columns == [3, 4, 5]
+    assert best.module.encoded_columns == [] and best.module.extra_columns == list(range(6))
     assert best.last_layer is not None
     experiment = json.loads((tmp_path / "run" / "experiment.json").read_text())
     assert experiment["resolved_config"]["model"]["kind"] == "mlp"
@@ -294,14 +284,17 @@ def test_stream_mlp_trains_and_scores_on_design_points(tmp_path):
 def test_stream_config_checks_the_columns():
     base = {"event_store": "s", "event_source": "m:C", "output_directory": "o", "dim_theta": 3}
     StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **base})
-    with pytest.raises(ValidationError, match="match dim_theta"):
-        StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **{**base, "dim_theta": 2}})
+    # theta's width is free: the stream model never reads theta.
+    StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 6, **{**base, "dim_theta": 1}})
     with pytest.raises(ValidationError, match="dim_phi > 5"):
         StreamRunConfig.model_validate({"model": SPEC, "dim_phi": 5, **base})
-    with pytest.raises(ValidationError, match="record_position is for kind: mlp"):
-        StreamRunConfig.model_validate(
-            {"model": SPEC, "dim_phi": 6, "mlp_position": {"phi_columns": [0, 1, 2]}, **base}
-        )
+    with pytest.raises(ValidationError, match="phi only"):
+        StreamRunConfig.model_validate({"model": {"kind": "field"}, "dim_phi": 6, **base})
+    for key in ("record_position", "mlp_position"):
+        with pytest.raises(ValidationError, match=f"{key} was removed"):
+            StreamRunConfig.model_validate(
+                {"model": {"kind": "mlp"}, "dim_phi": 6, key: {"phi_columns": [0]}, **base}
+            )
 
 
 def test_event_source_options_reach_the_source_unchanged(tmp_path):
@@ -326,32 +319,34 @@ def test_event_source_is_required():
         )
 
 
-def test_field_checkpoint_with_the_old_buffer_name_loads():
-    model = _field()
-    model.module.set_stream_normalization(STREAM_NORMALIZATION)
-    state = model.module.state_dict()
-    state["photon_units"] = state.pop("stream_units")  # name before 2026-11-06
-    fresh = _field()
-    fresh.module.load_state_dict(state)
-    assert fresh.module.uses_stream_units
-
-
 @pytest.mark.parametrize(
-    "dims, model, position",
+    "dims, model",
     [
-        ((2, 3), {"kind": "mlp"}, [0, 1]),  # 2-D position (theta + offset) and one more input
-        ((2, 2), {"kind": "mlp"}, None),  # theta alone is the position, both phi columns extra
-        ((1, 5), {"kind": "mlp"}, [4]),  # position offset in the last phi column
+        ((2, 3), {"kind": "mlp"}),
+        ((1, 5), {"kind": "mlp"}),
+        ((3, 1), {"kind": "mlp"}),  # one stream column, wider theta
         (
-            (2, 6),  # field: 2-D position, 3-D direction, one more input
-            {**SPEC, "position": {"phi_columns": [0, 1]}, "direction": {"phi_columns": [2, 3, 4]}},
-            None,
+            (2, 6),  # field: 2 Fourier columns, 3-D direction, one more input
+            {
+                **SPEC,
+                "encoding": {"columns": [0, 1], "n_frequencies": 2},
+                "direction": {"phi_columns": [2, 3, 4]},
+            },
+        ),
+        (
+            (1, 4),  # field: momentum direction, no Fourier columns
+            {
+                **SPEC,
+                "encoding": {"kind": "none", "columns": [3]},
+                "direction": {"phi_columns": [0, 1, 2], "encoding": "momentum"},
+            },
         ),
     ],
-    ids=["mlp_2+1", "mlp_theta_only", "mlp_1+4", "field_2+3+1"],
+    ids=["mlp_3", "mlp_5", "mlp_1", "field_2+3+1", "field_momentum"],
 )
-def test_stream_models_take_other_record_layouts(dims, model, position):
-    """Logits from stream records equal those from the same events as design-point data."""
+def test_stream_models_see_the_design_point_phi_columns_as_given(dims, model):
+    """Logits from stream records (phi in physical units) equal those from the same events as
+    design-point data with another normalization; theta is not an input."""
     dim_theta, dim_phi = dims
     config = StreamRunConfig.model_validate(
         {
@@ -361,42 +356,48 @@ def test_stream_models_take_other_record_layouts(dims, model, position):
             "output_directory": "o",
             "dim_theta": dim_theta,
             "dim_phi": dim_phi,
-            **({"mlp_position": {"phi_columns": position}} if position else {}),
         }
     )
-    network = config.network
     rng = np.random.default_rng(4)
     b, n = 3, 20
     theta = rng.normal(5.0, 2.0, (b, dim_theta))  # physical units
     phi = rng.normal(-1.0, 0.5, (b, n, dim_phi))
-    pos = [] if network.position is None else network.position.phi_columns
-    rest = [c for c in range(dim_phi) if c not in pos]
-    record_position = theta[:, None, :] + (phi[..., pos] if pos else np.zeros((b, n, 1)))
-    records = np.concatenate([record_position, phi[..., rest]], axis=-1).reshape(b * n, -1)
+    records = phi.reshape(b * n, dim_phi)
     data_norm = {
         "theta": {"offset": [4.0] * dim_theta, "scale": [3.0] * dim_theta},
         "phi": {"offset": [-0.5] * dim_phi, "scale": [0.7] * dim_phi},
     }
-    width = records.shape[1]
     stream_norm = {"offset": list(records.mean(0)), "scale": list(records.std(0))}
-    surrogate = build_surrogate(network, dim_theta, dim_phi, seed=0)
+    surrogate = build_surrogate(config.network, dim_theta, dim_phi, seed=0)
     surrogate.module.set_stream_normalization(stream_norm)
     surrogate.configure_normalization(data_norm)
 
-    def normalized(values, group):
-        entry = data_norm[group]
-        return (values - np.asarray(entry["offset"])) / np.asarray(entry["scale"])
+    def batch(theta):
+        normalized = {
+            g: (v - np.asarray(data_norm[g]["offset"])) / np.asarray(data_norm[g]["scale"])
+            for g, v in (("theta", theta), ("phi", phi))
+        }
+        return StandardBatch(
+            mode=InputMode.FULL,
+            theta=normalized["theta"],
+            phi=normalized["phi"].astype(np.float32),
+            labels=np.zeros((b, n), dtype=np.int8),
+        )
 
-    batch = StandardBatch(
-        mode=InputMode.FULL,
-        theta=normalized(theta, "theta"),
-        phi=normalized(phi, "phi").astype(np.float32),
-        labels=np.zeros((b, n), dtype=np.int8),
-    )
     labels = np.zeros((b * n, 1), dtype=np.float32)
     stream = torch.as_tensor(np.concatenate([records, labels], axis=1), dtype=torch.float32)
-    assert surrogate.module.record_width == width
+    assert surrogate.module.record_width == dim_phi
     with torch.no_grad():
-        design = surrogate.module(None, batch)  # [B, N]
+        design = surrogate.module(None, batch(theta))  # [B, N]
         direct = surrogate.module.forward_events(stream).reshape(b, n)
+        other_theta = surrogate.module(None, batch(theta[::-1] + 1.0))
     torch.testing.assert_close(design, direct, rtol=1e-4, atol=1e-4)
+    torch.testing.assert_close(design, other_theta, rtol=0, atol=0)
+
+
+def test_stream_records_of_the_wrong_width_fail(tmp_path):
+    config = _run_config(tmp_path, n_passes=1)
+    config = config.model_copy(update={"dim_phi": 7, "model": {**SPEC}})
+    config = StreamRunConfig.model_validate(config.model_dump(mode="json"))
+    with pytest.raises(ValueError, match="normalization needs offset and positive scale of 7"):
+        run_stream(config)

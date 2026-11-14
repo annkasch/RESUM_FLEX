@@ -114,23 +114,24 @@ class TreeSurrogate(EventSurrogate):
                 'BDT requires the optional dependency: pip install -e ".[bdt]"'
             ) from exc
 
-    # Stream-trained trees: phi columns added to theta to give the record position ([]: theta
-    # alone); None for trees trained on design points. Saved with the checkpoint.
-    stream_position = None
+    # Trees trained on an event stream see the phi columns in physical units (no theta).
+    # Saved with the checkpoint (``stream_records`` in model.json).
+    stream_trained = False
     _data_normalization = None
 
     @property
     def uses_stream_units(self) -> bool:
-        return self.stream_position is not None
+        return self.stream_trained
 
     @property
     def n_features(self) -> int:
-        """Input columns of the estimator: theta + phi, or the stream record width."""
-        width = (self.dim_theta or 0) + (self.dim_phi or 0)
-        return width - len(self.stream_position or [])
+        """Input columns of the estimator: theta + phi, or the stream record width (phi)."""
+        if self.stream_trained:
+            return self.dim_phi or 0
+        return (self.dim_theta or 0) + (self.dim_phi or 0)
 
     def configure_normalization(self, normalization):
-        """Stream-trained trees map design-point inputs back to physical record columns."""
+        """Stream-trained trees map design-point phi back to physical record columns."""
         if self.uses_stream_units:
             if normalization is None:
                 raise ValueError("A stream-trained BDT needs the design-point data normalization")
@@ -143,7 +144,7 @@ class TreeSurrogate(EventSurrogate):
             return event_features(target)
         if self._data_normalization is None:
             raise ValueError("Call configure_normalization before scoring design points")
-        return stream_records(target, self._data_normalization, self.stream_position)
+        return stream_records(target, self._data_normalization)
 
     def predict(self, target, *, context=None):
         self.validate(target, context)

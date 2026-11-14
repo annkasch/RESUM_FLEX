@@ -177,7 +177,7 @@ def test_stream_metrics_calibrate_per_record_column():
     p = 0.02 + 0.08 * features[:, 0]
     labels = (rng.random(len(p)) < p).astype(np.int8)
     metrics, arrays = stream_metrics(labels, logit(p), reference_rate=0.06, features=features)
-    assert set(metrics["feature_calibration"]) == {"record_0", "record_1"}
+    assert set(metrics["feature_calibration"]) == {"phi_0", "phi_1"}
     assert arrays["feature_calibration_events"].shape == (2, 10)
     assert "feature_calibration" not in stream_metrics(labels, logit(p), reference_rate=0.06)[0]
     _, finer = stream_metrics(

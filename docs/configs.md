@@ -70,7 +70,7 @@ parentheses.
 |---|---|
 | `cnp` | `encoder`: `latent_dim`, `hidden_dims`, `dropout` (64, `[128, 128]`, 0). Uses context events. |
 | `mlp` | `architecture`: `hidden_dims`, `dropout` (`[128, 128]`, 0). |
-| `field` | Neural field for point-cloud data (3-D direction). `architecture` as mlp; `position.phi_columns` (added to theta in physical units), `direction.phi_columns` + `degree` (4), `encoding`: `n_frequencies`, `max_frequency` (8, 8.0). See [models.md](models.md#neural-field-kind-field). |
+| `field` | Neural field for point-cloud data (3-D direction). `architecture` as mlp; `direction.phi_columns` + `degree` (4), `encoding`: `kind` (fourier / none), `columns` (`theta` or φ columns, taken as given; θ then unused), `n_frequencies`, `max_frequency` (8, 8.0). See [models.md](models.md#neural-field-kind-field). |
 
 `mlp`, `cnp` and `field` take an optional `last_layer`: `prior_precision` (`evidence` or a number), `draws` (1000), `seed` (0): a Laplace posterior over the final layer, fitted after training ([last-layer.md](last-layer.md)).
 | `transformer` | `architecture`: `architecture` (`legacy` or `ft_transformer`), `token_dim`, `n_heads`, `n_layers`, `feedforward_dim`, `dropout`, `inference_chunk_size`. |

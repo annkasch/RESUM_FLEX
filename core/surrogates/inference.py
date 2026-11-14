@@ -50,7 +50,7 @@ def open_for_prediction(
 
     Checks that the model needs no context, that donors (``events_from``) have the provider's
     ``transfer_events`` rule, and that the inputs are normalized as the training data (a
-    stream-trained field instead maps them into its physical units).
+    stream-trained model instead maps each phi column into its stream units).
     """
     checkpoint, data_directory = Path(checkpoint), Path(data_directory)
     model = load_surrogate(checkpoint)
@@ -69,8 +69,8 @@ def open_for_prediction(
             "own events"
         )
     if stream_units(model):
-        # A field trained on ungrouped events works in physical units: map this data's
-        # design point inputs (theta + offset) into them instead of requiring equal normalization.
+        # A model trained on ungrouped events works in its stream units: map this data's phi
+        # columns into them instead of requiring equal normalization (theta is not used).
         model.configure_normalization(provider.normalization())
     elif not normalization_matches(
         model.metadata.get("normalization.json"), provider.normalization()
@@ -253,7 +253,7 @@ def predict_partition(
 
 def normalization_record(model):
     return (
-        "design point inputs mapped into the stream-trained field's physical units"
+        "phi columns mapped into the stream-trained model's units (theta unused)"
         if stream_units(model)
         else "provider normalization equals checkpoint normalization"
     )

@@ -89,6 +89,10 @@ synthetic phases, `legacy_cnp` kind).
 - **Scale before batching.** The encoder MLP ignores features ≥ ~10× smaller in range. GP ARD
   lengthscales compensate, the encoder cannot. No auto-scaling: silent unit changes would
   break predict-time queries. Persist the scaler with the checkpoint ([data.md](data.md)).
+- **φ as given, never θ + φ.** Stream records have no θ, so a stream model can only see the
+  same inputs on design-point data if φ there holds the event's own inputs. Combining θ with
+  φ (offsets, coordinate transforms) is the application's job in its provider and event
+  source; the toolkit maps φ column by column (affine) and checks only widths.
 - **Never clip probabilities.** A clipped p hides a broken model and biases the NLL. Count
   invalid values or fail.
 - **Selection on validation, LF by default.** HF is scarce and feeds the GP; selecting on it

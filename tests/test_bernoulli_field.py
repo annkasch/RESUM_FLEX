@@ -1,4 +1,4 @@
-"""Neural field: encodings, physical-unit input combination, persistence and pipeline."""
+"""Neural field: encodings, phi columns as given, persistence and pipeline."""
 
 import json
 import math
@@ -15,21 +15,20 @@ from core.surrogates.models import build_surrogate
 from schemas.data_models import InputMode, StandardBatch
 from schemas.surrogates import FieldModel
 
-# theta = design point centre (3), phi = emission offset (3) + direction vector (3).
+# theta = design point centre (3), phi = absolute emission point (3) + direction vector (3).
 NORMALIZATION = {
     "theta": {"method": "standard", "offset": [0.5, -0.2, 1.0], "scale": [0.06, 0.05, 0.07]},
     "phi": {
         "method": "standard",
-        "offset": [1e-4, -2e-4, 0.0, 0.0, 0.0, 0.0],
-        "scale": [1.4e-3, 1.5e-3, 1.3e-3, 5.6e-6, 5.5e-6, 5.7e-6],
+        "offset": [0.5, -0.2, 1.0, 0.0, 0.0, 0.0],
+        "scale": [0.061, 0.052, 0.071, 5.6e-6, 5.5e-6, 5.7e-6],
     },
 }
 SPEC = {
     "kind": "field",
     "architecture": {"hidden_dims": [16, 16]},
-    "position": {"phi_columns": [0, 1, 2]},
     "direction": {"phi_columns": [3, 4, 5], "degree": 3},
-    "encoding": {"n_frequencies": 4, "max_frequency": 4.0},
+    "encoding": {"columns": [0, 1, 2], "n_frequencies": 4, "max_frequency": 4.0},
 }
 
 
@@ -38,10 +37,10 @@ def _normalize(values, group):
     return (values - np.asarray(entry["offset"])) / np.asarray(entry["scale"])
 
 
-def _physical_batch(centre, offset, direction, labels=None, counts=None):
-    """StandardBatch from physical centre [B, 3], offset [B, N, 3], direction [B, N, 3]."""
-    b, n = offset.shape[:2]
-    phi = np.concatenate([offset, direction], axis=-1)
+def _physical_batch(centre, point, direction, labels=None, counts=None):
+    """StandardBatch from physical centre [B, 3], emission point [B, N, 3], direction [B, N, 3]."""
+    b, n = point.shape[:2]
+    phi = np.concatenate([point, direction], axis=-1)
     return StandardBatch(
         mode=InputMode.FULL,
         theta=_normalize(centre, "theta"),
@@ -58,11 +57,12 @@ def _field(seed=0, **changes):
 
 
 def _random_physical(rng, b=4, n=30):
+    """(centre [B, 3], absolute emission point [B, N, 3], direction [B, N, 3])."""
     centre = np.asarray(NORMALIZATION["theta"]["offset"]) + rng.normal(0, 0.05, (b, 3))
-    offset = rng.uniform(-2.5e-3, 2.5e-3, (b, n, 3))
+    point = centre[:, None, :] + rng.uniform(-2.5e-3, 2.5e-3, (b, n, 3))
     direction = rng.normal(size=(b, n, 3))
     direction *= 9.7e-6 / np.linalg.norm(direction, axis=-1, keepdims=True)
-    return centre, offset, direction
+    return centre, point, direction
 
 
 def test_spherical_harmonics_are_orthonormal():
@@ -87,26 +87,27 @@ def test_fourier_features_shape_and_frequencies():
     assert out.shape == (2, 5, encoding.output_dim(3)) == (2, 5, 27)
 
 
-def test_position_is_continuous_across_design_points():
-    """Same emission point from two different design point centres gives the same logit."""
+def test_phi_columns_are_taken_as_given_and_theta_is_unused():
+    """With phi columns encoded, theta is not an input: the same emission point under any
+    design point centre gives the same logit, and nothing is added to phi."""
     rng = np.random.default_rng(1)
     model = _field()
-    centre, offset, direction = _random_physical(rng)
-    shift = rng.uniform(-3e-3, 3e-3, (len(centre), 3))  # move the centre, keep the point
-    a = model.predict(_physical_batch(centre, offset, direction))
-    b = model.predict(_physical_batch(centre + shift, offset - shift[:, None, :], direction))
-    np.testing.assert_allclose(a.logits, b.logits, atol=1e-4)
+    centre, point, direction = _random_physical(rng)
+    a = model.predict(_physical_batch(centre, point, direction))
+    shuffled = model.predict(_physical_batch(centre[::-1] + 0.3, point, direction))
+    np.testing.assert_array_equal(a.logits, shuffled.logits)
     # Moving the emission point does change it.
-    c = model.predict(_physical_batch(centre + shift, offset, direction))
+    shift = rng.uniform(-3e-3, 3e-3, (len(centre), 1, 3))
+    c = model.predict(_physical_batch(centre, point + shift, direction))
     assert np.abs(a.logits - c.logits).max() > 1e-4
 
 
 def test_direction_length_does_not_matter():
     rng = np.random.default_rng(2)
     model = _field()
-    centre, offset, direction = _random_physical(rng)
-    a = model.predict(_physical_batch(centre, offset, direction))
-    b = model.predict(_physical_batch(centre, offset, 3.0 * direction))
+    centre, point, direction = _random_physical(rng)
+    a = model.predict(_physical_batch(centre, point, direction))
+    b = model.predict(_physical_batch(centre, point, 3.0 * direction))
     np.testing.assert_allclose(a.logits, b.logits, atol=1e-4)
 
 
@@ -122,10 +123,10 @@ def test_checkpoint_keeps_normalization(tmp_path):
 
 def test_ragged_padding_with_zero_directions():
     rng = np.random.default_rng(4)
-    centre, offset, direction = _random_physical(rng, b=3, n=10)
+    centre, point, direction = _random_physical(rng, b=3, n=10)
     counts = np.array([10, 4, 7])
     valid = np.arange(10) < counts[:, None]
-    phi = np.concatenate([offset, direction], -1)
+    phi = np.concatenate([point, direction], -1)
     batch = StandardBatch(
         mode=InputMode.FULL,
         theta=_normalize(centre, "theta"),
@@ -140,17 +141,30 @@ def test_ragged_padding_with_zero_directions():
 
 
 def test_invalid_field_settings():
-    with pytest.raises(ValidationError):
-        FieldModel(position={"phi_columns": [0, 1, 2]}, direction={"phi_columns": [2, 3, 4]})
-    with pytest.raises(ValueError, match="one to one"):
-        build_surrogate({**SPEC, "position": {"phi_columns": [0, 1]}}, 3, 6)
+    with pytest.raises(ValidationError, match="must be distinct"):
+        FieldModel(encoding={"columns": [0, 1, 2]}, direction={"phi_columns": [2, 3, 4]})
+    with pytest.raises(ValidationError, match="Fourier encoding needs columns"):
+        FieldModel(encoding={"columns": []})
     with pytest.raises(ValueError, match="phi_columns"):
         build_surrogate(SPEC, 3, 5)
     with pytest.raises(ValueError, match="normalization"):
         build_surrogate(SPEC, 3, 6).configure_normalization({"theta": {}, "phi": {}})
-    # Without position/direction the field runs on Fourier(theta) and raw phi.
+    # Without encoded phi columns or a direction the field runs on Fourier(theta) and raw phi.
     plain = build_surrogate({"kind": "field", "architecture": {"hidden_dims": [4]}}, 1, 1)
-    assert plain.module.extra_columns == [0]
+    assert plain.module.encodes_theta and plain.module.extra_columns == [0]
+
+
+def test_the_removed_position_setting_fails_with_a_hint(tmp_path):
+    with pytest.raises(ValidationError, match="model.position was removed"):
+        FieldModel(position={"phi_columns": [0, 1, 2]})
+    # A checkpoint written before the change (its config has a position key) is refused.
+    model = _field()
+    model.save(tmp_path / "ckpt")
+    manifest = json.loads((tmp_path / "ckpt" / "model.json").read_text())
+    manifest["model"]["position"] = {"phi_columns": [0, 1, 2]}
+    (tmp_path / "ckpt" / "model.json").write_text(json.dumps(manifest))
+    with pytest.raises(ValidationError, match="model.position was removed"):
+        load_surrogate(tmp_path / "ckpt")
 
 
 class FieldNpz(NpzBatches):
@@ -167,9 +181,9 @@ def test_field_runs_through_the_pipeline(tmp_path):
     rng = np.random.default_rng(5)
     root = tmp_path / "data"
     for split, fidelity in [("train", "lf"), ("validation", "lf"), ("validation", "hf")]:
-        centre, offset, direction = _random_physical(rng, b=5, n=40)
+        centre, point, direction = _random_physical(rng, b=5, n=40)
         p = 0.05 + 0.2 * (direction[..., 2] > 0) / np.linalg.norm(direction, axis=-1) * 9.7e-6
-        batch = _physical_batch(centre, offset, direction, labels=rng.binomial(1, p))
+        batch = _physical_batch(centre, point, direction, labels=rng.binomial(1, p))
         folder = root / "batches" / split
         folder.mkdir(parents=True, exist_ok=True)
         np.savez(
@@ -198,8 +212,8 @@ def test_field_runs_through_the_pipeline(tmp_path):
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
     assert manifest["model"]["kind"] == "field"
     restored = load_surrogate(output / "checkpoints/best")
-    expected = NORMALIZATION["phi"]["scale"][0] / NORMALIZATION["theta"]["scale"][0]
-    assert restored.module.position_scale[0].item() == pytest.approx(expected, rel=1e-6)
+    expected = NORMALIZATION["phi"]["scale"][3]  # direction back in physical units
+    assert restored.module.direction_scale[0].item() == pytest.approx(expected, rel=1e-6)
     rows = json.loads((output / "metrics.json").read_text())
     assert all("design_point_predictive" in r for r in rows if r["split"] == "validation")
     compute = json.loads((output / "compute.json").read_text())

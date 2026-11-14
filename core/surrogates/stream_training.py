@@ -2,10 +2,11 @@
 
 Neural kinds (field; mlp and transformer as the unencoded field with that network): each
 optimizer step takes one batch of raw event records from the event source (random
-order, see its documentation); the field normalizes positions with the store's train
-normalization (``BernoulliField.set_stream_normalization``) and encodes the direction from the
-momentum. Checkpoints are selected by the Bernoulli log loss on the first
-``validation_events`` validation events, held on the device. With ``last_layer`` the
+order, see its documentation; records = the ``dim_phi`` event inputs, then the label); the
+field normalizes them with the store's train normalization
+(``BernoulliField.set_stream_normalization``) and encodes the direction from the momentum.
+Checkpoints are selected by the Bernoulli log loss on the first ``validation_events``
+validation events, held on the device. With ``last_layer`` the
 selected checkpoints get a Laplace posterior from one streaming pass over all training
 events (exact Bernoulli Hessian of the final layer, as for design point training).
 
@@ -18,8 +19,8 @@ negatives weighted 1 / fraction; ``case_control_sample``); trees are added ``eva
 time and selected by the same validation log loss. No last layer.
 
 The checkpoints are ordinary field (or BDT) checkpoints: ``predict`` / ``score_event_model.py``
-evaluate them on design point data, mapping theta + offset into the model's stream units
-(trees: physical record columns). There is no stream CNP (docs/stream.md).
+evaluate them on design point data, mapping each phi column into the model's stream units
+(trees: physical record columns); theta is not used. There is no stream CNP (docs/stream.md).
 """
 
 import json
@@ -238,7 +239,7 @@ def stream_metrics(
     """Event metrics of events without design-point structure, as in design point evaluation.
 
     labels, logits: [M] numpy; features: optional [M, W] record input columns, which add
-    the calibration per record column (``record_j``, ``feature_bins`` bins) and, with ``residual``
+    the calibration per record column (``phi_j``, ``feature_bins`` bins) and, with ``residual``
     (ResidualTestConfig), the residual learnability test split by event. Returns (metrics,
     arrays) with calibration bins and the precision-recall curve.
     """
@@ -287,7 +288,7 @@ def stream_metrics(
     )
     if features is not None:
         features = np.asarray(features, dtype=np.float64)  # [M, W]
-        names = [f"record_{j}" for j in range(features.shape[1])]
+        names = [f"phi_{j}" for j in range(features.shape[1])]
         metrics["feature_calibration"], feature_arrays = feature_calibration(
             names, features, labels, p, feature_bins
         )
@@ -394,12 +395,22 @@ def _new_output(config: StreamRunConfig) -> Path:
     return output
 
 
+def check_record_width(records, dim_phi: int, name: str):
+    """Fail unless ``records`` [M, W + 1] hold dim_phi input columns plus the label."""
+    if records.ndim != 2 or records.shape[1] != dim_phi + 1:
+        raise ValueError(
+            f"{name} records have shape {tuple(records.shape)}; expected [M, dim_phi + 1] = "
+            f"[M, {dim_phi + 1}] (the phi columns, then the label)"
+        )
+
+
 def _validation_events(config: StreamRunConfig, loading: dict, device):
     """The first ``validation_events`` validation records as a tensor on ``device``."""
     import torch
 
     source = open_event_source(config.event_source, config.event_store, "validation", **loading)
     events = source.load()
+    check_record_width(events, config.dim_phi, "Validation")
     if config.training.validation_events is not None:
         events = events[: config.training.validation_events]
     return torch.as_tensor(np.ascontiguousarray(events), device=device)
@@ -443,11 +454,10 @@ def _run_stream_trees(config: StreamRunConfig) -> dict:
     y = (event_labels(torch.as_tensor(records)).numpy() == 1).astype(np.int8)
     del records
     model = build_surrogate(config.model, config.dim_theta, config.dim_phi, seed=training.seed)
-    model.stream_position = config.position_columns
+    model.stream_trained = True
     if x.shape[1] != model.n_features:
         raise ValueError(
-            f"Stream records have {x.shape[1]} input columns; dim_theta + dim_phi - "
-            f"position columns = {model.n_features}"
+            f"Stream records have {x.shape[1]} input columns; dim_phi = {model.n_features}"
         )
     episodes, history_episode, data = {}, None, None
     with compute.stage("validation_loading"):
@@ -646,6 +656,7 @@ def run_stream(config: StreamRunConfig) -> dict:
             for batch in train.batches(
                 training.batch_size, pass_index, drop_last=world > 1, device=device
             ):
+                check_record_width(batch, config.dim_phi, "Training")
                 with autocast():
                     logits = forward(batch)
                 loss = torch.nn.functional.binary_cross_entropy_with_logits(
