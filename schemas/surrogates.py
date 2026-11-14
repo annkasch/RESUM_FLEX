@@ -471,12 +471,18 @@ class ModelMeanLevel(StrictConfigModel):
     ``inference``: a file written by ``python -m core.surrogates predict``; without it the
     run's (or the configured) checkpoint predicts at fit time. Context models need labeled
     design points for their context; context-free models also predict unlabeled design points.
+
+    ``noise``: ``learned`` (the level's constant noise only) or ``last_layer``: each point also
+    gets the variance of its mean p over the event model's last-layer draws (log mode: of
+    log p) as a fixed noise on top of the learned level noise. Needs a last-layer posterior
+    (checkpoint) or an inference file with ``probability_draws``.
     """
 
     source: Literal["model_mean"]
     partition: str
     fidelity: Fidelity = "lf"
     inference: Path | None = None
+    noise: Literal["learned", "last_layer"] = "learned"
     max_design_points: int | None = Field(default=None, gt=0)
 
 

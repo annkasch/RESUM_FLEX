@@ -132,6 +132,22 @@ synthetic sweep at 50 hits, 1σ/2σ coverage of dim/bright points is 0.59/0.87 a
 (log) and 0.86/0.99 and 0.56/0.89 (identity) with `learned`, 0.69/0.94 and 0.69/0.95 (log)
 and 0.70/0.96 and 0.64/0.94 (identity) with `binomial`, with unchanged bias.
 
+Last-layer noise on model-mean levels: with `noise: last_layer` on a `model_mean` level, each
+of its training points gets the epistemic variance of its mean p over the event model's
+last-layer draws (`core.surrogates.last_layer.design_point_probability_draws`, or
+`probability_draws` of an inference file) as a fixed variance on top of the level's learned
+noise, from the first fit on (it does not depend on the GP): Var[p] in identity mode,
+Var[log max(p, cnp_log_floor)] in log mode (`core.mfgp_pipeline.last_layer_noise`). The
+target stays the plug-in mean p. The learned level noise is still fitted and usually drops,
+since part of the scatter is now explained; a level noise at its lower bound means the
+last-layer variance alone exceeds the scatter. Only the diagonal is used (draws are
+correlated across design points through the shared weights); held-out points and
+`development_map.npz` get no last-layer noise (evaluation is against observed fractions).
+Stored as `last_layer_noise_k` in `fit_arrays.npz`; `levels.json` records its mean, the
+number of draws and, in log mode, the floored draws (should be 0). Observed-fraction levels
+are unaffected: their count noise does not depend on the event model. This is a hybrid of
+the two routes; keep a `learned` run as the baseline.
+
 `training_arrays.npz` preserves original values; `fit_arrays.npz` records the
 adjusted original-scale targets and offsets, `transformed_training_arrays.npz` records
 the exact GP targets (log of the smoothed value minus the offset), and `levels.json` records per model-mean level how many values hit

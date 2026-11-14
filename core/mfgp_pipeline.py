@@ -249,6 +249,25 @@ def count_noise(
     return noise, int((~inside).sum())
 
 
+def last_layer_noise(
+    draws: np.ndarray, *, output_transform: str, floor: float = 1e-12
+) -> tuple[np.ndarray, int]:
+    """Variance [n] of a model-mean level's targets over last-layer draws [S, n], fitted units.
+
+    Identity mode: Var[p]; log mode: Var[log max(p, floor)], with the floor of the model-mean
+    targets (fit_targets). Draws must be finite probabilities in [0, 1] (never clipped).
+    Returns the variance and the number of floored draws (log mode; should be 0).
+    """
+    draws = np.asarray(draws, dtype=float)  # [S, n]
+    if draws.ndim != 2 or draws.shape[0] < 2:
+        raise ValueError(f"last-layer draws must have shape [S >= 2, n], got {draws.shape}")
+    if not np.isfinite(draws).all() or (draws < 0).any() or (draws > 1).any():
+        raise ValueError("last-layer draws must be finite probabilities in [0, 1]")
+    if output_transform != "log":
+        return draws.var(axis=0), 0
+    return np.log(np.maximum(draws, floor)).var(axis=0), int((draws < floor).sum())
+
+
 def fit_mfgp_corrected(
     X_list: list[np.ndarray],
     Y_list: list[np.ndarray],
@@ -258,6 +277,7 @@ def fit_mfgp_corrected(
     max_refits: int,
     pseudocount: float = 0.5,
     point_noise: bool = False,
+    fixed_noise: list[np.ndarray | None] | None = None,
     n_restarts: int = 5,
     **fit_kwargs,
 ) -> CorrectedFit:
@@ -274,6 +294,9 @@ def fit_mfgp_corrected(
     * ``point_noise``: adds the count noise (count_noise) as a fixed variance per point on
       top of the learned level noise. Identity mode refits only for this.
 
+    ``fixed_noise[k]`` [n_k] (e.g. last_layer_noise of a model-mean level): a fixed variance
+    per point in every fit, the first included, added to the count noise where both exist.
+
     A point whose rate is outside (0, 1) gets neither (offset 0, learned noise only) and is
     counted in ``outside``; rates are never clipped. Refits stop when nothing changes by
     more than REFIT_TOLERANCE (a point changing sides counts as a change), or after
@@ -289,8 +312,16 @@ def fit_mfgp_corrected(
     if not log and not point_noise:
         raise ValueError("identity mode refits only for point_noise")
     n = len(Y_list)
+    fixed = [None] * n if fixed_noise is None else list(fixed_noise)
+    if len(fixed) != n:
+        raise ValueError("fixed_noise needs one entry (or None) per level")
     gp = fit_mfgp(
-        X_list, Y_list, output_transform=output_transform, n_restarts=n_restarts, **fit_kwargs
+        X_list,
+        Y_list,
+        output_transform=output_transform,
+        n_restarts=n_restarts,
+        point_noise=_noise_sum([None] * n, fixed),
+        **fit_kwargs,
     )
     offsets: list[np.ndarray | None] = [None] * n
     noises: list[np.ndarray | None] = [None] * n
@@ -339,7 +370,7 @@ def fit_mfgp_corrected(
             output_transform=output_transform,
             n_restarts=1,
             initial_parameters=gp.model.param_array.copy(),
-            point_noise=noises if point_noise else None,
+            point_noise=_noise_sum(noises if point_noise else [None] * n, fixed),
             **fit_kwargs,
         )
         refits += 1
@@ -352,6 +383,15 @@ def fit_mfgp_corrected(
         converged=change <= REFIT_TOLERANCE,
         max_change=change,
     )
+
+
+def _noise_sum(*parts: list[np.ndarray | None]) -> list[np.ndarray | None] | None:
+    """Per-level sum of fixed point-noise lists (None entries count as 0); None if all None."""
+    total = [
+        None if all(v is None for v in level) else sum(v for v in level if v is not None)
+        for level in zip(*parts, strict=True)
+    ]
+    return None if all(v is None for v in total) else total
 
 
 def fit_mfgp(

@@ -128,6 +128,7 @@ Ordered from the lowest to the highest fidelity; the last level is the target. A
 | `partition` | Provider partition of the level's design points. |
 | `fidelity` | `lf` or `hf` (`lf` for `model_mean`, `hf` for `observed_fraction`). |
 | `inference` | `model_mean` only: file from `core.surrogates predict`; without it the event model predicts at fit time. |
+| `noise` | `model_mean` only: `learned` (the level's constant noise) or `last_layer`: each training point also gets the variance of its mean p over the event model's last-layer draws (log mode: of log p) as fixed noise on top of the learned level noise. Needs a last-layer checkpoint, or an inference file predicted with one (`probability_draws`). |
 | `max_design_points` | Fit on a seeded subset of this many design points (all). |
 
 ### Evaluation and fit

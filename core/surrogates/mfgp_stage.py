@@ -11,7 +11,8 @@ Output directory::
     training_arrays.npz      X_k, Y_k, events_k, index_k per level k (original units)
     fit_arrays.npz           Y_k after log-mode smoothing/floor (X_k unchanged); log mode:
                              log_offset_k of the bias correction per observed-fraction level;
-                             point_noise_k with observation_noise: binomial
+                             point_noise_k with observation_noise: binomial;
+                             last_layer_noise_k per model-mean level with noise: last_layer
     transformed_training_arrays.npz   exact GP targets (log mode: log Y_k − log_offset_k)
     levels.json              level settings, design point counts, data provenance, log_offset_mean
     model.pkl, model.json    fitted GP and its metadata
@@ -36,6 +37,29 @@ def _model_mean(model, batch, *, n_context, seed):
     from core.mfgp_pipeline import model_mean
 
     return model_mean(model, batch, n_context=n_context if model.uses_context else None, seed=seed)
+
+
+def _model_draws(model, batch, *, n_context, seed):
+    """Last-layer draws [S, B] of each design point's mean p, on the targets of _model_mean."""
+    if getattr(model, "last_layer", None) is None:
+        raise ValueError("noise: last_layer needs an event model with a last-layer posterior")
+    from core.surrogates.last_layer import design_point_probability_draws
+
+    if not model.uses_context:
+        return design_point_probability_draws(model, batch)
+    from core.surrogate_cnp import split_context_target
+
+    context, target = split_context_target(batch, n_context, seed=seed)
+    return design_point_probability_draws(model, target, context)
+
+
+def _level_noise(level, draws, cfg):
+    """Fixed last-layer noise [n] of a model-mean level in fitted units, or None."""
+    if level.source != "model_mean" or level.noise != "last_layer":
+        return None, 0
+    from core.mfgp_pipeline import last_layer_noise
+
+    return last_layer_noise(draws, output_transform=cfg.output_transform, floor=cfg.cnp_log_floor)
 
 
 # SeedSequence key under (metrics_seed, evaluation index) for the quantile residuals.
@@ -106,7 +130,8 @@ class _Data:
 
 
 def _level_arrays(level, stream, data, cfg, model):
-    """X [n, D], Y [n], events [n], design point index [n] and provenance of one level."""
+    """X [n, D], Y [n], events [n], design point index [n], provenance and the last-layer
+    draws [S, n] of one level (None unless a model-mean level has noise: last_layer)."""
     from core.gp_subsample import subsample_design_points
 
     seed = cfg.seed + 1 + 100 * stream  # context split of this level's design points
@@ -117,7 +142,7 @@ def _level_arrays(level, stream, data, cfg, model):
         from core.mfgp_pipeline import observed_fraction
 
         fraction, events = observed_fraction(batch)
-        return batch.theta, fraction, events, index, provenance
+        return batch.theta, fraction, events, index, provenance, None
     if level.inference is not None:
         return _inference_arrays(level, stream, data, cfg)
     if model is None:
@@ -137,10 +162,13 @@ def _level_arrays(level, stream, data, cfg, model):
     index = subsample_design_points(batch.batch_size, level.max_design_points, cfg.seed, stream)
     batch = batch.take(index)
     mean = _model_mean(model, batch, n_context=cfg.n_context, seed=seed)
+    draws = None
+    if level.noise == "last_layer":
+        draws = _model_draws(model, batch, n_context=cfg.n_context, seed=seed)
     events = batch.events_per_design_point.astype(float)
     if model.uses_context:
         events = events - cfg.n_context  # the mean covers the target events only
-    return batch.theta, mean, events, index, provenance
+    return batch.theta, mean, events, index, provenance, draws
 
 
 def _inference_arrays(level, stream, data, cfg):
@@ -158,13 +186,22 @@ def _inference_arrays(level, stream, data, cfg):
     with np.load(path) as arrays:
         saved_ids, saved_theta = arrays["design_point_ids"].tolist(), arrays["theta"]
         mean, events = arrays["mean_probability"], arrays["event_counts"].astype(float)
+        wanted = level.noise == "last_layer" and "probability_draws" in arrays
+        draws = arrays["probability_draws"] if wanted else None  # [S, B]
     if saved_ids != list(ids) or not np.allclose(saved_theta, theta, rtol=0, atol=1e-12):
         raise ValueError(f"{path} does not match the design points or normalization of {data.root}")
+    if level.noise == "last_layer" and draws is None:
+        raise ValueError(
+            f"{path} has no probability_draws; noise: last_layer needs an inference file "
+            "predicted with a last-layer checkpoint"
+        )
     index = subsample_design_points(len(mean), level.max_design_points, cfg.seed, stream)
     provenance = dict(
         inference=str(path), checkpoint=meta["checkpoint"], step=meta["step"], data=meta["data"]
     )
-    return theta[index], mean[index], events[index], index, provenance
+    if draws is not None:
+        draws = np.asarray(draws, dtype=float)[:, index]  # [S, n]
+    return theta[index], mean[index], events[index], index, provenance, draws
 
 
 def _fit_targets(level, values, events, cfg):
@@ -211,10 +248,10 @@ def run_mfgp(
     data = _Data(provider)
     metrics_seed = cfg.seed if metrics_seed is None else metrics_seed
     streams = {}  # one design point subset per (partition, fidelity), shared by its levels
-    arrays, fit, records = {}, {}, []
+    arrays, fit, records, fixed_noise = {}, {}, [], []
     for k, level in enumerate(cfg.levels):
         stream = streams.setdefault((level.partition, level.fidelity), len(streams))
-        X, Y, events, index, provenance = _level_arrays(level, stream, data, cfg, model)
+        X, Y, events, index, provenance, draws = _level_arrays(level, stream, data, cfg, model)
         if X is None:
             raise ValueError("MFGP requires design coordinates theta")
         arrays.update(
@@ -226,6 +263,13 @@ def run_mfgp(
         )
         if cfg.output_transform == "log" and level.source == "model_mean":
             record["log_floored"] = int((Y < cfg.cnp_log_floor).sum())  # should be 0
+        noise, floored = _level_noise(level, draws, cfg)
+        fixed_noise.append(noise)
+        if noise is not None:
+            fit[f"last_layer_noise_{k}"] = noise
+            record.update(last_layer_noise_mean=float(noise.mean()), last_layer_draws=len(draws))
+            if cfg.output_transform == "log":
+                record["last_layer_draws_floored"] = floored  # should be 0
         records.append(record)
     np.savez_compressed(directory / "training_arrays.npz", **arrays)
     compute.lap("data_loading")
@@ -249,6 +293,7 @@ def run_mfgp(
                 max_refits=max_refits,
                 pseudocount=cfg.raw_pseudocount,
                 point_noise=cfg.observation_noise == "binomial",
+                fixed_noise=fixed_noise,
                 kernel=cfg.kernel,
                 n_restarts=cfg.n_restarts,
             )
@@ -264,6 +309,7 @@ def run_mfgp(
                 kernel=cfg.kernel,
                 n_restarts=cfg.n_restarts,
                 output_transform=cfg.output_transform,
+                point_noise=None if all(v is None for v in fixed_noise) else fixed_noise,
             )
     finally:
         np.random.set_state(state)
@@ -280,7 +326,7 @@ def run_mfgp(
         if cfg.output_transform == "log" and key.startswith("Y_"):
             offset = offsets[int(key[2:])]
             value = np.log(value) - (0 if offset is None else offset[:, None])
-        if not key.startswith(("log_offset_", "point_noise_")):
+        if not key.startswith(("log_offset_", "point_noise_", "last_layer_noise_")):
             transformed[key] = value
     np.savez_compressed(directory / "transformed_training_arrays.npz", **transformed)
     (directory / "levels.json").write_text(json.dumps(records, indent=2, allow_nan=False))
@@ -293,12 +339,7 @@ def run_mfgp(
         coordinates="Prepared theta; use saved normalization for physical queries",
         mean="Rate; log mode: exp(mu + latent variance / 2), observation noise excluded",
         variance="Original-scale predictive variance; log mode: lognormal, noise included",
-        noise=(
-            "Learned per-level constant noise"
-            if cfg.observation_noise == "learned"
-            else "Learned per-level constant noise plus binomial count noise at the "
-            "predicted rate per observed-fraction point (fit_arrays point_noise_k)"
-        ),
+        noise=_noise_description(cfg),
         refits=correction,
         log_likelihood=float(gp.model.log_likelihood()),
         parameter_names=gp.model.parameter_names_flat().tolist(),
@@ -422,6 +463,21 @@ def run_mfgp(
     compute.lap("evaluation")
     compute.write(directory)
     return directory
+
+
+def _noise_description(cfg):
+    parts = ["Learned per-level constant noise"]
+    if cfg.observation_noise == "binomial":
+        parts.append(
+            "binomial count noise at the predicted rate per observed-fraction point "
+            "(fit_arrays point_noise_k)"
+        )
+    if any(lv.source == "model_mean" and lv.noise == "last_layer" for lv in cfg.levels):
+        parts.append(
+            "last-layer variance of the mean p per model-mean point with noise: last_layer, "
+            "training points only (fit_arrays last_layer_noise_k)"
+        )
+    return " plus ".join(parts)
 
 
 def run_mfgp_stage(config, surrogate, *, checkpoint_path=None):
