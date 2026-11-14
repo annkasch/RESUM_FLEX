@@ -9,7 +9,7 @@ and `bdt` (an in-memory case-control sample). There is no stream CNP (below).
 
 ```yaml
 model: {kind: mlp, architecture: {hidden_dims: [256, 256, 256]}, last_layer: {}}
-dim_theta: 2                     # input widths of the design-point data it is evaluated on
+dim_theta: 2                     # theta width of the evaluation views (optional; null/0 = none)
 dim_phi: 3                       # = the stream record's input columns
 training: {batch_size: 65536, n_passes: 10, device: cuda, precision: bf16}
 event_store: /path/to/store
@@ -22,7 +22,10 @@ The stream format (`core/event_stream.py`): float32 records [M, W + 1] = the W =
 event inputs in φ order, then the label bits. A stream model never uses θ: at evaluation on
 design-point data it sees the φ columns of each event as they are, so the design-point data
 must hold the same columns as the stream (e.g. the absolute emission point, not an offset
-from the design point). Offsets, coordinate transforms and the like belong in the
+from the design point). Views with θ and event-only views (no θ input; EVENT_ONLY) are
+scored alike, whatever `dim_theta` says: it only documents the evaluation views and may be
+left out (`null` or `0`). On an event-only view the feature calibration covers the φ
+columns only. Offsets, coordinate transforms and the like belong in the
 application: its event source and its dataset provider deliver the same columns. Width
 checks: the source's `normalization()` must cover W columns, and every record batch must be
 [M, W + 1]; nothing checks what a column means.

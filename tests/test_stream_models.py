@@ -230,3 +230,25 @@ def test_stream_bdt_trains_selects_and_scores_on_design_points(tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="Retrain it"):
         load_surrogate(run / "checkpoints" / "best")
+
+
+def test_stream_bdt_without_theta_scores_an_event_only_view(tmp_path):
+    pytest.importorskip("sklearn")
+    model = {"kind": "bdt", "architecture": {"max_iter": 20, "eval_every": 10, "max_depth": 2}}
+    training = {"negatives_per_positive": 4, "batch_size": 1000, "validation_events": 1500}
+    data = _variant(tmp_path, model, training).model_dump(mode="json")
+    data.update(dim_theta=None, data_provider="tests.test_stream_field:EventOnlyFieldNpz")
+    run_stream(StreamRunConfig.model_validate(data))
+    run = tmp_path / "run"
+    best = load_surrogate(run / "checkpoints" / "best")
+    assert best.dim_theta is None and best.ignores_theta and best.n_features == 6
+    rows = json.loads((run / "metrics.json").read_text())
+    hf = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
+    assert set(hf["feature_calibration"]) == {f"phi_{j}" for j in range(6)}
+    # The same trees score the view with theta to the same logits.
+    from tests.test_bernoulli_field import FieldNpz
+
+    best.configure_normalization(NORMALIZATION)
+    full = FieldNpz(tmp_path / "design_points").load("gp_validation", "hf")[0]
+    event_only = full.model_copy(update={"mode": InputMode.EVENT_ONLY, "theta": None})
+    np.testing.assert_array_equal(best.predict(full).logits, best.predict(event_only).logits)

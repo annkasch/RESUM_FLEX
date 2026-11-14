@@ -277,7 +277,10 @@ class BernoulliField(nn.Module):
         return self._features(encoded, vector, units)
 
     def forward(self, context, target):
-        for name, dimension in (("theta", self.dim_theta), ("phi", self.dim_phi)):
+        checks = [("phi", self.dim_phi)]
+        if not self.uses_stream_units:  # a stream-trained field never reads theta
+            checks.insert(0, ("theta", self.dim_theta))
+        for name, dimension in checks:
             if (getattr(target, name) is None) != (dimension is None):
                 raise ValueError(f"{name} presence must match model input dimensions")
         return self.decoder(self.encode(target)).squeeze(-1)

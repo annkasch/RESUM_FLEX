@@ -24,7 +24,7 @@ for config settings.
 - `φ` holds each event's own inputs (e.g. the absolute emission point), never offsets from θ:
   the toolkit never adds θ to φ. Offsets and coordinate transforms belong in the application's
   dataset provider / event source. Stream records are the `dim_phi` φ columns + label; stream
-  models never use θ.
+  models never use θ (`dim_theta` optional) and score views with or without θ.
 - Two ways from event probabilities to design-point rates, compared on the same predictive
   metrics (count NLL, coverage, CRPS):
   - Event model + Bayesian last layer (`model.last_layer`, Laplace over the final linear

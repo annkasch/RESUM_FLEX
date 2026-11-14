@@ -79,8 +79,18 @@ class EventSurrogate(ABC):
             "predictive_distribution": False,
         }
 
+    @property
+    def ignores_theta(self) -> bool:
+        """True for models trained on an event stream: theta is never read, so views with or
+        without theta are both valid inputs."""
+        module = getattr(self, "module", self)  # trees: the surrogate itself
+        return bool(getattr(module, "uses_stream_units", False))
+
     def validate(self, target, context=None):
-        for name, dimension in [("theta", self.dim_theta), ("phi", self.dim_phi)]:
+        names = [("phi", self.dim_phi)]
+        if not self.ignores_theta:
+            names.insert(0, ("theta", self.dim_theta))
+        for name, dimension in names:
             value = getattr(target, name)
             if (value is None) != (dimension is None):
                 raise ValueError(f"{name} presence does not match model schema")

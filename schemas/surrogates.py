@@ -973,10 +973,11 @@ class StreamRunConfig(StrictConfigModel):
     """An event model trained on every event of an event store, selected on its validation
     events by the Bernoulli log loss; evaluated later on design-point data (``predict``).
 
-    ``dim_theta`` and ``dim_phi`` are the input widths of the design-point data it will be
-    evaluated on, so the checkpoint loads like any field. A stream record holds the
-    ``dim_phi`` event inputs in phi order, then the label; the model never uses theta, and
-    at evaluation it sees the design points' phi columns as they are.
+    ``dim_theta`` (optional; None or 0 = no theta) and ``dim_phi`` are the input widths of the
+    design-point data it will be evaluated on, so the checkpoint loads like any field. A
+    stream record holds the ``dim_phi`` event inputs in phi order, then the label; the model
+    never uses theta, and at evaluation it sees the design points' phi columns as they are,
+    on views with or without theta (EVENT_ONLY).
 
     ``model: {kind: field}``: the neural field for point-cloud data (3-D direction for the
     spherical harmonics; see ``core.bernoulli_field``), encoding phi columns
@@ -1012,8 +1013,15 @@ class StreamRunConfig(StrictConfigModel):
     residual_test: ResidualTestConfig | None = None
     unblind_test: bool = False
     output_directory: Path
-    dim_theta: int = Field(ge=1)
+    # theta width of the design-point data it is evaluated on; None (or 0): none. Documents
+    # the views only: a stream model never reads theta and scores views with or without it.
+    dim_theta: int | None = Field(default=None, ge=1)
     dim_phi: int = Field(ge=1)
+
+    @field_validator("dim_theta", mode="before")
+    @classmethod
+    def no_theta(cls, value):
+        return None if value == 0 else value
 
     @model_validator(mode="before")
     @classmethod

@@ -16,6 +16,7 @@ from schemas.surrogates import StreamRunConfig
 from tests.test_bernoulli_field import (
     NORMALIZATION,
     SPEC,
+    FieldNpz,
     _field,
     _physical_batch,
     _random_physical,
@@ -401,3 +402,73 @@ def test_stream_records_of_the_wrong_width_fail(tmp_path):
     config = StreamRunConfig.model_validate(config.model_dump(mode="json"))
     with pytest.raises(ValueError, match="normalization needs offset and positive scale of 7"):
         run_stream(config)
+
+
+class EventOnlyFieldNpz(FieldNpz):
+    """The field's design-point data as an event-only view: no theta input; the design point
+    coordinates stay metadata (``theta()``)."""
+
+    def load(self, partition, fidelity, *, labels=True):
+        batch, provenance = super().load(partition, fidelity, labels=labels)
+        return batch.model_copy(update={"mode": InputMode.EVENT_ONLY, "theta": None}), provenance
+
+    def theta(self, partition, fidelity):
+        batch, _ = super().load(partition, fidelity)
+        return batch.theta, [f"{partition}/{fidelity}/{i}" for i in range(batch.batch_size)]
+
+
+@pytest.mark.parametrize("dim_theta", [None, 0])
+def test_stream_model_without_theta_trains_and_scores_on_an_event_only_view(tmp_path, dim_theta):
+    config = _run_config(tmp_path, n_passes=1)
+    data = config.model_dump(mode="json")
+    data.update(
+        dim_theta=dim_theta,
+        data_provider="tests.test_stream_field:EventOnlyFieldNpz",
+        model={"kind": "mlp", "architecture": {"hidden_dims": [16, 16]}, "last_layer": {}},
+    )
+    config = StreamRunConfig.model_validate(data)
+    assert config.dim_theta is None
+    run_stream(config)
+    run = tmp_path / "run"
+    best = load_surrogate(run / "checkpoints" / "best")
+    assert best.dim_theta is None and best.ignores_theta
+    rows = json.loads((run / "metrics.json").read_text())
+    hf = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
+    assert set(hf["feature_calibration"]) == {f"phi_{j}" for j in range(6)}
+    assert hf["design_point_predictive"] is not None
+    # predict on the event-only view keeps the provider's design point coordinates.
+    from core.surrogates.inference import predict_partition
+
+    path = predict_partition(
+        run / "checkpoints" / "best", tmp_path / "design_points", "gp_validation", "hf"
+    )
+    theta, ids = EventOnlyFieldNpz(tmp_path / "design_points").theta("gp_validation", "hf")
+    with np.load(path) as arrays:
+        assert arrays["design_point_ids"].tolist() == ids
+        np.testing.assert_allclose(arrays["theta"], theta)
+
+
+@pytest.mark.parametrize("kind", ["mlp", "field"])
+def test_stream_models_score_views_with_and_without_theta_alike(kind):
+    """Whatever dim_theta says, a stream model scores a view with theta and the same view
+    without theta to the same logits."""
+    rng = np.random.default_rng(6)
+    batch = _physical_batch(*_random_physical(rng))
+    event_only = batch.model_copy(update={"mode": InputMode.EVENT_ONLY, "theta": None})
+    spec = SPEC if kind == "field" else {"kind": "none", "columns": []}
+    network = (
+        spec
+        if kind == "field"
+        else {"kind": "field", "architecture": {"hidden_dims": [8]}, "encoding": spec}
+    )
+    logits = []
+    for dim_theta in (None, 3):
+        model = build_surrogate(network, dim_theta, 6, seed=0)
+        model.module.set_stream_normalization(STREAM_NORMALIZATION)
+        model.configure_normalization(NORMALIZATION)
+        logits += [model.predict(batch).logits, model.predict(event_only).logits]
+    for other in logits[1:]:
+        np.testing.assert_array_equal(logits[0], other)
+    design_point_model = _field()  # not stream-trained: theta presence is still checked
+    with pytest.raises(ValueError, match="theta presence"):
+        design_point_model.predict(event_only)
