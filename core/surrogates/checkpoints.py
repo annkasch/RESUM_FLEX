@@ -6,6 +6,7 @@ As with existing PyTorch/joblib checkpoints, load only trusted local artifacts.
 import json
 from pathlib import Path
 
+from core.provenance import code_provenance
 from core.surrogates.models import build_surrogate
 
 FORMAT = "resum_flex.event_surrogate"
@@ -21,6 +22,7 @@ def save_surrogate(path, model, *, metadata=None):
         dim_theta=model.dim_theta,
         dim_phi=model.dim_phi,
         metadata={**model.metadata, **(metadata or {})},
+        code=code_provenance(),
     )
     if model.config.kind == "bdt":
         import sklearn

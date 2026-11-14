@@ -16,6 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.provenance import code_provenance
 from core.surrogates.evaluation import within_point_summary, within_point_terms
 from core.surrogates.finished_run import (
     held_out_sets,
@@ -55,6 +56,7 @@ def run_within_point(config: WithinPointRunConfig) -> Path:
     """within_point.json, one arrays file and one plot per (set, checkpoint), in the run."""
     from viz.surrogate import plot_within_point_gain
 
+    code = code_provenance()
     run = output = config.run
     if (run / "within_point.json").exists():
         raise FileExistsError(f"{run / 'within_point.json'} exists; the run is already scored")
@@ -92,6 +94,7 @@ def run_within_point(config: WithinPointRunConfig) -> Path:
         resolved_config=config.model_dump(mode="json"),
         seed=seed,
         rows=rows,
+        code=code,
     )
     # Arrays and plots first: within_point.json marks a finished evaluation.
     (output / "within_point.json").write_text(json.dumps(report, indent=2, allow_nan=False))

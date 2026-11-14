@@ -76,7 +76,8 @@ After a change, run `scripts/smoke.py` (pipeline check only; also `pytest -m smo
 - `core/surrogates/`: shared build/fit/predict/evaluate API, run stages and the CLI (`__main__.py`);
   entry point `experiment.run_experiment`, data access via `datasets.py` (DatasetProvider).
 - `core/`: models and math (`core/quantile_residuals.py`: randomized quantile residuals of hit
-  counts behind every z-score plot); `data/`: synthetic data; `viz/`: plotting
+  counts behind every z-score plot; `core/provenance.py`: the `code` block, resum_flex commit,
+  dirty flag and package versions, in every run's JSON); `data/`: synthetic data; `viz/`: plotting
   (`viz/dispatch.py:plot_coverage_test` is the canonical coverage renderer).
 - `scripts/smoke.py` (CLI pipeline check), `scripts/phase{1..5}_*.py`,
   `scripts/mfgp_noise_sweep.py` (MFGP bias on synthetic counts, `core/mfgp_bias.py`), `notebooks/`,

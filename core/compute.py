@@ -5,6 +5,8 @@ Each run writes ``compute.json``::
     stages       one record per stage (data preparation, training, fit, evaluation, ...)
     total        the whole run, from the start of the log to the summary
     environment  host, Slurm job, allocated CPUs/cores, thread settings
+    code         resum_flex commit, dirty flag, Python and package versions (core.provenance),
+                 taken when the log is created
 
 Per record:
 
@@ -28,6 +30,8 @@ import sys
 import time
 from contextlib import contextmanager
 from pathlib import Path
+
+from core.provenance import code_provenance
 
 THREAD_VARIABLES = ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS")
 
@@ -108,6 +112,7 @@ class ComputeLog:
         self._wall0, self._cpu0 = time.perf_counter(), _cpu_seconds()
         self._mark = (self._wall0, self._cpu0)
         self._cores = physical_cores(allocated_cpus())
+        self.code = code_provenance()
 
     def lap(self, name: str) -> None:
         """Record the time since the previous mark as stage ``name``."""
@@ -134,6 +139,7 @@ class ComputeLog:
             stages=list(self.stages),
             total=_record("total", wall, cpu, self._cores, _torch_threads()),
             environment=environment(),
+            code=self.code,
         )
 
     def write(self, directory) -> Path:

@@ -128,3 +128,6 @@ def test_mixed_train_sets_run_through_the_pipeline(tmp_path):
     # The last layer saw every valid training event: 4 * 10 LF + 3 * 25 HF.
     manifest = json.loads((output / "checkpoints/best/model.json").read_text())
     assert manifest["metadata"]["last_layer"]["events"] == 4 * 10 + 3 * 25
+    # Code provenance in the checkpoint and in compute.json.
+    compute = json.loads((output / "compute.json").read_text())
+    assert manifest["code"]["packages"]["torch"] == compute["code"]["packages"]["torch"]

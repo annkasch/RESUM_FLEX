@@ -15,6 +15,7 @@ from pathlib import Path
 
 import numpy as np
 
+from core.provenance import code_provenance
 from core.surrogates.evaluation import CALIBRATION_BINS
 from core.surrogates.finished_run import (
     run_inputs,
@@ -32,6 +33,7 @@ def run_residual(config: ResidualRunConfig) -> Path:
     if output.exists() and any(output.iterdir()):
         raise FileExistsError(f"Choose a new output_directory; {output} is not empty")
     require_lightgbm()
+    code = code_provenance()
     run = config.run
     experiment = json.loads((run / "experiment.json").read_text())
     sets = select_sets(run, config.sets)
@@ -81,6 +83,7 @@ def run_residual(config: ResidualRunConfig) -> Path:
         resolved_config=config.model_dump(mode="json"),
         seed=seed,
         rows=rows,
+        code=code,
     )
     (output / "residual_test.json").write_text(json.dumps(report, indent=2, allow_nan=False))
     return output

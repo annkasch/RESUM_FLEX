@@ -76,6 +76,19 @@ not), `cpu_utilization = cpu_seconds / (wall_seconds × allocated_cores)` and th
 threads. The cost of a pipeline is the sum over its runs, e.g. event-model training +
 inference + GP fit for NN + GP.
 
+## Code provenance
+
+Every output records which resum_flex code wrote it (`core.provenance`): a `code` block in
+`compute.json` (and so in the inference `.json`), in each checkpoint's `model.json`, in
+`residual_test.json` and in `within_point.json`. It holds the resum_flex `commit`, `branch`
+(None on a detached HEAD), `dirty` (tracked files differ from the commit; untracked files don't
+count), `git_error` if git failed (e.g. an installed copy outside a checkout), the Python
+version, the installed `packages` (resum_flex and the libraries it uses, None if absent) and
+`torch_cuda` (CUDA build of Torch, None for CPU). Git is asked in the resum_flex source
+directory, not the working directory; the state is taken once per process, at the start of
+the run. The application's own code is not recorded; `code_provenance(source)` describes any
+repository the same way, for an application to write into its own outputs.
+
 ## Context-free inference
 
 ```bash
