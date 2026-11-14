@@ -21,9 +21,19 @@ from core.surrogates.models import build_surrogate
 from data.pseudo_generator import for_scenario
 from schemas.data_models import StandardBatch
 
+# Small chunks: one forward pass calls the transformer head several times.
+TRANSFORMER = {"token_dim": 8, "n_heads": 2, "feedforward_dim": 16, "inference_chunk_size": 7}
+
 
 def _spec(kind, **last_layer):
     settings = {"draws": 200, **last_layer}
+    if kind.startswith("transformer"):
+        style = "ft_transformer" if kind == "transformer_ft" else "legacy"
+        return {
+            "kind": "transformer",
+            "architecture": {**TRANSFORMER, "architecture": style},
+            "last_layer": settings,
+        }
     if kind == "cnp":
         return {
             "kind": "cnp",
@@ -75,7 +85,7 @@ def test_evidence_maximum_is_selected():
     assert fixed.prior_precision == 3.0
 
 
-@pytest.mark.parametrize("kind", ["mlp", "cnp", "field"])
+@pytest.mark.parametrize("kind", ["mlp", "cnp", "field", "transformer", "transformer_ft"])
 def test_draws_center_on_map_and_shrink_with_prior(kind, tmp_path):
     model = build_surrogate(_spec(kind), 1, 1, seed=0)
     context, target = _episode(model, _batch())
@@ -119,7 +129,28 @@ def test_context_model_needs_context_and_unsupported_kinds_fail():
     with pytest.raises(ValueError, match="no Bayesian last layer"):
         fit_last_layer(plain, _batch())
     with pytest.raises(ValueError):
-        build_surrogate({"kind": "transformer", "last_layer": {}}, 1, 1)
+        build_surrogate({"kind": "bdt", "last_layer": {}}, 1, 1)
+
+
+@pytest.mark.parametrize("kind", ["transformer", "transformer_ft"])
+def test_transformer_features_are_joined_over_inference_chunks(kind):
+    """Chunked evaluation gives the same final-layer features and fit as one chunk."""
+    batch = _batch()  # 4 design points x 40 events per pass, chunks of 7 events
+    model = build_surrogate(_spec(kind, prior_precision=1.0), 1, 1, seed=3)
+    whole = build_surrogate(_spec(kind, prior_precision=1.0), 1, 1, seed=3)
+    whole.module.config = whole.module.config.model_copy(update={"inference_chunk_size": 10**6})
+    # One generator at a time: interleaved ones would nest their no_grad contexts out of order.
+    chunked_features = list(feature_chunks(model, batch))
+    single_features = list(feature_chunks(whole, batch))
+    for chunked, single in zip(chunked_features, single_features, strict=True):
+        np.testing.assert_allclose(chunked[2], single[2], rtol=1e-5, atol=1e-6)
+    # The features reproduce the logits, so they are in the events' order.
+    features = np.concatenate([f for *_, f, _ in feature_chunks(model, batch)])
+    logits = features @ last_layer_weights(model)  # [B, N]
+    np.testing.assert_allclose(logits, model.predict(batch).logits, rtol=1e-4, atol=1e-5)
+    np.testing.assert_allclose(
+        fit_last_layer(model, batch).covariance, fit_last_layer(whole, batch).covariance, rtol=1e-4
+    )
 
 
 def test_ragged_design_points_average_only_valid_events():
@@ -161,7 +192,7 @@ class NormalizedNpz(NpzBatches):
         }
 
 
-@pytest.mark.parametrize("kind", ["mlp", "cnp"])
+@pytest.mark.parametrize("kind", ["mlp", "cnp", "transformer"])
 def test_experiment_writes_posterior_and_predictive_scores(kind, tmp_path):
     from scipy.special import expit
 

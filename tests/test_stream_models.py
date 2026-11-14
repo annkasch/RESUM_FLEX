@@ -42,7 +42,7 @@ def _variant(tmp_path, model, training):
 def test_stream_transformer_is_the_unencoded_field_with_a_transformer():
     network = _config(TRANSFORMER, record_position={"phi_columns": [0, 1, 2]}).network
     assert network.kind == "field" and network.encoding.kind == "none"
-    assert network.architecture.token_dim == 8 and network.last_layer is None
+    assert network.architecture.token_dim == 8 and network.last_layer is None  # not configured
     assert network.position.phi_columns == [0, 1, 2]
 
 
@@ -123,17 +123,26 @@ def test_stream_transformer_logits_match_on_design_point_inputs(position):
 
 def test_stream_transformer_trains_and_scores_on_design_points(tmp_path):
     training = {"batch_size": 256, "n_passes": 1, "eval_every": 10, "learning_rate": 3e-3}
-    config = _variant(tmp_path, TRANSFORMER, {**training, "device": "cpu"})
+    model = {
+        **TRANSFORMER,
+        # Chunks of 50 events: the last-layer pass joins several head calls per batch.
+        "architecture": {**TRANSFORMER["architecture"], "inference_chunk_size": 50},
+        "last_layer": {"prior_precision": "evidence", "draws": 100},
+    }
+    config = _variant(tmp_path, model, {**training, "device": "cpu"})
     report = run_stream(config)
     assert report["history"][-1]["stream_log_loss"] < report["history"][0]["stream_log_loss"]
     run = tmp_path / "run"
     best = load_surrogate(run / "checkpoints" / "best")
     assert best.config.kind == "field" and best.module.uses_stream_units
     assert hasattr(best.module.decoder, "transformer")
+    assert best.last_layer is not None and best.metadata["last_layer"]["events"] == 6000
     experiment = json.loads((run / "experiment.json").read_text())
     assert experiment["resolved_config"]["model"]["kind"] == "transformer"
     rows = json.loads((run / "metrics.json").read_text())
     assert {r["fidelity"] for r in rows} == {"stream", "lf", "hf"}
+    hf = next(r for r in rows if r["fidelity"] == "hf" and r["checkpoint"] == "best")
+    assert hf["design_point_predictive"] is not None
 
 
 # --- BDT -----------------------------------------------------------------------------------

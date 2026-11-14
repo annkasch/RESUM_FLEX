@@ -39,7 +39,7 @@ from core.surrogates.evaluation import (
     evaluate_surrogate,
     feature_calibration,
 )
-from core.surrogates.last_layer import _layer, last_layer_weights
+from core.surrogates.last_layer import _layer, captured_features, last_layer_weights
 from core.surrogates.models import build_surrogate
 from core.surrogates.readout import NULL_DRAWS
 from schemas.surrogates import StreamRunConfig
@@ -163,7 +163,7 @@ def fit_stream_last_layer(model, source, *, batch_size, device):
             for batch in source.batches(batch_size, 0, device=device):
                 captured.clear()
                 field.forward_events(batch)
-                features = captured[-1].double()
+                features = captured_features(captured, (len(batch),)).double()  # [M, H]
                 features = torch.cat([features, features.new_ones((len(features), 1))], dim=1)
                 p = torch.sigmoid(features @ weights)
                 hessian += (features * (p * (1 - p))[:, None]).T @ features

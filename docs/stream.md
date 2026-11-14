@@ -28,7 +28,7 @@ position is θ plus the position φ columns, so the model sees the same inputs i
   (old name `mlp_position`, still read) names the φ columns added to θ (none: θ alone is the
   position, all φ columns follow).
 - `kind: transformer`: the tabular transformer on the same normalized columns, one token per
-  column (`architecture` as for design-point training); layout as for `mlp`. No last layer.
+  column (`architecture` as for design-point training); layout as for `mlp`.
 - `kind: field`: the neural field (point clouds); its `position` and `direction` settings
   define the layout, e.g. `dim_theta: 3`, `dim_phi: 6`, position φ[0:3], direction φ[3:6]
   gives records x, y, z, px, py, pz, label.
@@ -39,7 +39,7 @@ The event source implements the `EventSource` protocol (`n_events`, `n_positive`
 `normalization` of the W input columns, `n_batches`, `batches`, `load`); its reading and
 shuffling options are its own and go into `event_source_options`. The neural models fix their
 own units from the store's train normalization (`set_stream_normalization`). Checkpoints are
-selected by the Bernoulli log loss on the validation events. With `last_layer` (mlp, field),
+selected by the Bernoulli log loss on the validation events. With `last_layer` (not bdt),
 the selected checkpoints get the Laplace posterior from one streaming pass over all training
 events.
 The stream validation events also get the calibration per record column (`record_j`,

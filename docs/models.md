@@ -5,8 +5,8 @@ The event model kinds behind one API (`core.surrogates`).
 `core.surrogates` is the model-independent API for the single-logit CNP, MLP, neural
 field, feature-token transformer and histogram boosted decision trees. All consume
 `StandardBatch` and produce `EventPrediction`: event logits, probabilities, and
-design point means. Uncertainty is optional: the MLP, CNP and field can add a Bayesian last
-layer ([last-layer.md](last-layer.md)); the other models have none.
+design point means. Uncertainty is optional: the MLP, CNP, field and transformer can add a
+Bayesian last layer ([last-layer.md](last-layer.md)); the BDT and legacy CNP have none.
 
 ## Python API
 

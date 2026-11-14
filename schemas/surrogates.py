@@ -163,6 +163,7 @@ class TransformerModel(StrictConfigModel):
             inference_chunk_size=512,
         )
     )
+    last_layer: BayesianLastLayer | None = None
 
 
 class BDTModel(StrictConfigModel):
@@ -1041,7 +1042,7 @@ class StreamRunConfig(StrictConfigModel):
             architecture=self.model.architecture,
             position=self.record_position,
             encoding=RawPosition(),
-            last_layer=getattr(self.model, "last_layer", None),
+            last_layer=self.model.last_layer,
         )
 
     @property

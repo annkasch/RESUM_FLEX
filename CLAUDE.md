@@ -24,7 +24,8 @@ for config settings.
 - Two ways from event probabilities to design-point rates, compared on the same predictive
   metrics (count NLL, coverage, CRPS):
   - Event model + Bayesian last layer (`model.last_layer`, Laplace over the final linear
-    layer; mlp, cnp, field): rates with uncertainty directly, no GP. The approach under test.
+    layer; mlp, cnp, field, transformer): rates with uncertainty directly, no GP. The
+    approach under test.
   - Event model → mean p per design point (`predict`) → GP over configurable fidelity levels
     (`mfgp`), or a binomial count GP directly on outcome counts (`binomial`, optional
     event-model covariate). The baseline.

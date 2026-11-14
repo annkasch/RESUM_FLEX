@@ -1,8 +1,8 @@
-# Bayesian last layer (mlp, cnp, field)
+# Bayesian last layer (mlp, cnp, field, transformer)
 
 ```yaml
 model:
-  kind: mlp            # or cnp, field
+  kind: mlp            # or cnp, field, transformer
   architecture: {hidden_dims: [256, 256, 256]}
   last_layer:
     prior_precision: evidence   # or a fixed number

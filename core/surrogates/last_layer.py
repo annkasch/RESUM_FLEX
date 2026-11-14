@@ -1,4 +1,4 @@
-"""Bayesian last layer for neural single-logit event models (mlp, cnp, field).
+"""Bayesian last layer for neural single-logit event models (mlp, cnp, field, transformer).
 
 After training, the final linear layer gets a Laplace posterior (core.last_layer) from one
 pass over the natural training events; nothing is retrained. Predictions then carry
@@ -13,7 +13,23 @@ from scipy.special import expit
 from core.last_layer import LastLayerPosterior, laplace_posterior
 from core.surrogates.models import slice_batch
 
-SUPPORTED_KINDS = ("mlp", "cnp", "field")
+SUPPORTED_KINDS = ("mlp", "cnp", "field", "transformer")
+
+
+def captured_features(captured, shape):
+    """Final-layer inputs of one forward pass, joined over its chunks: [*shape, H].
+
+    The transformer calls its head once per ``inference_chunk_size`` events, so a pass can
+    capture several [m, H] blocks (in event order); the other networks capture one block.
+    """
+    import torch
+
+    features = (
+        captured[0]
+        if len(captured) == 1
+        else torch.cat([c.reshape(-1, c.shape[-1]) for c in captured])
+    )
+    return features.reshape(*shape, features.shape[-1])
 
 
 def _layer(model):
@@ -51,9 +67,9 @@ def feature_chunks(model, target, context=None, *, chunk=4):
                 stop = min(start + chunk, target.batch_size)
                 captured.clear()
                 model.module(slice_batch(context, start, stop), slice_batch(target, start, stop))
-                features = captured[-1].double().cpu().numpy()  # [b, N, H]
-                ones = np.ones((*features.shape[:-1], 1))
                 valid = target.event_mask[start:stop]  # [b, N]
+                features = captured_features(captured, valid.shape).double().cpu().numpy()
+                ones = np.ones((*features.shape[:-1], 1))  # features: [b, N, H]
                 yield start, stop, np.concatenate([features, ones], axis=-1), valid
     finally:
         handle.remove()
