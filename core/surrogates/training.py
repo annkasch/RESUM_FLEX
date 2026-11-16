@@ -200,6 +200,9 @@ def _fit_stage(
         positives, events, losses = 0, 0, []
         label_mass, soft_events = 0.0, 0
         n_steps = training.resolve_n_steps(training_events, context=model.uses_context)
+        schedule = torch.optim.lr_scheduler.LambdaLR(
+            optimizer, lambda done: training.lr_schedule.factor(done + 1, n_steps)
+        )
         for step in range(1, n_steps + 1):
             if mixup:
                 nc = int(size_rng.integers(n_context_min, n_context_max + 1))
@@ -237,12 +240,14 @@ def _fit_stage(
             if training.grad_clip is not None:
                 torch.nn.utils.clip_grad_norm_(model.module.parameters(), training.grad_clip)
             optimizer.step()
+            learning_rate = optimizer.param_groups[0]["lr"]  # the rate of this step
+            schedule.step()
             losses.append(float(loss.detach()))
             if step % training.eval_every == 0 or step == n_steps:
-                components = None
+                components = {"learning_rate": learning_rate}
                 if combined:
                     suffix = "nll" if training.loss == "practice-truth" else "bce"
-                    components = {
+                    components |= {
                         f"training_real_{suffix}": float(np.mean(real_losses)),
                         f"training_mixup_{suffix}": float(np.mean(mixup_losses)),
                     }

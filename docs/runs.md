@@ -7,7 +7,7 @@ CLI stages, what a run writes, compute accounting and context-free inference.
 ```bash
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
 # 1. Train an event model (data preparation runs automatically from data_config)
-.venv/bin/python -m core.surrogates train TRAINING.yaml
+.venv/bin/python -m core.surrogates train TRAINING.yaml [--run-seed N]
 # 2. Mean predicted p per design point of a partition (context-free models; labels not needed)
 .venv/bin/python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 # 3. Fit the multi-fidelity GP on its configured levels
@@ -19,7 +19,11 @@ Change model and training settings using the API
 options in [models.md](models.md) and [training.md](training.md); BDT fits natural events. `selection` picks the checkpoint metric
 (`bernoulli_log_loss` for natural-event runs, `average_precision` for mixup ablations).
 Change `output_directory` for every new run: existing nonempty runs are never
-overwritten. Data/output paths resolve relative to the YAML file.
+overwritten. `--run-seed N` (neural training, no `stages`) trains the same config with seed N:
+`training.seed`, `model.last_layer.seed` and `mfgp.seed` become N and the one `seed<k>` directory
+of `output_directory` becomes `seed<N>`; data splits and `validation_seed` stay. The copied
+YAML stays verbatim; `experiment.json` and the recorded command line hold the override.
+`score --run-seed N` scores that run: `seed<k>` in `run` and `output_directory` becomes `seed<N>`. Data/output paths resolve relative to the YAML file.
 
 The runner loads prepared LF training and LF/HF validation batches. Inputs must
 already have the training-only normalization applied. It never reads test data.

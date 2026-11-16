@@ -85,6 +85,7 @@ parentheses.
 | `n_steps` / `n_passes` | Run length: steps, or passes over the training events. Set one (10000 steps). |
 | `eval_every` | Steps between validation passes (250). |
 | `learning_rate` | Adam learning rate (0.001). |
+| `lr_schedule` | Learning rate over the steps: `kind: constant`, or `kind: cosine` from `learning_rate` at the first step to `final_fraction` × it at the last (0.01); each stage restarts it over its own steps. `history.json` records each evaluation step's `learning_rate` (`constant`). |
 | `batch_size` | Design points per step (16). |
 | `n_events` | Events drawn per design point per step (128). |
 | `seed` | Training seed (0). |
@@ -235,7 +236,7 @@ draws, donor rows), `_predictive.npz`, `_coverage.png`, `_zscore*.png`.
 | `checkpoints` | Checkpoints to score (`[best]`). |
 | `sets` | Provider partitions as `partition/fidelity`, e.g. `validation/hf`. Required. |
 | `donors` | None: own event inputs (default). `scored`: donors from each scored set itself; `partition/fidelity`: donors from that set. Needs the provider's `transfer_events`. |
-| `seed` | Donor draw seed (0). |
+| `seed` | Donor draw seed (0); `--run-seed` keeps it, so every run seed is scored with the same donors. |
 | `threads` | Evaluation threads (1). |
 | `data_provider` | Provider `module:Class` (`run`: the run's). |
 | `data_directory` | Prepared data (the run's), e.g. another set of the same normalization. |

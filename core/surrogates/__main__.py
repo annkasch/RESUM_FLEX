@@ -1,4 +1,4 @@
-"""Run: python -m core.surrogates train TRAINING.yaml
+"""Run: python -m core.surrogates train TRAINING.yaml [--run-seed N]
 python -m core.surrogates predict RUN/checkpoints/best DATA_DIR PARTITION
 python -m core.surrogates mfgp GP.yaml
 python -m core.surrogates binomial BINOMIAL_GP.yaml
@@ -6,7 +6,8 @@ python -m core.surrogates stream STREAM.yaml   (torchrun for several GPUs)
 python -m core.surrogates residual RESIDUAL.yaml   (residual test on a finished run)
 python -m core.surrogates within_point WITHIN_POINT.yaml   (within-design-point metrics on a
     finished run)
-python -m core.surrogates score SCORE.yaml   (predictive scores of a finished run on sets)"""
+python -m core.surrogates score SCORE.yaml [--run-seed N]   (predictive scores of a finished run
+    on sets)"""
 
 import argparse
 import os
@@ -21,6 +22,12 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     train = commands.add_parser("train", help="Train any configured event surrogate")
     train.add_argument("config")
+    run_seed_help = (
+        "train (score) the run with this seed: training and last-layer seeds, and seed<k> in the "
+        "output directory, become N; the copied YAML stays verbatim, experiment.json and the "
+        "recorded command line hold the override"
+    )
+    train.add_argument("--run-seed", type=int, metavar="N", help=run_seed_help)
     predict = commands.add_parser(
         "predict",
         help="Mean predicted p per design point of a prepared partition (no labels needed)",
@@ -68,6 +75,7 @@ def main():
         "sets, as for the binomial GP",
     )
     score.add_argument("config")
+    score.add_argument("--run-seed", type=int, metavar="N", help=run_seed_help)
     args = parser.parse_args()
     import torch
 
@@ -82,9 +90,12 @@ def main():
         return
     if args.command == "score":
         from core.surrogates.score_stage import run_score
-        from schemas.surrogates import load_score_config
+        from schemas.surrogates import load_score_config, score_with_run_seed
 
-        output = run_score(load_score_config(args.config))
+        config = load_score_config(args.config)
+        if args.run_seed is not None:
+            config = score_with_run_seed(config, args.run_seed)
+        output = run_score(config)
         save_config(args.config, output, "score")
         print(f"Scores written to {output}", flush=True)
         return
@@ -146,6 +157,10 @@ def main():
         )
         return
     config = load_surrogate_config(args.config)
+    if args.run_seed is not None:
+        from schemas.surrogates import with_run_seed
+
+        config = with_run_seed(config, args.run_seed)
     print(f"Training {config.model.kind}; selecting by {config.selection}", flush=True)
     output = run_experiment(config)
     save_config(args.config, output, "train")

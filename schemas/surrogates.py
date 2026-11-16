@@ -5,6 +5,7 @@ covers the single-logit models and BDT without silently reinterpreting settings.
 """
 
 import math
+import re
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -302,6 +303,32 @@ class FixedContext(StrictConfigModel):
 ContextSpec = Annotated[RandomContext | FixedContext, Field(discriminator="size")]
 
 
+class ConstantSchedule(StrictConfigModel):
+    """The configured learning rate in every step."""
+
+    kind: Literal["constant"] = "constant"
+
+    def factor(self, step: int, n_steps: int) -> float:
+        return 1.0
+
+
+class CosineSchedule(StrictConfigModel):
+    """Cosine decay from the learning rate (first step) to final_fraction of it (last step)."""
+
+    kind: Literal["cosine"] = "cosine"
+    final_fraction: float = Field(default=0.01, ge=0, le=1, allow_inf_nan=False)
+
+    def factor(self, step: int, n_steps: int) -> float:
+        """Learning-rate multiplier of step ``step`` (1-based) of ``n_steps``."""
+        if n_steps == 1:
+            return 1.0
+        cosine = 0.5 * (1 + math.cos(math.pi * (step - 1) / (n_steps - 1)))
+        return self.final_fraction + (1 - self.final_fraction) * cosine
+
+
+LearningRateSchedule = Annotated[ConstantSchedule | CosineSchedule, Field(discriminator="kind")]
+
+
 class NeuralTraining(StrictConfigModel):
     backend: Literal["neural"] = "neural"
     # Run length: either n_steps, or n_passes over the training events (one pass = as
@@ -310,6 +337,8 @@ class NeuralTraining(StrictConfigModel):
     n_passes: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     eval_every: int = Field(default=250, gt=0)
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
+    # Learning rate over the steps of this run (each stage restarts it over its own steps).
+    lr_schedule: LearningRateSchedule = Field(default_factory=ConstantSchedule)
     batch_size: int = Field(default=16, gt=0)  # design points per step
     n_events: int = Field(default=128, ge=3)  # events drawn per design point per step
     # Context models only (cnp, legacy_cnp); context-free models score all n_events events.
@@ -1249,6 +1278,49 @@ def load_score_config(path: str | Path) -> ScoreRunConfig:
     config = ScoreRunConfig.model_validate(yaml.safe_load(path.read_text()))
     names = ("run", "output_directory") + (("data_directory",) if config.data_directory else ())
     return _resolve_run_paths(config, path, names=names)
+
+
+def _seed_directory(path: Path, seed: int) -> Path:
+    """``path`` with its one ``seed<k>`` component replaced by ``seed<seed>``."""
+    parts = path.parts
+    hits = [i for i, part in enumerate(parts) if re.fullmatch(r"seed\d+", part)]
+    if len(hits) != 1:
+        raise ValueError(f"--run-seed needs exactly one seed<k> directory in {path}")
+    i = hits[0]
+    return Path(*parts[:i], f"seed{seed}", *parts[i + 1 :])
+
+
+def with_run_seed(config: SurrogateRunConfig, seed: int) -> SurrogateRunConfig:
+    """The same run with another seed: the training, last-layer and MFGP seeds become ``seed``
+    and the output goes to the ``seed<seed>`` directory. Data splits and the selection subset
+    (``validation_seed``) stay unchanged, so seeds differ only in training randomness."""
+    if config.stages is not None:
+        raise ValueError("--run-seed does not support stages; set each stage's seed in the YAML")
+    if config.training.backend != "neural":
+        raise ValueError("--run-seed supports neural training only; set the BDT seed in the YAML")
+    if seed < 0:
+        raise ValueError("--run-seed must be >= 0")
+    update = {"output_directory": _seed_directory(config.output_directory, seed)}
+    update["training"] = config.training.model_copy(update={"seed": seed})
+    if config.model.last_layer is not None:
+        last_layer = config.model.last_layer.model_copy(update={"seed": seed})
+        update["model"] = config.model.model_copy(update={"last_layer": last_layer})
+    if config.mfgp is not None:
+        update["mfgp"] = config.mfgp.model_copy(update={"seed": seed})
+    return config.model_copy(update=update)
+
+
+def score_with_run_seed(config: ScoreRunConfig, seed: int) -> ScoreRunConfig:
+    """Score the ``seed<seed>`` run of the same configuration; the donor ``seed`` stays, so
+    every run seed is scored with the same donors."""
+    if seed < 0:
+        raise ValueError("--run-seed must be >= 0")
+    return config.model_copy(
+        update={
+            "run": _seed_directory(config.run, seed),
+            "output_directory": _seed_directory(config.output_directory, seed),
+        }
+    )
 
 
 def _resolve_run_paths(config, path, names=("run", "output_directory")):
