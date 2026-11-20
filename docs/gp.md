@@ -20,10 +20,10 @@ fractions to (m + a)/(N + 2a) and floors model means at `cnp_log_floor`.
 
 ```yaml
 levels:
-  - {source: model_mean, partition: gp_unlabeled, inference: RUN/inference/best/gp_unlabeled_lf.npz}
-  - {source: observed_fraction, partition: gp_train, fidelity: hf}
+  - {source: model_mean, partition: rate_unlabeled, inference: RUN/inference/best/rate_unlabeled_lf.npz}
+  - {source: observed_fraction, partition: rate_train, fidelity: hf}
 evaluation:
-  - {partition: gp_validation, fidelity: hf}
+  - {partition: rate_validation, fidelity: hf}
 kernel: rbf
 n_restarts: 5
 output_transform: log

@@ -217,7 +217,7 @@ def test_stream_bdt_trains_selects_and_scores_on_design_points(tmp_path):
     model, provider, _ = open_for_prediction(
         run / "checkpoints" / "best", tmp_path / "design_points"
     )
-    batch = provider.load("gp_validation", "hf")[0]
+    batch = provider.load("rate_validation", "hf")[0]
     from core.surrogate_bdt import stream_records
 
     direct = model.estimator.decision_function(stream_records(batch, NORMALIZATION))
@@ -249,6 +249,6 @@ def test_stream_bdt_without_theta_scores_an_event_only_view(tmp_path):
     from tests.test_bernoulli_field import FieldNpz
 
     best.configure_normalization(NORMALIZATION)
-    full = FieldNpz(tmp_path / "design_points").load("gp_validation", "hf")[0]
+    full = FieldNpz(tmp_path / "design_points").load("rate_validation", "hf")[0]
     event_only = full.model_copy(update={"mode": InputMode.EVENT_ONLY, "theta": None})
     np.testing.assert_array_equal(best.predict(full).logits, best.predict(event_only).logits)

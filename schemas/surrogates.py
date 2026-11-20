@@ -551,7 +551,7 @@ GPLevel = Annotated[ModelMeanLevel | ObservedFractionLevel, Field(discriminator=
 
 
 # Held-out test partitions: never GP training levels, evaluated only with unblind_test.
-TEST_PARTITIONS = ("test", "evt_test", "gp_test")
+TEST_PARTITIONS = ("test", "evt_test", "rate_test")
 
 
 class GPEvaluation(StrictConfigModel):

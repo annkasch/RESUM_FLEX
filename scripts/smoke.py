@@ -44,12 +44,12 @@ SETS = [
     ("train", "lf", 12, 40),
     ("validation", "lf", 6, 40),
     ("validation", "hf", 6, 120),
-    ("gp_train", "lf", 10, 40),
-    ("gp_train", "hf", 5, 120),
-    ("gp_validation", "hf", 6, 120),
+    ("rate_train", "lf", 10, 40),
+    ("rate_train", "hf", 5, 120),
+    ("rate_validation", "hf", 6, 120),
 ]
 # Partitions the event model predicts for the GPs.
-PREDICTED = [("gp_train", "lf"), ("gp_train", "hf"), ("gp_validation", "hf")]
+PREDICTED = [("rate_train", "lf"), ("rate_train", "hf"), ("rate_validation", "hf")]
 THREADS = {"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
 
 
@@ -152,23 +152,23 @@ def write_configs(root: Path) -> dict[str, Path]:
             "levels": [
                 {
                     "source": "model_mean",
-                    "partition": "gp_train",
+                    "partition": "rate_train",
                     "fidelity": "lf",
-                    "inference": inference["gp_train/lf"],
+                    "inference": inference["rate_train/lf"],
                 },
-                {"source": "observed_fraction", "partition": "gp_train", "fidelity": "hf"},
+                {"source": "observed_fraction", "partition": "rate_train", "fidelity": "hf"},
             ],
-            "evaluation": [{"partition": "gp_validation", "fidelity": "hf"}],
+            "evaluation": [{"partition": "rate_validation", "fidelity": "hf"}],
             "n_restarts": 1,
             "data_directory": "data",
             "output_directory": "runs/mfgp",
         },
         "binomial": {
             "observations": [
-                {"partition": "gp_train", "fidelity": "lf"},
-                {"partition": "gp_train", "fidelity": "hf"},
+                {"partition": "rate_train", "fidelity": "lf"},
+                {"partition": "rate_train", "fidelity": "hf"},
             ],
-            "evaluation": [{"partition": "gp_validation", "fidelity": "hf"}],
+            "evaluation": [{"partition": "rate_validation", "fidelity": "hf"}],
             "covariate": {"inference": inference},
             "n_restarts": 1,
             "max_iters": 30,
@@ -189,7 +189,9 @@ def write_configs(root: Path) -> dict[str, Path]:
             "event_source": "scripts.smoke:SmokeEventSource",
             "data_provider": "scripts.smoke:SmokeNpz",
             "data_directory": "data",
-            "evaluation": [{"split": "validation", "partition": "gp_validation", "fidelity": "hf"}],
+            "evaluation": [
+                {"split": "validation", "partition": "rate_validation", "fidelity": "hf"}
+            ],
             "history_design_points": 4,
             "output_directory": "runs/stream",
             "dim_theta": DIM_THETA,
@@ -202,7 +204,7 @@ def write_configs(root: Path) -> dict[str, Path]:
     }
     configs["score"] = {
         "run": "runs/train",
-        "sets": ["gp_validation/hf"],
+        "sets": ["rate_validation/hf"],
         "output_directory": "runs/score",
     }
     # Residual learnability test only where the optional lgbm extra is installed.

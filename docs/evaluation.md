@@ -173,6 +173,6 @@ ceiling, 2 bootstrap, 3 within-design-point null, 4 residual test (sub-keys 0 fo
 Test partitions are blinded by default. `test_fidelities` declares which test sets exist,
 but a training run evaluates them only with `unblind_test: true`; otherwise it writes
 `test_evaluation.json` with `status: blinded` and never reads the test data. The MFGP
-does the same: evaluation on `test`, `evt_test` or `gp_test` needs `unblind_test: true`,
+does the same: evaluation on `test`, `evt_test` or `rate_test` needs `unblind_test: true`,
 and test partitions can never be GP training levels. Make all model and GP choices on
 validation, then unblind once.

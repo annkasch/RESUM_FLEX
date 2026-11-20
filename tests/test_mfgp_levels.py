@@ -40,11 +40,11 @@ def test_level_settings_are_validated(tmp_path):
     with pytest.raises(ValueError, match="same max_design_points"):
         MFGPStageConfig(levels=[{**TWO_LEVELS[1], "max_design_points": 2}, TWO_LEVELS[1]])
     with pytest.raises(ValueError, match="blinded"):
-        MFGPStageConfig(levels=TWO_LEVELS, evaluation=[{"partition": "gp_test"}])
+        MFGPStageConfig(levels=TWO_LEVELS, evaluation=[{"partition": "rate_test"}])
     unblinded = MFGPStageConfig(
-        levels=TWO_LEVELS, evaluation=[{"partition": "gp_test"}], unblind_test=True
+        levels=TWO_LEVELS, evaluation=[{"partition": "rate_test"}], unblind_test=True
     )
-    assert unblinded.evaluation[0].partition == "gp_test"
+    assert unblinded.evaluation[0].partition == "rate_test"
     with pytest.raises(ValueError, match="can't be a GP training level"):
         MFGPStageConfig(
             levels=[TWO_LEVELS[0], {**TWO_LEVELS[1], "partition": "evt_test"}], unblind_test=True

@@ -120,10 +120,10 @@ def test_binomial_config_blinds_test_partitions():
         output_directory="o",
     )
     with pytest.raises(ValueError, match="blinded"):
-        BinomialGPRunConfig(**base, evaluation=[{"partition": "gp_test"}])
+        BinomialGPRunConfig(**base, evaluation=[{"partition": "rate_test"}])
     with pytest.raises(ValueError, match="can't be a training set"):
         BinomialGPRunConfig(**{**base, "observations": [{"partition": "test", "fidelity": "hf"}]})
-    assert BinomialGPRunConfig(**base, evaluation=[{"partition": "gp_test"}], unblind_test=True)
+    assert BinomialGPRunConfig(**base, evaluation=[{"partition": "rate_test"}], unblind_test=True)
 
 
 def test_coverage_ylim_config():
