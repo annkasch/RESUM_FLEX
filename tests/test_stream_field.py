@@ -147,7 +147,7 @@ def _stream_split(rng, n):
 def _design_point_data(root, rng):
     """Design point evaluation data (NpzBatches layout) with the same rate as the events."""
     x0 = STREAM_NORMALIZATION["offset"][0]
-    for partition, fidelity in (("cnp_validation", "lf"), ("gp_validation", "hf")):
+    for partition, fidelity in (("evt_validation", "lf"), ("gp_validation", "hf")):
         centre, point, direction = _random_physical(rng, b=6, n=60)
         p = 1 / (1 + np.exp(-(-3.0 + 25.0 * (point[..., 0] - x0))))
         batch = _physical_batch(centre, point, direction, labels=rng.binomial(1, p))
@@ -187,7 +187,7 @@ def _run_config(tmp_path, **training):
             "data_provider": "tests.test_bernoulli_field:FieldNpz",
             "data_directory": str(tmp_path / "design_points"),
             "evaluation": [
-                {"split": "validation", "partition": "cnp_validation", "fidelity": "lf"},
+                {"split": "validation", "partition": "evt_validation", "fidelity": "lf"},
                 {"split": "validation", "partition": "gp_validation", "fidelity": "hf"},
             ],
             "history_design_points": 4,

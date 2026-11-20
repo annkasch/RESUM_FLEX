@@ -47,7 +47,7 @@ def test_level_settings_are_validated(tmp_path):
     assert unblinded.evaluation[0].partition == "gp_test"
     with pytest.raises(ValueError, match="can't be a GP training level"):
         MFGPStageConfig(
-            levels=[TWO_LEVELS[0], {**TWO_LEVELS[1], "partition": "cnp_test"}], unblind_test=True
+            levels=[TWO_LEVELS[0], {**TWO_LEVELS[1], "partition": "evt_test"}], unblind_test=True
         )
     with pytest.raises(ValueError, match="evaluation level"):
         MFGPStageConfig(levels=TWO_LEVELS, evaluation=[{"partition": "v", "level": 2}])
