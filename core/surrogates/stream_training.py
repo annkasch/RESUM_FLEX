@@ -9,9 +9,13 @@ Checkpoints are selected by the Bernoulli log loss on the first ``validation_eve
 validation events, held on the device. With ``last_layer`` the
 selected checkpoints get a Laplace posterior from one streaming pass over all training
 events (exact Bernoulli Hessian of the final layer, as for design point training).
+``training.lr_schedule`` (constant or cosine) runs over all optimizer steps of the run
+(n_passes x the source's batches per pass, ``stream_schedule``); history rows record each
+evaluation step's ``learning_rate``.
 
 Several GPUs: launch with ``torchrun``; every rank reads its own blocks of each pass and
-DistributedDataParallel averages the gradients. Rank 0 validates and writes the outputs.
+DistributedDataParallel averages the gradients; all ranks share one learning-rate schedule
+(equal batches per pass, checked). Rank 0 validates and writes the outputs.
 
 ``kind: bdt``: boosted trees do not learn batch by batch, so one pass over the training
 events keeps a case-control sample in memory (every positive, a seeded fraction of the
@@ -56,6 +60,53 @@ def _distributed():
     if world == 1:
         return 0, 1, 0
     return int(os.environ["RANK"]), world, int(os.environ.get("LOCAL_RANK", "0"))
+
+
+def schedule_steps(source, batch_size, n_passes, *, drop_last=False):
+    """Optimizer steps per pass [n_passes] of one rank (its batches of each pass)."""
+    return [
+        source.n_batches(batch_size, pass_index, drop_last=drop_last)
+        for pass_index in range(n_passes)
+    ]
+
+
+def stream_schedule(optimizer, schedule, steps_per_pass, *, pass_index=0, start_batch=0):
+    """LambdaLR over all optimizer steps of a stream run, positioned at (pass, batch).
+
+    ``steps_per_pass``: [n_passes] from ``schedule_steps``. The schedule is stepped after
+    each optimizer step; the run resumes at batch ``start_batch`` of pass ``pass_index``
+    with the rate of step sum(steps_per_pass[:pass_index]) + start_batch + 1. Returns
+    (scheduler, total steps).
+    """
+    import torch
+
+    n_steps = sum(steps_per_pass)
+    done = sum(steps_per_pass[:pass_index]) + start_batch
+    if n_steps < 1 or not 0 <= done < n_steps:
+        raise ValueError(
+            f"Stream schedule: {done} steps done of {n_steps} (passes {steps_per_pass})"
+        )
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lambda k: schedule.factor(done + k + 1, n_steps)
+    )
+    return scheduler, n_steps
+
+
+def _shared_steps(steps_per_pass, device):
+    """The per-pass step counts every DDP rank shares; fails unless all ranks agree."""
+    import torch
+    import torch.distributed as dist
+
+    local = torch.as_tensor(steps_per_pass, dtype=torch.int64, device=device)
+    low, high = local.clone(), local.clone()
+    dist.all_reduce(low, op=dist.ReduceOp.MIN)
+    dist.all_reduce(high, op=dist.ReduceOp.MAX)
+    if not torch.equal(low, high):
+        raise ValueError(
+            f"Ranks have different batches per pass ({low.tolist()} to {high.tolist()}); "
+            "one learning-rate schedule needs equal counts (drop_last)"
+        )
+    return low.tolist()
 
 
 def _stream_module(field):
@@ -591,6 +642,12 @@ def run_stream(config: StreamRunConfig) -> dict:
             forward, device_ids=[local_rank] if device.type == "cuda" else None
         )
     optimizer = torch.optim.Adam(model.module.parameters(), lr=training.learning_rate)
+    steps_per_pass = schedule_steps(
+        train, training.batch_size, training.n_passes, drop_last=world > 1
+    )
+    if world > 1:
+        steps_per_pass = _shared_steps(steps_per_pass, device)  # one schedule on all ranks
+    scheduler, n_steps = stream_schedule(optimizer, training.lr_schedule, steps_per_pass)
 
     def autocast():
         enabled = device.type == "cuda" and training.precision == "bf16"
@@ -631,13 +688,19 @@ def run_stream(config: StreamRunConfig) -> dict:
         metadata["normalization.json"] = data["normalization"]
     model.metadata = metadata
 
-    def evaluate(step, pass_index, train_loss):
+    def evaluate(step, pass_index, train_loss, learning_rate):
         if rank != 0:
             return
         model.module.eval()
         loss = _log_loss(model.module.forward_events, validation, device, autocast)
         model.module.train()
-        row = dict(step=step, pass_index=pass_index, training_loss=train_loss, stream_log_loss=loss)
+        row = dict(
+            step=step,
+            pass_index=pass_index,
+            training_loss=train_loss,
+            stream_log_loss=loss,
+            learning_rate=learning_rate,
+        )
         if history_episode is not None:
             row.update(
                 evaluate_surrogate(model, history_episode.target, reference_rate=prevalence)[0]
@@ -665,15 +728,21 @@ def run_stream(config: StreamRunConfig) -> dict:
                 optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 optimizer.step()
+                learning_rate = optimizer.param_groups[0]["lr"]  # the rate of this step
                 step += 1
+                if step > n_steps:
+                    raise ValueError(f"The event source gave more than its {n_steps} batches")
+                scheduler.step()
                 events_seen += len(batch)
                 running.append(loss.detach())
                 if step % training.eval_every == 0:
-                    evaluate(step, pass_index, float(torch.stack(running).mean()))
+                    evaluate(step, pass_index, float(torch.stack(running).mean()), learning_rate)
                     running = []
             if running:
-                evaluate(step, pass_index, float(torch.stack(running).mean()))
+                evaluate(step, pass_index, float(torch.stack(running).mean()), learning_rate)
                 running = []
+    if step != n_steps:
+        raise ValueError(f"The event source gave {step} of its {n_steps} batches")
     if world > 1:
         import torch.distributed as dist
 

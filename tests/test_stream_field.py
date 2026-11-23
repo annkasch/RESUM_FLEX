@@ -472,3 +472,57 @@ def test_stream_models_score_views_with_and_without_theta_alike(kind):
     design_point_model = _field()  # not stream-trained: theta presence is still checked
     with pytest.raises(ValueError, match="theta presence"):
         design_point_model.predict(event_only)
+
+
+def test_stream_schedule_cosine_ends_at_final_fraction_and_resumes_in_place():
+    from core.surrogates.stream_training import stream_schedule
+    from schemas.surrogates import CosineSchedule, StreamTraining
+
+    assert StreamTraining().lr_schedule.kind == "constant"
+    steps_per_pass = [4, 3, 4]  # n_steps = 11
+
+    def rates(schedule, **position):
+        optimizer = torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1)
+        scheduler, n_steps = stream_schedule(optimizer, schedule, steps_per_pass, **position)
+        done = sum(steps_per_pass[: position.get("pass_index", 0)])
+        out = []
+        for _ in range(n_steps - done - position.get("start_batch", 0)):
+            optimizer.step()
+            out.append(optimizer.param_groups[0]["lr"])
+            scheduler.step()
+        return out
+
+    cosine = CosineSchedule(final_fraction=0.01)
+    full = rates(cosine)
+    assert len(full) == 11
+    assert full[0] == pytest.approx(0.1) and full[-1] == pytest.approx(0.001)
+    assert full == pytest.approx([0.1 * cosine.factor(s, 11) for s in range(1, 12)])
+    # Resuming at batch 2 of pass 1 (step 7) continues the same schedule.
+    assert rates(cosine, pass_index=1, start_batch=2) == pytest.approx(full[6:])
+    assert rates(StreamTraining().lr_schedule) == pytest.approx([0.1] * 11)
+    with pytest.raises(ValueError, match="steps done"):
+        stream_schedule(
+            torch.optim.SGD([torch.nn.Parameter(torch.zeros(1))], lr=0.1),
+            cosine,
+            steps_per_pass,
+            pass_index=3,
+        )
+
+
+@pytest.mark.parametrize("schedule", [None, {"kind": "cosine", "final_fraction": 0.05}])
+def test_stream_run_logs_the_learning_rate_of_its_schedule(tmp_path, schedule):
+    training = {"n_passes": 2, "eval_every": 5, "learning_rate": 0.01}
+    if schedule is not None:
+        training["lr_schedule"] = schedule
+    config = _run_config(tmp_path, **training)
+    model = config.model.model_copy(update={"last_layer": None})
+    config = config.model_copy(update={"evaluation": [], "model": model})
+    report = run_stream(config)
+    n_steps = 2 * -(-6000 // 256)
+    rates = [row["learning_rate"] for row in report["history"]]
+    assert report["steps"] == n_steps and report["history"][-1]["step"] == n_steps
+    if schedule is None:
+        assert rates == pytest.approx([0.01] * len(rates))  # constant: as before
+    else:
+        assert rates[-1] == pytest.approx(0.01 * 0.05)  # the last step's rate
+        assert all(a > b for a, b in zip(rates, rates[1:], strict=False))

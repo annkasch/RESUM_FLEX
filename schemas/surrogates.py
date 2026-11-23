@@ -963,6 +963,8 @@ class StreamTraining(StrictConfigModel):
     batch_size: int = Field(default=65536, gt=0)
     n_passes: int = Field(default=1, ge=1)
     learning_rate: float = Field(default=1e-3, gt=0)
+    # Learning rate over all optimizer steps of the run (n_passes x batches per pass).
+    lr_schedule: LearningRateSchedule = Field(default_factory=ConstantSchedule)
     eval_every: int = Field(default=200, gt=0)  # optimizer steps between validations
     seed: int = 0
     device: Literal["cpu", "cuda"] = "cuda"

@@ -60,6 +60,17 @@ bounded for any `validation_events`. Several GPUs (neural kinds): `torchrun`
 (DistributedDataParallel). bf16 autocast and `torch.compile` are options. Run outputs label
 the stream metrics with fidelity `stream`.
 
+Learning rate (neural kinds): `training.lr_schedule`, the same schema as in design-point
+training: `{kind: constant}` (default; runs without it are unchanged) or `{kind: cosine,
+final_fraction: 0.01}`, from `learning_rate` at the first optimizer step to `final_fraction`
+× it at the last. It spans all optimizer steps of the run, `n_passes` × the source's
+`n_batches` per pass, and is stepped after each optimizer step; the run fails if the source
+delivers another number of batches. Its position is a function of (pass, batch index)
+(`stream_schedule`), so a run resumed at `start_batch` of a pass continues at the same
+rate. With `torchrun` all ranks share one schedule: their batches per pass must agree
+(`drop_last`), checked at the start. Every `history.json` row records `learning_rate`, the
+rate of the last optimizer step before that evaluation.
+
 The mlp and transformer checkpoints are ordinary field checkpoints (a field without
 encodings, with an MLP or transformer network). `predict` evaluates them on design-point
 data: each φ column is mapped from the data's normalization into the model's stream units,
