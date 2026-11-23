@@ -10,6 +10,25 @@ from core.surrogates.evaluation import evaluate_surrogate
 from schemas.surrogates import SurrogateConfig
 
 
+def build_optimizer(parameters, *, learning_rate: float, weight_decay: float = 0.0):
+    """Adam, or with ``weight_decay > 0`` AdamW decaying the weight matrices only.
+
+    parameters: trainable torch parameters. Decoupled decay (AdamW) applies to parameters
+    with >= 2 dimensions (linear and attention weights); biases, norm scales and the learnable
+    null embeddings (1-D) are not decayed. ``weight_decay = 0`` is plain Adam, as before.
+    """
+    import torch
+
+    parameters = list(parameters)
+    if weight_decay == 0:
+        return torch.optim.Adam(parameters, lr=learning_rate)
+    groups = [
+        dict(params=[p for p in parameters if p.ndim >= 2], weight_decay=weight_decay),
+        dict(params=[p for p in parameters if p.ndim < 2], weight_decay=0.0),
+    ]
+    return torch.optim.AdamW([g for g in groups if g["params"]], lr=learning_rate)
+
+
 @dataclass
 class FitResult:
     best_step: int
@@ -165,7 +184,9 @@ def _fit_stage(
         # Frozen features must be deterministic: dropout stays disabled in stage 2.
         model.module.train(not last_layer_only)
         parameters = [p for p in model.module.parameters() if p.requires_grad]
-        optimizer = torch.optim.Adam(parameters, lr=training.learning_rate)
+        optimizer = build_optimizer(
+            parameters, learning_rate=training.learning_rate, weight_decay=training.weight_decay
+        )
         mixup = training.sampling.strategy == "class_aware_mixup"
         # Context-free models (mlp, transformer, field): no context, all events are targets.
         n_context_min, n_context_max = training.context_range(context=model.uses_context)

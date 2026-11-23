@@ -339,6 +339,8 @@ class NeuralTraining(StrictConfigModel):
     learning_rate: float = Field(default=0.001, gt=0, allow_inf_nan=False)
     # Learning rate over the steps of this run (each stage restarts it over its own steps).
     lr_schedule: LearningRateSchedule = Field(default_factory=ConstantSchedule)
+    # Decoupled weight decay (AdamW) on weight matrices only; 0 = plain Adam.
+    weight_decay: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     batch_size: int = Field(default=16, gt=0)  # design points per step
     n_events: int = Field(default=128, ge=3)  # events drawn per design point per step
     # Context models only (cnp, legacy_cnp); context-free models score all n_events events.
@@ -965,6 +967,8 @@ class StreamTraining(StrictConfigModel):
     learning_rate: float = Field(default=1e-3, gt=0)
     # Learning rate over all optimizer steps of the run (n_passes x batches per pass).
     lr_schedule: LearningRateSchedule = Field(default_factory=ConstantSchedule)
+    # As in NeuralTraining: AdamW decay of the weight matrices only; 0 = plain Adam.
+    weight_decay: float = Field(default=0.0, ge=0, allow_inf_nan=False)
     eval_every: int = Field(default=200, gt=0)  # optimizer steps between validations
     seed: int = 0
     device: Literal["cpu", "cuda"] = "cuda"

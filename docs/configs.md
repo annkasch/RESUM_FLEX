@@ -86,6 +86,7 @@ parentheses.
 | `eval_every` | Steps between validation passes (250). |
 | `learning_rate` | Adam learning rate (0.001). |
 | `lr_schedule` | Learning rate over the steps: `kind: constant`, or `kind: cosine` from `learning_rate` at the first step to `final_fraction` × it at the last (0.01); each stage restarts it over its own steps. `history.json` records each evaluation step's `learning_rate` (`constant`). |
+| `weight_decay` | Decoupled weight decay (AdamW) on the weight matrices (parameters with ≥ 2 dimensions); biases, norm scales and the null embeddings are not decayed. `0` = plain Adam, as before (0). Fine-tuning stages inherit it. Also in stream configs. |
 | `batch_size` | Design points per step (16). |
 | `n_events` | Events drawn per design point per step (128). |
 | `seed` | Training seed (0). |

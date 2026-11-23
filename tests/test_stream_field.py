@@ -526,3 +526,13 @@ def test_stream_run_logs_the_learning_rate_of_its_schedule(tmp_path, schedule):
     else:
         assert rates[-1] == pytest.approx(0.01 * 0.05)  # the last step's rate
         assert all(a > b for a, b in zip(rates, rates[1:], strict=False))
+
+
+def test_stream_run_trains_with_weight_decay(tmp_path):
+    config = _run_config(tmp_path, n_passes=1, eval_every=10, weight_decay=0.1)
+    model = config.model.model_copy(update={"last_layer": None})
+    config = config.model_copy(update={"evaluation": [], "model": model})
+    report = run_stream(config)
+    assert report["steps"] == -(-6000 // 256)
+    experiment = json.loads((tmp_path / "run" / "experiment.json").read_text())
+    assert experiment["resolved_config"]["training"]["weight_decay"] == 0.1

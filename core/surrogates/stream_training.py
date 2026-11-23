@@ -47,6 +47,7 @@ from core.surrogates.evaluation import (
 from core.surrogates.last_layer import _layer, captured_features, last_layer_weights
 from core.surrogates.models import build_surrogate
 from core.surrogates.readout import NULL_DRAWS
+from core.surrogates.training import build_optimizer
 from schemas.surrogates import StreamRunConfig
 
 VALIDATION_CHUNK = 2**20
@@ -641,7 +642,11 @@ def run_stream(config: StreamRunConfig) -> dict:
         forward = DistributedDataParallel(
             forward, device_ids=[local_rank] if device.type == "cuda" else None
         )
-    optimizer = torch.optim.Adam(model.module.parameters(), lr=training.learning_rate)
+    optimizer = build_optimizer(
+        model.module.parameters(),
+        learning_rate=training.learning_rate,
+        weight_decay=training.weight_decay,
+    )
     steps_per_pass = schedule_steps(
         train, training.batch_size, training.n_passes, drop_last=world > 1
     )

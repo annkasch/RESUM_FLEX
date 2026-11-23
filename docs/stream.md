@@ -71,6 +71,12 @@ rate. With `torchrun` all ranks share one schedule: their batches per pass must 
 (`drop_last`), checked at the start. Every `history.json` row records `learning_rate`, the
 rate of the last optimizer step before that evaluation.
 
+Weight decay (neural kinds): `training.weight_decay`, as in design-point training (default 0
+= plain Adam). Above 0 the optimizer is AdamW, decaying the weight matrices only (≥ 2-D
+parameters; not biases, norm scales or null embeddings). Decoupled decay shrinks with the
+learning rate, so under a cosine schedule it fades too. Alternatives to compare against:
+`dropout` and the width (`hidden_dims`) in `architecture`.
+
 The mlp and transformer checkpoints are ordinary field checkpoints (a field without
 encodings, with an MLP or transformer network). `predict` evaluates them on design-point
 data: each φ column is mapped from the data's normalization into the model's stream units,
